@@ -481,3 +481,9 @@ python scripts/bench_retrieval.py
 - 无文档权限的细粒度控制（目前仅到部门级）
 - 无鉴权中间件，`user_id`/`user_dept` 由调用方提供
 - 可扩展：流式输出、会话持久化、文档级 ACL、重排接入、评测集与召回率监控
+
+---
+
+## 11. 许可证
+
+本项目采用 [MIT License](./LICENSE)，Copyright (c) 2026 sjfdev。可自由使用、修改、分发与商用，需保留版权与许可声明。
