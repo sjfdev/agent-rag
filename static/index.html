@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>企业知识库 Agent · 测试台</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #171a21;
+    --panel-2: #1f232c;
+    --border: #2a2f3a;
+    --text: #e6e8ee;
+    --muted: #9aa3b2;
+    --accent: #4f8cff;
+    --ok: #33c48d;
+    --warn: #ffb020;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+  header {
+    padding: 12px 18px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    flex-wrap: wrap;
+    background: var(--panel);
+  }
+  header h1 { font-size: 15px; margin: 0; font-weight: 600; }
+  .badge {
+    font-size: 12px;
+    color: var(--muted);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 2px 9px;
+  }
+  .badge b { color: var(--ok); font-weight: 600; }
+  main {
+    flex: 1;
+    overflow-y: auto;
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .msg { display: flex; gap: 10px; max-width: 900px; }
+  .msg.user { align-self: flex-end; flex-direction: row-reverse; }
+  .avatar {
+    width: 30px; height: 30px; flex: 0 0 30px;
+    border-radius: 8px; display: grid; place-items: center;
+    font-size: 12px; font-weight: 700;
+    background: var(--panel-2); color: var(--muted);
+  }
+  .msg.user .avatar { background: #24406e; color: #cfe0ff; }
+  .bubble {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 10px 14px;
+    white-space: pre-wrap;
+    line-height: 1.6;
+    font-size: 14px;
+    word-break: break-word;
+  }
+  .msg.user .bubble { background: #1b2a44; border-color: #2b4066; }
+  .meta { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip {
+    font-size: 11px; color: var(--muted);
+    background: var(--panel-2); border: 1px solid var(--border);
+    border-radius: 6px; padding: 2px 7px;
+    font-variant-numeric: tabular-nums;
+  }
+  .chip.total { color: #cfe0ff; border-color: #2b4066; }
+  footer {
+    border-top: 1px solid var(--border);
+    background: var(--panel);
+    padding: 12px 18px;
+  }
+  .controls { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
+  label { font-size: 12px; color: var(--muted); display: flex; align-items: center; gap: 6px; }
+  input, select, textarea, button { font-family: inherit; }
+  input, select {
+    background: var(--panel-2); color: var(--text);
+    border: 1px solid var(--border); border-radius: 8px;
+    padding: 6px 9px; font-size: 13px;
+  }
+  input { width: 90px; }
+  textarea {
+    width: 100%; resize: none;
+    background: var(--panel-2); color: var(--text);
+    border: 1px solid var(--border); border-radius: 10px;
+    padding: 10px 12px; font-size: 14px; line-height: 1.5;
+  }
+  textarea:focus, input:focus, select:focus { outline: 1px solid var(--accent); }
+  .row { display: flex; gap: 10px; align-items: flex-end; }
+  .row textarea { flex: 1; }
+  button.primary {
+    background: var(--accent); color: white; border: 0;
+    border-radius: 10px; padding: 10px 18px; font-size: 14px;
+    cursor: pointer; font-weight: 600;
+  }
+  button.primary:disabled { opacity: .55; cursor: not-allowed; }
+  button.ghost {
+    background: transparent; color: var(--muted);
+    border: 1px solid var(--border); border-radius: 10px;
+    padding: 9px 14px; cursor: pointer; font-size: 13px;
+  }
+  button.ghost:hover { color: var(--text); }
+  .presets { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+  .presets button {
+    background: var(--panel-2); color: var(--muted);
+    border: 1px solid var(--border); border-radius: 999px;
+    padding: 4px 10px; font-size: 12px; cursor: pointer;
+  }
+  .presets button:hover { color: var(--text); border-color: #3a4150; }
+  .hint { font-size: 11px; color: var(--muted); margin-top: 8px; }
+  .error { color: #ff6b6b; }
+</style>
+</head>
+<body>
+<header>
+  <h1>企业知识库 Agent · 测试台</h1>
+  <span class="badge">向量库 <b id="store">-</b></span>
+  <span class="badge">模型 <b id="model">-</b></span>
+</header>
+
+<main id="chat">
+  <div class="msg bot">
+    <div class="avatar">AI</div>
+    <div class="bubble">选择一个部门后提问。不同部门只能检索到各自授权范围内的文档。</div>
+  </div>
+</main>
+
+<footer>
+  <div class="controls">
+    <label>用户 <input id="uid" value="u1" /></label>
+    <label>部门
+      <select id="dept">
+        <option>Tech</option>
+        <option>HR</option>
+        <option>Finance</option>
+      </select>
+    </label>
+    <button class="ghost" id="reset">新对话</button>
+  </div>
+
+  <div class="row">
+    <textarea id="input" rows="2" placeholder="输入问题，Enter 发送 / Shift+Enter 换行"></textarea>
+    <button class="primary" id="send">发送</button>
+  </div>
+
+  <div class="presets">
+    <button data-q="What are the code review requirements?">代码评审要求</button>
+    <button data-q="How many days of annual leave do I get and when do they expire?">年假与过期</button>
+    <button data-q="What is the total 2026 operating budget?">2026 预算</button>
+    <button data-q="My laptop is broken and I need a replacement.">报修/工单</button>
+    <button data-q="What are the salary bands in the 2026 budget?">越权测试（薪资）</button>
+  </div>
+  <div class="hint">多轮对话会携带历史消息；右侧时间单位均为毫秒。</div>
+</footer>
+
+<script>
+const chat = document.getElementById("chat");
+const input = document.getElementById("input");
+const sendBtn = document.getElementById("send");
+const resetBtn = document.getElementById("reset");
+const deptSel = document.getElementById("dept");
+const uidInput = document.getElementById("uid");
+
+let history = [];
+let busy = false;
+
+function esc(s) {
+  return s.replace(/[&<>"']/g, c => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+  }[c]));
+}
+
+function addMsg(role, text, timings, isError) {
+  const wrap = document.createElement("div");
+  wrap.className = "msg " + (role === "user" ? "user" : "bot");
+
+  const avatar = document.createElement("div");
+  avatar.className = "avatar";
+  avatar.textContent = role === "user" ? "U" : "AI";
+
+  const bubble = document.createElement("div");
+  bubble.className = "bubble" + (isError ? " error" : "");
+  bubble.innerHTML = esc(text);
+
+  if (timings) {
+    const meta = document.createElement("div");
+    meta.className = "meta";
+    const order = [
+      ["total_ms", "总计"],
+      ["retrieval_ms", "检索"],
+      ["llm_ms", "LLM"],
+      ["overhead_ms", "框架"],
+    ];
+    const parts = [];
+    for (const [k, label] of order) {
+      if (timings[k] !== undefined) {
+        parts.push(`<span class="chip ${k === "total_ms" ? "total" : ""}">${label} ${timings[k]}ms</span>`);
+      }
+    }
+    if (timings.llm_calls !== undefined) {
+      parts.push(`<span class="chip">LLM ${timings.llm_calls} 次</span>`);
+    }
+    if (timings.retrieval_calls !== undefined) {
+      parts.push(`<span class="chip">检索 ${timings.retrieval_calls} 次</span>`);
+    }
+    meta.innerHTML = parts.join("");
+    bubble.appendChild(meta);
+  }
+
+  wrap.appendChild(avatar);
+  wrap.appendChild(bubble);
+  chat.appendChild(wrap);
+  chat.scrollTop = chat.scrollHeight;
+  return bubble;
+}
+
+async function send() {
+  const text = input.value.trim();
+  if (!text || busy) return;
+
+  busy = true;
+  sendBtn.disabled = true;
+  input.value = "";
+  addMsg("user", text);
+
+  const pending = addMsg("bot", "思考中…");
+  const started = performance.now();
+  const timer = setInterval(() => {
+    pending.innerHTML = `思考中… ${((performance.now() - started) / 1000).toFixed(1)}s`;
+  }, 200);
+
+  try {
+    const resp = await fetch("/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        user_id: uidInput.value.trim() || "u1",
+        user_dept: deptSel.value,
+        message: text,
+        history: history,
+      }),
+    });
+    const data = await resp.json();
+    clearInterval(timer);
+    pending.parentElement.remove();
+
+    if (!resp.ok) {
+      addMsg("bot", "请求失败：" + (data.detail || resp.status), null, true);
+    } else {
+      addMsg("bot", data.response, data.timings);
+      history.push({ role: "user", content: text });
+      history.push({ role: "assistant", content: data.response });
+    }
+  } catch (e) {
+    clearInterval(timer);
+    pending.parentElement.remove();
+    addMsg("bot", "网络错误：" + e.message, null, true);
+  } finally {
+    busy = false;
+    sendBtn.disabled = false;
+    input.focus();
+  }
+}
+
+sendBtn.onclick = send;
+input.addEventListener("keydown", e => {
+  if (e.key === "Enter" && !e.shiftKey) {
+    e.preventDefault();
+    send();
+  }
+});
+
+resetBtn.onclick = () => {
+  history = [];
+  chat.innerHTML = "";
+  addMsg("bot", "已开始新对话。");
+  input.focus();
+};
+
+document.querySelectorAll(".presets button").forEach(b => {
+  b.onclick = () => { input.value = b.dataset.q; input.focus(); };
+});
+
+fetch("/info").then(r => r.json()).then(d => {
+  document.getElementById("store").textContent = d.vector_store || "-";
+  document.getElementById("model").textContent = d.llm_model || "-";
+}).catch(() => {});
+</script>
+</body>
+</html>
