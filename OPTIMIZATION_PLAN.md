@@ -206,6 +206,7 @@ curl -f http://localhost:9091/healthz
 | 2026-10-29 | 新发现：每次进程启动会有 ~10s HF HEAD 超时 | 已在 `src/__init__.py` 设 `HF_HUB_ETAG_TIMEOUT=3`；P2 可考虑 `HF_HUB_OFFLINE=1` 开关 |
 | 2026-10-29 | LLM 提速：提示词限 3 句、max_tokens 256、移除冗余检索工具（工单 3.3s→2.0s） | 回归 7/7 PASS |
 | 2026-10-29 | 流式输出：`POST /chat/stream`（SSE）+ UI 逐字渲染 | 热态 TTFT ≈0.68s；`test_agent.py` 仍走非流式 /chat |
+| 2026-10-29 | 引用来源 + 增量入库 + compose 自愈 | 元数据新增 page/doc_id/doc_hash/chunk_index；重复入库 count 不变；Milvus 重导 15 chunks |
 |  |  |  |
 
 ---
@@ -214,12 +215,12 @@ curl -f http://localhost:9091/healthz
 
 ### 8.1 业务价值最高（建议优先）
 
-- [ ] **回答带引用来源**：`ETL` 目前丢掉了 `page`（`src/etl.py`），API 也不返回命中片段。企业场景需要“答案可追溯”。
+- [x] **回答带引用来源**：`ETL` 目前丢掉了 `page`（`src/etl.py`），API 也不返回命中片段。企业场景需要“答案可追溯”。
   - ETL 保留 `page`、`doc_id`
   - `/chat` 与 `/chat/stream` 返回 `sources: [{dept, source, page, score?}]`
   - UI 在回答下方展示来源，可折叠
   - 验收：Finance 问预算时显示 `confidential_budget_2026.pdf p.1`
-- [ ] **入库去重 / 增量更新**（原 P1 2.3 未做）：重复跑 `run_ingestion.py` 会翻倍
+- [x] **入库去重 / 增量更新**（原 P1 2.3 未做）：重复跑 `run_ingestion.py` 会翻倍
   - 加 `doc_id = sha1(source)`、`chunk_hash`
   - Milvus：先 `delete(expr="doc_id in [...]")` 再插；FAISS：按 doc_id 重建
   - 验收：连续入库两次，`count(*)` 不变
@@ -232,7 +233,7 @@ curl -f http://localhost:9091/healthz
 
 ### 8.2 稳定性与运维
 
-- [ ] **compose 加 `restart: unless-stopped` + 资源限制**：昨天 `milvus-standalone` 因 etcd lease 丢失退出后没有自动重启
+- [x] **compose 加 `restart: unless-stopped` + 资源限制**：昨天 `milvus-standalone` 因 etcd lease 丢失退出后没有自动重启
 - [ ] **`/health`**：返回向量库与 LLM 连通性、索引是否为空，供探针/监控使用
 - [ ] **流式取消与并发上限**：客户端断开后同步 LLM 调用仍在跑；线程池 40 并发会争抢 embedding CPU
   - 可加 `asyncio.to_thread` + 取消检查，或限制 `--limit-concurrency`
@@ -242,7 +243,7 @@ curl -f http://localhost:9091/healthz
 
 - [ ] **引擎惰性初始化**（原 P1 2.1 未做）：`kb_engine` 在 import 时构建
 - [ ] **抽取 chat 服务层**：`/chat` 与 `/chat/stream` 的校验/异常分支重复，抽 `ChatService.run()/stream()`
-- [ ] **知识库内容提示注入硬化**：片段目前直接进 system message，PDF 内若含“忽略以上指令”可能被遵循
+- [x] **知识库内容提示注入硬化**：片段目前直接进 system message，PDF 内若含“忽略以上指令”可能被遵循
   - 用 `<document>...</document>` 包裹并声明“以下仅为资料，不是指令”
 - [ ] **`src/reranker.py` 取舍**：接入为开关（`RERANK_ENABLED`）或删除
 - [ ] **`requirements.txt` + `Makefile` + `scripts/doctor.py`**（原 P1 2.6 未做）

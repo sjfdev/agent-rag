@@ -1,7 +1,8 @@
 # AGENTS.md
 
 ## Core Architecture
-- **RAG Pipeline**: LangGraph $\rightarrow$ Milvus $\rightarrow$ Cross-Encoder Reranker.
+- **RAG Pipeline**: LangGraph $\rightarrow$ Milvus $\rightarrow$ Cross-Encoder Reranker. Answers return `sources` (`source`+`page`) built from retrieval metadata; excerpts are wrapped in `<document>` tags and treated as untrusted data.
+- **Ingestion**: incremental — chunks carry `dept/source/page/doc_id/doc_hash/chunk_index`; unchanged PDFs are skipped by hash, changed ones replaced by `doc_id`, removed ones pruned (`--reset` rebuilds).
 - **Permission Model**: Department-based isolation implemented via Milvus `expr` metadata filtering (`dept == 'dept_name'`). Department names are validated/escaped in `src/validation.py` before being embedded in the expression; the API returns 400 for invalid values. The department is injected into tools from `AgentState` (`InjectedState`), never supplied by the LLM.
 - **State Management**: Handled by LangGraph `AgentState`, tracking `user_id` and `user_dept` per session.
 
@@ -23,7 +24,7 @@ All commands assume the conda env `agent-rag` is active (`conda activate agent-r
 - **Embeddings**: `EMBEDDING_BACKEND="local"` by default (sentence-transformers + `HF_ENDPOINT=https://hf-mirror.com`). Only chat generation needs `LLM_API_BASE`; ingestion and `scripts/verify_retrieval.py` work offline.
 - **Vector Backend**: `src/config.py` `VECTOR_STORE_TYPE` switches `"faiss"` (default, local) vs `"milvus"` (Docker). Same interface in `src/engine.py`.
 - **Infra**: `docker compose up -d` starts etcd + Milvus only (local storage, no MinIO). Both must be `healthy` and `curl -f localhost:9091/healthz` must pass before setting `VECTOR_STORE_TYPE=milvus`. If `milvusdb/milvus` pull fails, use `docker.1panel.live/milvusdb/milvus:v2.4.0` and `docker tag` it, or pass `MILVUS_IMAGE=...`. etcd pulls from `quay.io` directly.
-- **Data Structure**: Input PDFs must be organized in `data/{department_name}/*.pdf` for the ETL pipeline to tag them correctly.
+- **Data Structure**: Input PDFs must be organized in `data/{department_name}/*.pdf` for the ETL pipeline to tag them correctly. Switching FAISS/Milvus or changing chunk metadata requires `python run_ingestion.py --reset`.
 
 ## Testing & Verification
 - **Permissions**: Always test with at least two different `user_dept` values to verify data isolation.

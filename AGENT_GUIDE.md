@@ -186,19 +186,47 @@ LLM_MODEL=qwen2.5:latest
 
 ```bash
 python scripts/generate_samples.py   # 可选：生成 8 份样例 PDF
-python run_ingestion.py              # 读取 data/<dept>/*.pdf
+python run_ingestion.py              # 增量入库，读取 data/<dept>/*.pdf
+python run_ingestion.py --reset      # 清空索引后全量重建
 python scripts/verify_retrieval.py   # 离线校验（不需要 LLM）
 ```
 
 输出示例：
 
 ```
-Vector store: faiss
-Successfully ingested 5 chunks for Finance.
-Successfully ingested 4 chunks for HR.
-Successfully ingested 6 chunks for Tech.
-RESULT: OK - isolation holds
+Vector store: milvus
+
+[Finance]
+  add      Finance/confidential_budget_2026.pdf (1 chunks)
+  add      Finance/expense_reimbursement_policy.pdf (2 chunks)
+  add      Finance/travel_policy.pdf (2 chunks)
+
+[HR]
+  add      HR/benefits_guide.pdf (2 chunks)
+  ...
+
+Done. docs: added=8 updated=0 skipped=0 pruned=0; chunks written=15
 ```
+
+再次执行时未改动的文件会显示 `skip ... (unchanged)`，向量数不变。
+
+每个 chunk 的元数据：
+
+| 字段 | 说明 |
+|---|---|
+| `dept` | 部门（权限过滤依据） |
+| `source` | 相对路径，如 `Finance/travel_policy.pdf`（不含绝对路径，可直接展示） |
+| `page` | PDF 页码（从 1 开始） |
+| `doc_id` | `sha1(dept|source)`，文档级去重/删除的键 |
+| `doc_hash` | 文件内容 sha1，用于判断是否变更 |
+| `chunk_index` | 文档内切片序号 |
+
+增量行为：
+
+- 内容未变 → 跳过（不重复 embedding）
+- 内容变更 → 删除该 `doc_id` 的旧 chunk 后重新写入
+- 文件删除 → 自动清理其 chunk（`--no-prune` 可关闭）
+- 切换 FAISS/Milvus 或元数据结构变化后，用 `--reset` 重建
 
 ### 4.6 启动 Milvus（可选）
 
@@ -257,6 +285,10 @@ uvicorn main:app --host 0.0.0.0 --port 8000
 ```json
 {
   "response": "Every change must go through a pull request ...",
+  "sources": [
+    {"source": "Tech/coding_standards.pdf", "dept": "Tech", "page": 1},
+    {"source": "Tech/security_policy.pdf", "dept": "Tech", "page": 1}
+  ],
   "timings": {
     "retrieval_ms": 20.2,
     "retrieval_calls": 1,
@@ -268,7 +300,7 @@ uvicorn main:app --host 0.0.0.0 --port 8000
 }
 ```
 
-时间单位均为**毫秒**，`*_calls` 为次数。
+时间单位均为**毫秒**，`*_calls` 为次数。`sources` 为本次回答实际使用的去重片段（文档 + 页码），UI 中显示为「来源」标签；改用工具建单时仍保留首次检索到的来源。
 
 错误响应：
 
@@ -296,10 +328,10 @@ curl -N http://localhost:8000/chat/stream \
 ```
 data: {"type":"token","content":"The total "}
 data: {"type":"token","content":"2026 operating budget is ..."}
-data: {"type":"done","timings":{"retrieval_ms":20.1,"llm_ms":1287.2,"llm_calls":1,"total_ms":1311.3,"overhead_ms":4.0}}
+data: {"type":"done","sources":[{"source":"Finance/confidential_budget_2026.pdf","dept":"Finance","page":1}],"timings":{"retrieval_ms":20.1,"llm_ms":1287.2,"llm_calls":1,"total_ms":1311.3,"overhead_ms":4.0}}
 ```
 
-出错时返回 `{"type":"error","message":"internal error","request_id":"..."}`。实测热态首 token ≈0.68s，整段 ≈1.1–1.3s。
+出错时返回 `{"type":"error","code":"internal_error|upstream_unavailable","message":"...","request_id":"..."}`。实测热态首 token ≈0.68s，整段 ≈1.1–1.3s。
 
 非流式接口：
 
@@ -514,7 +546,7 @@ python scripts/bench_retrieval.py
 
 1. `run_ingestion.py` 按部门循环、逐个 `add_documents`；文档多时可改为批量/并发 embedding（`encode_kwargs={"batch_size": 64}`）。
 2. 大文件可先做 OCR/表格抽取，避免 PDF 解析丢内容导致检索命中率低。
-3. 定期重建索引，避免重复入库带来的冗余向量与噪声。
+3. 增量入库已按 `doc_hash` 跳过未变文件、按 `doc_id` 替换与清理；如需彻底清空用 `--reset`。
 
 ---
 

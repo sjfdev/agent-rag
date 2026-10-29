@@ -70,6 +70,7 @@ class ChatRequest(BaseModel):
 
 class ChatResponse(BaseModel):
     response: str
+    sources: List[Dict[str, Any]] = []
     timings: Dict[str, Any] = {}
 
 
@@ -146,7 +147,9 @@ def chat(request: ChatRequest, response: Response):
             timings.get("llm_calls"),
         )
         return ChatResponse(
-            response=final_state["messages"][-1].content, timings=timings
+            response=final_state["messages"][-1].content,
+            sources=final_state.get("sources") or [],
+            timings=timings,
         )
     except Exception as e:
         upstream = _is_upstream_error(e)
@@ -170,7 +173,7 @@ def chat(request: ChatRequest, response: Response):
 def chat_stream(request: ChatRequest):
     """Same as /chat but streams tokens as Server-Sent Events.
 
-    Events: {"type":"token","content":...} ... {"type":"done","timings":{...}}
+    Events: {"type":"token","content":...} ... {"type":"done","sources":[...],"timings":{...}}
     """
     request_id = uuid.uuid4().hex[:8]
 
@@ -210,7 +213,13 @@ def chat_stream(request: ChatRequest):
                 timings.get("llm_ms"),
                 timings.get("llm_calls"),
             )
-            yield _sse({"type": "done", "timings": timings})
+            yield _sse(
+                {
+                    "type": "done",
+                    "sources": final_state.get("sources") or [],
+                    "timings": timings,
+                }
+            )
         except Exception as e:
             upstream = _is_upstream_error(e)
             logger.exception(

@@ -124,6 +124,9 @@
   .presets button:hover { color: var(--text); border-color: #3a4150; }
   .hint { font-size: 11px; color: var(--muted); margin-top: 8px; }
   .error { color: #ff6b6b; }
+  .sources { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  .sources-title { font-size: 11px; color: var(--muted); letter-spacing: .5px; }
+  .chip.src { font-size: 11px; color: var(--muted); border-color: #2a3444; }
   .bubble.streaming::after { content: "▍"; margin-left: 2px; animation: blink 1s steps(1) infinite; }
   @keyframes blink { 50% { opacity: 0; } }
 </style>
@@ -188,6 +191,26 @@ function esc(s) {
   }[c]));
 }
 
+function attachSources(bubble, sources) {
+  if (!sources || !sources.length) return;
+  const box = document.createElement("div");
+  box.className = "sources";
+  const title = document.createElement("span");
+  title.className = "sources-title";
+  title.textContent = "来源";
+  box.appendChild(title);
+
+  for (const src of sources) {
+    const chip = document.createElement("span");
+    chip.className = "chip src";
+    const page = src.page !== undefined ? ` · p.${src.page}` : "";
+    chip.textContent = (src.source || "unknown") + page;
+    chip.title = src.dept ? `部门：${src.dept}` : "";
+    box.appendChild(chip);
+  }
+  bubble.appendChild(box);
+}
+
 function attachTimings(bubble, timings) {
   if (!timings) return;
   const meta = document.createElement("div");
@@ -249,6 +272,7 @@ async function send() {
   const started = performance.now();
   let answer = "";
   let timings = null;
+  let sources = [];
 
   try {
     const resp = await fetch("/chat/stream", {
@@ -306,6 +330,7 @@ async function send() {
           chat.scrollTop = chat.scrollHeight;
         } else if (ev.type === "done") {
           timings = ev.timings;
+          if (ev.sources) sources = ev.sources;
         } else if (ev.type === "error") {
           bubble.classList.remove("streaming");
           bubble.classList.add("error");
@@ -334,6 +359,7 @@ async function send() {
 
     bubble.classList.remove("streaming");
     if (answer) {
+      attachSources(bubble, sources);
       attachTimings(bubble, timings);
       history.push({ role: "user", content: text });
       history.push({ role: "assistant", content: answer });

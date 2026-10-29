@@ -55,6 +55,16 @@ def check(name, condition, detail=""):
         print(f"FAIL  {name}  {detail}")
 
 
+def has_sources(data, dept):
+    sources = (data or {}).get("sources") or []
+    if not sources:
+        return False
+    return all(
+        s.get("dept") == dept and s.get("source") and isinstance(s.get("page"), int)
+        for s in sources
+    )
+
+
 def has_timings(data):
     t = (data or {}).get("timings", {})
     return all(k in t for k in ("retrieval_ms", "llm_ms", "total_ms")) and t[
@@ -69,6 +79,7 @@ def main():
     text = (data or {}).get("response", "").lower()
     check("code review answered", "review" in text and "pull request" in text, text[:120])
     check("code review timings", has_timings(data))
+    check("code review citations", has_sources(data, "Tech"), str((data or {}).get("sources"))[:160])
 
     # 2. Permission denied: Tech must not see Finance salary bands
     print("[2] Tech: salary bands (cross-department)")
@@ -82,6 +93,17 @@ def main():
     data, _ = ask("u2", "Finance", "What is the total 2026 operating budget?")
     text = (data or {}).get("response", "")
     check("budget figure returned", "48,000,000" in text, text[:120])
+    sources = (data or {}).get("sources") or []
+    check(
+        "budget cites the confidential PDF",
+        any("confidential_budget_2026.pdf" in (s.get("source") or "") for s in sources),
+        str(sources)[:160],
+    )
+    check(
+        "citations hide absolute paths",
+        all(not (s.get("source") or "").startswith("/") for s in sources),
+        str(sources)[:160],
+    )
 
     # 4. HR policy retrieval
     print("[4] HR: annual leave")
