@@ -605,7 +605,8 @@ python scripts/bench_retrieval.py
 | 本地 embedding | 141ms（首条预热 1.25s） | 18ms |
 | FAISS 检索 | 14ms | 16ms |
 | Milvus 检索 | 24ms | 24ms |
-| MiniLM 重排（12→4，可选） | +196ms | +190ms |
+| MiniLM 重排（12→4，可选） | +205ms | +190ms |
+| BGE reranker-base（12→4，可选） | +1226ms | +1116ms |
 | 云端 LLM 单次 | 1318ms | 1397ms |
 
 结论：**LLM 占 80–95%**，向量库占比 <2%。优化优先级依次为 LLM → 调用次数 → 输出长度 → 检索/切分。
@@ -624,7 +625,7 @@ python scripts/bench_retrieval.py
 2. **建立索引**：Milvus 默认可为 `enterprise_kb` 建 HNSW 索引并 `load`，大规模下显著降低搜索延迟。
 3. **控制候选数**：`k` 从 4 提到更高会增加 prompt 长度和 LLM 时间。
 4. **切分参数**：`RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=100)`。chunk 太小召回碎片化，太大增加 prompt；按文档类型调整。
-5. **二阶段重排**：`src/reranker.py` 已接入 `kb_engine.search`，设置 `RERANK_ENABLED=true` 后先取 `RERANK_CANDIDATES` 个候选，再由 CrossEncoder 取 top-k。默认关闭；CPU 上实测 MiniLM 增加约 190ms（p50），评测 MRR 0.91 → 0.97。中文语料建议用 `BAAI/bge-reranker-base`（约 1.1GB，CPU 更慢）。
+5. **二阶段重排**：`src/reranker.py` 已接入 `kb_engine.search`，设置 `RERANK_ENABLED=true` 后先取 `RERANK_CANDIDATES` 个候选，再由 CrossEncoder 取 top-k。默认关闭。24 条中英评测：不重排 MRR 0.88 / p50≈16ms；MiniLM 重排 +≈205ms、MRR 0.92；`bge-reranker-base` 重排 +≈1.2s（p95 4.8s）、MRR 0.97。中文优先 BGE，英文/低延迟选 MiniLM，二者都需先缓存模型。
 6. **多轮检索改写**：`src/agent.py::_retrieval_query` 检测代词/指示词或极短问句，把上一轮问题拼进检索 query，不额外调用 LLM。实测追问 "Who approves it?" 时目标文档从第 3 位升到第 1 位。
 7. **评测闭环**：`eval/cases.jsonl` + `scripts/eval_retrieval.py`，覆盖 Tech/Finance/HR/Demo 共 18 个命中用例和 6 个跨部门泄漏用例；调参或换重排模型后先跑它。
 

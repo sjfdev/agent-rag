@@ -306,7 +306,7 @@ curl -f http://localhost:9091/healthz
 
 - [x] **检索评测**：`eval/cases.jsonl`（18 命中 + 6 泄漏用例）+ `scripts/eval_retrieval.py`；两后端 hit@4=100%、MRR=0.91、leaks=0，p50 10–16ms
 - [x] **多轮检索改写**：`_retrieval_query` 检测代词/短句并拼接上一轮问题；追问时目标文档从第 3 升到第 1
-- [x] **重排接入**：`kb_engine.search` 支持 `RERANK_ENABLED`；MiniLM 实测 MRR 0.91→0.97、p50 +190ms，默认关闭
+- [x] **重排接入**：`kb_engine.search` 支持 `RERANK_ENABLED`；24 条评测中 MiniLM MRR 0.88→0.92（+205ms）、BGE-base 0.88→0.97（+1.2s），默认关闭
 - [x] **引用增强**：`sources` 增加 `snippet`，UI 折叠面板可展开原文
 - [x] **重建期间降级**：reset 置维护标志，`/chat` 立即返回 503 `index rebuilding`，完成后自动恢复（已实测）
 - [ ] **零停机 alias 切换**：Milvus 仍为 drop→rebuild；FAISS 写在原目录
