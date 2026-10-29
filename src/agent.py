@@ -34,8 +34,10 @@ Rules:
    contain the answer, say the information is not available for the user's
    department. Never speculate about other departments' data.
 3. If the issue is a technical problem the knowledge base cannot solve
-   (e.g. broken hardware), call create_support_ticket.
-4. Reply in the user's language, concise, at most 120 words.
+   (e.g. broken hardware), call create_support_ticket. When the tool returns a
+   ticket id, repeat that id verbatim in your answer.
+4. Reply in the user's language. Be brief: at most 3 sentences (<=60 words).
+   No preamble, no restating the question, no extra suggestions.
 """
 
 
@@ -47,6 +49,7 @@ llm = ChatOpenAI(
     max_tokens=settings.LLM_MAX_TOKENS,
     timeout=settings.LLM_TIMEOUT,
     max_retries=settings.LLM_MAX_RETRIES,
+    streaming=True,  # lets LangGraph stream tokens via stream_mode="messages"
 ).bind_tools(agent_tools)
 
 

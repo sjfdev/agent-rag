@@ -124,6 +124,8 @@
   .presets button:hover { color: var(--text); border-color: #3a4150; }
   .hint { font-size: 11px; color: var(--muted); margin-top: 8px; }
   .error { color: #ff6b6b; }
+  .bubble.streaming::after { content: "▍"; margin-left: 2px; animation: blink 1s steps(1) infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
 </style>
 </head>
 <body>
@@ -185,6 +187,32 @@ function esc(s) {
   }[c]));
 }
 
+function attachTimings(bubble, timings) {
+  if (!timings) return;
+  const meta = document.createElement("div");
+  meta.className = "meta";
+  const order = [
+    ["total_ms", "总计"],
+    ["retrieval_ms", "检索"],
+    ["llm_ms", "LLM"],
+    ["overhead_ms", "框架"],
+  ];
+  const parts = [];
+  for (const [k, label] of order) {
+    if (timings[k] !== undefined) {
+      parts.push(`<span class="chip ${k === "total_ms" ? "total" : ""}">${label} ${timings[k]}ms</span>`);
+    }
+  }
+  if (timings.llm_calls !== undefined) {
+    parts.push(`<span class="chip">LLM ${timings.llm_calls} 次</span>`);
+  }
+  if (timings.retrieval_calls !== undefined) {
+    parts.push(`<span class="chip">检索 ${timings.retrieval_calls} 次</span>`);
+  }
+  meta.innerHTML = parts.join("");
+  bubble.appendChild(meta);
+}
+
 function addMsg(role, text, timings, isError) {
   const wrap = document.createElement("div");
   wrap.className = "msg " + (role === "user" ? "user" : "bot");
@@ -197,30 +225,7 @@ function addMsg(role, text, timings, isError) {
   bubble.className = "bubble" + (isError ? " error" : "");
   bubble.innerHTML = esc(text);
 
-  if (timings) {
-    const meta = document.createElement("div");
-    meta.className = "meta";
-    const order = [
-      ["total_ms", "总计"],
-      ["retrieval_ms", "检索"],
-      ["llm_ms", "LLM"],
-      ["overhead_ms", "框架"],
-    ];
-    const parts = [];
-    for (const [k, label] of order) {
-      if (timings[k] !== undefined) {
-        parts.push(`<span class="chip ${k === "total_ms" ? "total" : ""}">${label} ${timings[k]}ms</span>`);
-      }
-    }
-    if (timings.llm_calls !== undefined) {
-      parts.push(`<span class="chip">LLM ${timings.llm_calls} 次</span>`);
-    }
-    if (timings.retrieval_calls !== undefined) {
-      parts.push(`<span class="chip">检索 ${timings.retrieval_calls} 次</span>`);
-    }
-    meta.innerHTML = parts.join("");
-    bubble.appendChild(meta);
-  }
+  if (timings) attachTimings(bubble, timings);
 
   wrap.appendChild(avatar);
   wrap.appendChild(bubble);
@@ -238,14 +243,14 @@ async function send() {
   input.value = "";
   addMsg("user", text);
 
-  const pending = addMsg("bot", "思考中…");
+  const bubble = addMsg("bot", "思考中…");
+  bubble.classList.add("streaming");
   const started = performance.now();
-  const timer = setInterval(() => {
-    pending.innerHTML = `思考中… ${((performance.now() - started) / 1000).toFixed(1)}s`;
-  }, 200);
+  let answer = "";
+  let timings = null;
 
   try {
-    const resp = await fetch("/chat", {
+    const resp = await fetch("/chat/stream", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -255,21 +260,65 @@ async function send() {
         history: history,
       }),
     });
-    const data = await resp.json();
-    clearInterval(timer);
-    pending.parentElement.remove();
 
     if (!resp.ok) {
-      addMsg("bot", "请求失败：" + (data.detail || resp.status), null, true);
-    } else {
-      addMsg("bot", data.response, data.timings);
+      let detail = resp.status;
+      try { detail = (await resp.json()).detail || detail; } catch (e) {}
+      bubble.classList.remove("streaming");
+      bubble.classList.add("error");
+      bubble.textContent = "请求失败：" + (typeof detail === "object" ? JSON.stringify(detail) : detail);
+      return;
+    }
+
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let firstToken = true;
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      let idx;
+      while ((idx = buffer.indexOf("\n\n")) !== -1) {
+        const raw = buffer.slice(0, idx);
+        buffer = buffer.slice(idx + 2);
+        if (!raw.startsWith("data: ")) continue;
+
+        let ev;
+        try { ev = JSON.parse(raw.slice(6)); } catch (e) { continue; }
+
+        if (ev.type === "token") {
+          if (firstToken) {
+            firstToken = false;
+            bubble.textContent = "";
+          }
+          answer += ev.content;
+          bubble.textContent = answer;
+          chat.scrollTop = chat.scrollHeight;
+        } else if (ev.type === "done") {
+          timings = ev.timings;
+        } else if (ev.type === "error") {
+          bubble.classList.remove("streaming");
+          bubble.classList.add("error");
+          bubble.textContent = "内部错误（request_id=" + ev.request_id + "）";
+        }
+      }
+    }
+
+    bubble.classList.remove("streaming");
+    if (answer) {
+      attachTimings(bubble, timings);
       history.push({ role: "user", content: text });
-      history.push({ role: "assistant", content: data.response });
+      history.push({ role: "assistant", content: answer });
+    } else if (!bubble.classList.contains("error")) {
+      bubble.textContent = "（没有返回内容）";
     }
   } catch (e) {
-    clearInterval(timer);
-    pending.parentElement.remove();
-    addMsg("bot", "网络错误：" + e.message, null, true);
+    bubble.classList.remove("streaming");
+    bubble.classList.add("error");
+    bubble.textContent = "网络错误：" + e.message;
   } finally {
     busy = false;
     sendBtn.disabled = false;

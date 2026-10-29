@@ -35,4 +35,7 @@ def create_support_ticket(issue: str, state: Annotated[dict, InjectedState]):
     )
 
 
-agent_tools = [search_knowledge_base, create_support_ticket]
+# Retrieval is performed deterministically in call_model, so exposing the search
+# tool only adds an extra LLM round-trip. Keep it importable, but don't hand it to
+# the model.
+agent_tools = [create_support_ticket]

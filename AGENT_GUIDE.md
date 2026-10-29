@@ -233,7 +233,8 @@ uvicorn main:app --host 0.0.0.0 --port 8000
 | `http://localhost:8000/ui/` | 网页测试台 |
 | `http://localhost:8000/docs` | Swagger |
 | `GET /info` | 当前向量库 / 模型 / embedding 后端 |
-| `POST /chat` | 对话接口 |
+| `POST /chat` | 对话接口（一次性返回） |
+| `POST /chat/stream` | 流式对话（SSE，逐 token 返回） |
 
 ### 5.2 `/chat` 接口
 
@@ -281,6 +282,26 @@ uvicorn main:app --host 0.0.0.0 --port 8000
 
 约束：`user_id` ≤64、`user_dept` ≤64（仅字母/数字/下划线/中划线/中文）、`message` 1–4000 字符、`history` ≤20 条。
 
+流式接口（推荐给前端）：
+
+```bash
+curl -N http://localhost:8000/chat/stream \
+  -H 'Content-Type: application/json' \
+  -d '{"user_id":"u1","user_dept":"Finance","message":"What is the total 2026 operating budget?","history":[]}'
+```
+
+事件格式（每条以 `data: ` 开头，空行分隔）：
+
+```
+data: {"type":"token","content":"The total "}
+data: {"type":"token","content":"2026 operating budget is ..."}
+data: {"type":"done","timings":{"retrieval_ms":20.1,"llm_ms":1287.2,"llm_calls":1,"total_ms":1311.3,"overhead_ms":4.0}}
+```
+
+出错时返回 `{"type":"error","message":"internal error","request_id":"..."}`。实测热态首 token ≈0.68s，整段 ≈1.1–1.3s。
+
+非流式接口：
+
 ```bash
 curl -s http://localhost:8000/chat \
   -H 'Content-Type: application/json' \
@@ -291,7 +312,7 @@ curl -s http://localhost:8000/chat \
 
 - 选择部门、填写 user_id 后提问；Enter 发送，Shift+Enter 换行
 - 多轮对话会自动携带历史；「新对话」清空
-- 每条回答显示：总计 / 检索 / LLM / 框架开销 / 调用次数
+- 回答**逐字流式渲染**（首字约 0.7s 出现），结束后显示总计 / 检索 / LLM / 框架开销 / 调用次数
 - 预设按钮包含「越权测试（薪资）」，可直接验证 Tech 用户拿不到 Finance 薪资
 
 ### 5.4 测试与诊断脚本

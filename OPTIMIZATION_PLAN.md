@@ -140,8 +140,8 @@ VECTOR_STORE_TYPE=milvus uvicorn main:app --port 8000   # 当前 .env 是 faiss�
 
 ## 3. P2 体验与规模化（有余力再做）
 
-- [ ] 离线启动开关：模型已缓存时设置 `HF_HUB_OFFLINE=1`，避免每次启动的远端元数据探测
-- [ ] 流式输出（SSE）降低首字延迟；`/chat/stream`
+- [x] 离线启动开关：模型已缓存时设置 `HF_HUB_OFFLINE=1`，避免每次启动的远端元数据探测
+- [x] 流式输出（SSE）降低首字延迟；`/chat/stream`（已实现，UI 逐字渲染）
 - [ ] 相似问题缓存（内存 LRU / Redis），命中直接返回
 - [ ] `user_depts: list[str]` 支持多部门，Milvus 用 `dept in [...]`
 - [ ] `/health` 返回向量库与 LLM 连通性
@@ -204,4 +204,6 @@ curl -f http://localhost:9091/healthz
 | 2026-10-29 | 基线可用：FAISS/Milvus 双后端、部门隔离、云端 LLM、UI、timings、文档 | 见 `AGENT_GUIDE.md` |
 | 2026-10-29 | P0 全部完成（1.1–1.7） | 回归：verify_retrieval OK、test_agent 7/7 PASS、注入串全部拦截、LLM 不可用返回通用 500 |
 | 2026-10-29 | 新发现：每次进程启动会有 ~10s HF HEAD 超时 | 已在 `src/__init__.py` 设 `HF_HUB_ETAG_TIMEOUT=3`；P2 可考虑 `HF_HUB_OFFLINE=1` 开关 |
+| 2026-10-29 | LLM 提速：提示词限 3 句、max_tokens 256、移除冗余检索工具（工单 3.3s→2.0s） | 回归 7/7 PASS |
+| 2026-10-29 | 流式输出：`POST /chat/stream`（SSE）+ UI 逐字渲染 | 热态 TTFT ≈0.68s；`test_agent.py` 仍走非流式 /chat |
 |  |  |  |

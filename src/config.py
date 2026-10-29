@@ -13,7 +13,7 @@ class Settings(BaseSettings):
     LLM_API_KEY: str = "ollama"
     LLM_MODEL: str = "qwen2.5:latest"
     LLM_TIMEOUT: int = 30
-    LLM_MAX_TOKENS: int = 512
+    LLM_MAX_TOKENS: int = 256
     LLM_MAX_RETRIES: int = 2
     AGENT_RECURSION_LIMIT: int = 6
 

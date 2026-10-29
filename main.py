@@ -1,3 +1,4 @@
+import json
 import logging
 import time
 import uuid
@@ -5,7 +6,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Literal
 
 from fastapi import FastAPI, HTTPException, Response
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from langchain_core.messages import AIMessage, HumanMessage
 from pydantic import BaseModel, Field
@@ -59,6 +60,42 @@ class ChatResponse(BaseModel):
     timings: Dict[str, Any] = {}
 
 
+def _prepare(request: ChatRequest) -> Dict[str, Any]:
+    """Validate the department and convert the payload into graph input."""
+    safe_dept = validate_dept(request.user_dept)  # raises InvalidDepartment
+
+    messages = []
+    for item in request.history:
+        cls = HumanMessage if item.role == "user" else AIMessage
+        messages.append(cls(content=item.content))
+    messages.append(HumanMessage(content=request.message))
+
+    return {
+        "messages": messages,
+        "user_id": request.user_id,
+        "user_dept": safe_dept,
+    }
+
+
+def _timings(final_state: Dict[str, Any], started: float) -> Dict[str, Any]:
+    timings = {
+        k: (int(v) if k.endswith("_calls") else round(float(v), 1))
+        for k, v in (final_state.get("timings") or {}).items()
+    }
+    timings["total_ms"] = round((time.perf_counter() - started) * 1000, 1)
+    timings["overhead_ms"] = round(
+        timings["total_ms"]
+        - timings.get("retrieval_ms", 0.0)
+        - timings.get("llm_ms", 0.0),
+        1,
+    )
+    return timings
+
+
+def _sse(payload: Dict[str, Any]) -> str:
+    return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+
 @app.on_event("startup")
 async def startup_event():
     # Data is loaded by `python run_ingestion.py`; just warn if the store is empty.
@@ -74,61 +111,109 @@ def chat(request: ChatRequest, response: Response):
     started = time.perf_counter()
 
     try:
-        safe_dept = validate_dept(request.user_dept)
+        inputs = _prepare(request)
     except InvalidDepartment:
         logger.warning(
             "rejected invalid dept request_id=%s dept=%r", request_id, request.user_dept
         )
         raise HTTPException(status_code=400, detail="invalid department name")
 
-    messages = []
-    for item in request.history:
-        cls = HumanMessage if item.role == "user" else AIMessage
-        messages.append(cls(content=item.content))
-    messages.append(HumanMessage(content=request.message))
-
-    inputs = {
-        "messages": messages,
-        "user_id": request.user_id,
-        "user_dept": safe_dept,
-    }
-
     try:
         final_state = agent_app.invoke(
             inputs, config={"recursion_limit": settings.AGENT_RECURSION_LIMIT}
         )
-        final_message = final_state["messages"][-1].content
-
-        timings = {
-            k: (int(v) if k.endswith("_calls") else round(float(v), 1))
-            for k, v in (final_state.get("timings") or {}).items()
-        }
-        timings["total_ms"] = round((time.perf_counter() - started) * 1000, 1)
-        timings["overhead_ms"] = round(
-            timings["total_ms"]
-            - timings.get("retrieval_ms", 0.0)
-            - timings.get("llm_ms", 0.0),
-            1,
-        )
+        timings = _timings(final_state, started)
 
         logger.info(
             "chat ok request_id=%s dept=%s total_ms=%s llm_ms=%s llm_calls=%s",
             request_id,
-            safe_dept,
+            inputs["user_dept"],
             timings["total_ms"],
             timings.get("llm_ms"),
             timings.get("llm_calls"),
         )
-        return ChatResponse(response=final_message, timings=timings)
+        return ChatResponse(
+            response=final_state["messages"][-1].content, timings=timings
+        )
     except Exception:
         logger.exception(
-            "chat failed request_id=%s dept=%s", request_id, safe_dept
+            "chat failed request_id=%s dept=%s", request_id, inputs["user_dept"]
         )
         raise HTTPException(
             status_code=500,
             detail={"error": "internal error", "request_id": request_id},
             headers={"X-Request-ID": request_id},
         )
+
+
+@app.post("/chat/stream")
+def chat_stream(request: ChatRequest):
+    """Same as /chat but streams tokens as Server-Sent Events.
+
+    Events: {"type":"token","content":...} ... {"type":"done","timings":{...}}
+    """
+    request_id = uuid.uuid4().hex[:8]
+
+    try:
+        inputs = _prepare(request)
+    except InvalidDepartment:
+        logger.warning(
+            "rejected invalid dept request_id=%s dept=%r", request_id, request.user_dept
+        )
+        raise HTTPException(status_code=400, detail="invalid department name")
+
+    def event_stream():
+        started = time.perf_counter()
+        final_state: Dict[str, Any] = {}
+        try:
+            for mode, payload in agent_app.stream(
+                inputs,
+                stream_mode=["messages", "values"],
+                config={"recursion_limit": settings.AGENT_RECURSION_LIMIT},
+            ):
+                if mode == "messages":
+                    chunk, meta = payload
+                    if meta.get("langgraph_node") != "agent":
+                        continue
+                    text = getattr(chunk, "content", "")
+                    if text:
+                        yield _sse({"type": "token", "content": text})
+                elif mode == "values":
+                    final_state = payload
+
+            timings = _timings(final_state, started)
+            logger.info(
+                "chat stream ok request_id=%s dept=%s total_ms=%s llm_ms=%s llm_calls=%s",
+                request_id,
+                inputs["user_dept"],
+                timings["total_ms"],
+                timings.get("llm_ms"),
+                timings.get("llm_calls"),
+            )
+            yield _sse({"type": "done", "timings": timings})
+        except Exception:
+            logger.exception(
+                "chat stream failed request_id=%s dept=%s",
+                request_id,
+                inputs["user_dept"],
+            )
+            yield _sse(
+                {
+                    "type": "error",
+                    "message": "internal error",
+                    "request_id": request_id,
+                }
+            )
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "X-Request-ID": request_id,
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 if __name__ == "__main__":
