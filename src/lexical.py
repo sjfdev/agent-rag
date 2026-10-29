@@ -98,10 +98,10 @@ class LexicalCache:
         index = LexicalIndex(docs)
         with self._lock:
             if self._version != version:
-                self._indexes.clear()
-                self._version = version
-            self._indexes.setdefault(dept, index)
-            return self._indexes[dept]
+                # A write landed while we were building; do not cache an index
+                # that predates it. The next call rebuilds against the new data.
+                return index
+            return self._indexes.setdefault(dept, index)
 
     def invalidate(self) -> None:
         with self._lock:

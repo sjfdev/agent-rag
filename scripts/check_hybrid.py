@@ -68,6 +68,16 @@ def main() -> int:
     cache.get("Tech", 2, loader)
     check("invalidate forces reload", loads["n"] == 3, str(loads))
 
+    def racing_loader(_dept: str):
+        loads["n"] += 1
+        # Simulate an ingestion write completing mid-build.
+        cache._version = 99
+        return docs
+
+    cache.get("Tech", 3, racing_loader)
+    cache.get("Tech", 3, loader)
+    check("stale build is not cached", loads["n"] == 5, str(loads))
+
     print(f"\nRESULT: {'OK' if not FAIL else 'FAILED'} - {len(PASS)} passed, {len(FAIL)} failed")
     return 0 if not FAIL else 1
 
