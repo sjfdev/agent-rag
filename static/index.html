@@ -152,7 +152,8 @@
         <option>Finance</option>
       </select>
     </label>
-    <button class="ghost" id="reset">新对话</button>
+    <button class="ghost" id="newchat" title="在新标签页打开一个全新会话">新对话（新窗口）</button>
+    <button class="ghost" id="reset">清空当前</button>
   </div>
 
   <div class="row">
@@ -374,10 +375,18 @@ uidInput.addEventListener("change", () => {
   startNewSession(`已切换用户 ${uidInput.value || "u1"}，开始新对话。`);
 });
 
+const newChatBtn = document.getElementById("newchat");
+
+// Open a brand-new session in a separate tab; the current conversation stays intact.
+newChatBtn.onclick = () => {
+  window.open(`${location.pathname}?new=${Date.now()}`, "_blank", "noopener");
+};
+
+// Explicitly clear this tab's conversation.
 resetBtn.onclick = () => {
   history = [];
   chat.innerHTML = "";
-  addMsg("bot", "已开始新对话。");
+  addMsg("bot", "已清空当前对话。");
   input.focus();
 };
 
