@@ -1,11 +1,13 @@
 import json
 import logging
+import secrets
+import threading
 import time
 import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Literal
 
-from fastapi import FastAPI, HTTPException, Response
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from langchain_core.messages import AIMessage, HumanMessage
@@ -17,6 +19,7 @@ from src.config import settings
 from src.runtime import in_maintenance
 from src.engine import kb_engine
 from src.health import router as health_router
+from src import metrics
 from src.validation import InvalidDepartment, validate_dept
 
 # Vector-store connection failures (Milvus down, FAISS index unreadable).
@@ -147,6 +150,39 @@ async def startup_event():
             "vector store is empty; run `python run_ingestion.py` first "
             "(GET /health will report down)"
         )
+        return
+    if settings.HYBRID_ENABLED:
+        # Build the BM25 indexes off the request path so the first search is fast.
+        threading.Thread(
+            target=_warm_lexical, name="lexical-warmup", daemon=True
+        ).start()
+
+
+def _warm_lexical() -> None:
+    started = time.perf_counter()
+    try:
+        depts = kb_engine.warm_lexical()
+        logger.info(
+            "lexical warmup done depts=%s elapsed_ms=%.0f",
+            ",".join(depts) or "-",
+            (time.perf_counter() - started) * 1000,
+        )
+    except Exception:
+        logger.warning("lexical warmup failed", exc_info=True)
+
+
+@app.get("/metrics", include_in_schema=False)
+def prometheus_metrics(request: Request):
+    from fastapi.responses import Response as RawResponse
+
+    if settings.METRICS_TOKEN:
+        auth = request.headers.get("authorization", "")
+        if not secrets.compare_digest(auth, f"Bearer {settings.METRICS_TOKEN}"):
+            raise HTTPException(status_code=401, detail="invalid metrics token")
+    return RawResponse(
+        content=metrics.render(),
+        media_type="text/plain; version=0.0.4; charset=utf-8",
+    )
 
 
 @app.post("/chat", response_model=ChatResponse)
@@ -168,6 +204,11 @@ def chat(request: ChatRequest, response: Response):
         logger.warning(
             "rejected invalid dept request_id=%s dept=%r", request_id, request.user_dept
         )
+        metrics.observe_request(
+            endpoint="chat",
+            status="rejected",
+            elapsed_seconds=time.perf_counter() - started,
+        )
         raise HTTPException(status_code=400, detail="invalid department name")
 
     try:
@@ -183,6 +224,12 @@ def chat(request: ChatRequest, response: Response):
             timings["total_ms"],
             timings.get("llm_ms"),
             timings.get("llm_calls"),
+        )
+        metrics.observe_request(
+            endpoint="chat",
+            status="ok",
+            elapsed_seconds=time.perf_counter() - started,
+            timings=timings,
         )
         return ChatResponse(
             response=final_state["messages"][-1].content,
@@ -205,6 +252,11 @@ def chat(request: ChatRequest, response: Response):
             code, message = "upstream_unavailable", "llm upstream unavailable"
         else:
             code, message = "internal_error", "internal error"
+        metrics.observe_request(
+            endpoint="chat",
+            status="error",
+            elapsed_seconds=time.perf_counter() - started,
+        )
         raise HTTPException(
             status_code=503 if (upstream or store_down) else 500,
             detail={"error": code, "message": message, "request_id": request_id},
@@ -219,6 +271,7 @@ def chat_stream(request: ChatRequest):
     Events: {"type":"token","content":...} ... {"type":"done","sources":[...],"timings":{...}}
     """
     request_id = uuid.uuid4().hex[:8]
+    started = time.perf_counter()
 
     if in_maintenance():
         raise HTTPException(
@@ -233,11 +286,16 @@ def chat_stream(request: ChatRequest):
         logger.warning(
             "rejected invalid dept request_id=%s dept=%r", request_id, request.user_dept
         )
+        metrics.observe_request(
+            endpoint="chat_stream",
+            status="rejected",
+            elapsed_seconds=time.perf_counter() - started,
+        )
         raise HTTPException(status_code=400, detail="invalid department name")
 
     def event_stream():
-        started = time.perf_counter()
         final_state: Dict[str, Any] = {}
+        first_token_at = None
         try:
             for mode, payload in agent_app.stream(
                 inputs,
@@ -250,6 +308,11 @@ def chat_stream(request: ChatRequest):
                         continue
                     text = getattr(chunk, "content", "")
                     if text:
+                        if first_token_at is None:
+                            first_token_at = time.perf_counter()
+                            metrics.observe_first_token(
+                                "chat_stream", first_token_at - started
+                            )
                         yield _sse({"type": "token", "content": text})
                 elif mode == "values":
                     final_state = payload
@@ -262,6 +325,12 @@ def chat_stream(request: ChatRequest):
                 timings["total_ms"],
                 timings.get("llm_ms"),
                 timings.get("llm_calls"),
+            )
+            metrics.observe_request(
+                endpoint="chat_stream",
+                status="ok",
+                elapsed_seconds=time.perf_counter() - started,
+                timings=timings,
             )
             yield _sse(
                 {
@@ -286,6 +355,11 @@ def chat_stream(request: ChatRequest):
                 code, message = "upstream_unavailable", "llm upstream unavailable"
             else:
                 code, message = "internal_error", "internal error"
+            metrics.observe_request(
+                endpoint="chat_stream",
+                status="error",
+                elapsed_seconds=time.perf_counter() - started,
+            )
             yield _sse(
                 {
                     "type": "error",

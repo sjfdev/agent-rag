@@ -14,7 +14,9 @@ All commands assume the conda env `agent-rag` is active (`conda activate agent-r
 - **Data Ingestion**: `python run_ingestion.py` (Must be run before API to populate the vector store).
 - **LLM Check**: `python scripts/check_llm.py` (probes `/models` + one chat completion before starting the API).
 - **Offline Retrieval Check**: `python scripts/verify_retrieval.py` (no LLM needed; asserts dept isolation).
-- **Retrieval Eval**: `VECTOR_STORE_TYPE=faiss python scripts/eval_retrieval.py` (hit@k, MRR, leakage from `eval/cases.jsonl`; run for both backends after ingestion).
+- **Retrieval Eval**: `VECTOR_STORE_TYPE=faiss python scripts/eval_retrieval.py` (hit@k, MRR, leakage from `eval/cases.jsonl`; run for both backends after ingestion). Hybrid retrieval is on by default; compare with `HYBRID_ENABLED=false`.
+- **Hybrid Retrieval**: vector + BM25 (in-memory per department, RRF-fused) in `src/lexical.py`; BM25 indexes are warmed in a background thread at startup and after ingestion. Unit checks: `python scripts/check_hybrid.py`.
+- **Metrics**: `GET /metrics` (Prometheus). Optional `METRICS_TOKEN` requires `Authorization: Bearer ...`. Per-process counters; do not expose publicly.
 - **Health Check**: `GET /health` (vector store chunks, ingestion job, maintenance; `?probe=1` also pings the LLM). `down` → HTTP 503 when the index is empty/unreachable; `degraded` → 200 during ingestion/rebuild. Smoke test: `python scripts/check_health.py [--probe]`.
 - **Loader Check**: `python scripts/check_loaders.py` (extracts every supported format in /tmp, no vector store needed).
 - **Admin Check**: `python scripts/check_admin.py` (upload→ingest→delete smoke test; server must be running).

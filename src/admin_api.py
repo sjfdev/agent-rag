@@ -22,6 +22,7 @@ from src.config import settings
 from src.engine import kb_engine
 from src.etl import EnterpriseETL, doc_id_for
 from src.runtime import begin_maintenance, end_maintenance
+from src.metrics import observe_ingest_job
 from src.loaders import LEGACY_EXTENSIONS, SUPPORTED_EXTENSIONS
 from src.validation import validate_dept
 
@@ -229,6 +230,13 @@ def _run_job(job_id: str, dept: Optional[str], reset: bool) -> None:
             if pruned:
                 _job_log(job_id, f"Pruned {pruned} document(s) no longer present.")
 
+        if settings.HYBRID_ENABLED:
+            try:
+                depts = kb_engine.warm_lexical(set(departments))
+                _job_log(job_id, f"Lexical index warmed for: {', '.join(depts) or '-'}")
+            except Exception:
+                logger.warning("lexical warmup after ingest failed", exc_info=True)
+
         stats = dict(etl.stats)
         _job_log(
             job_id,
@@ -236,12 +244,14 @@ def _run_job(job_id: str, dept: Optional[str], reset: bool) -> None:
             "pruned={pruned} failed={failed}; chunks={chunks}".format(**stats),
         )
         _job_update(job_id, status="done", stats=stats, finished=time.time())
+        observe_ingest_job("done")
     except Exception as exc:
         logger.exception("ingestion job %s failed", job_id)
         _job_log(job_id, f"ERROR: {exc}")
         _job_update(
             job_id, status="error", error=str(exc), finished=time.time()
         )
+        observe_ingest_job("error")
     finally:
         if reset:
             end_maintenance()

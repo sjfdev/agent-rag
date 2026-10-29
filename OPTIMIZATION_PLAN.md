@@ -213,6 +213,7 @@ curl -f http://localhost:9091/healthz
 | 2026-10-29 | 复审：下一步聚焦检索质量与零停机 | 见 8.9；reranker 仍为死代码，多轮检索只用最后一句 |
 | 2026-10-29 | 检索质量批次 | 评测集+eval、多轮改写、snippet、可选重排、reset 维护 503；test_agent 13/13 |
 | 2026-10-29 | 健康检查 | `/health` + `?probe=1`（15s 缓存）+ `check_health.py`；空库 503、重建期间 degraded 实测通过 |
+| 2026-10-29 | 可观测与混合检索 | `/metrics`（9 组指标、可选 token）+ 进程内 BM25/RRF（默认开启、后台预热、12 项单测）；评测 MRR 0.89 |
 |  |  |  |
 
 ---
@@ -311,13 +312,15 @@ curl -f http://localhost:9091/healthz
 - [x] **引用增强**：`sources` 增加 `snippet`，UI 折叠面板可展开原文
 - [x] **重建期间降级**：reset 置维护标志，`/chat` 立即返回 503 `index rebuilding`，完成后自动恢复（已实测）
 - [ ] **零停机 alias 切换**：Milvus 仍为 drop→rebuild；FAISS 写在原目录
-- [ ] **混合检索**：BM25 + 向量（Milvus 2.5 稀疏向量或本地 rank-bm25），需先基于评测集对比
+- [x] **混合检索（本地 BM25）**：`src/lexical.py` 中英文分词 + RRF 融合，默认开启；24 条评测 MRR 0.88→0.89，精确标识符类查询收益明显；后台预热、入库后预热、按部门缓存
+- [ ] **大规模混合检索**：Milvus 2.5 稀疏向量/全文索引替代进程内 BM25（当前 BM25 为单进程内存索引，受 `HYBRID_MAX_DOCS` 限制）
 - [ ] **引用去重/score**：同页多 chunk 合并、展示相关性分数
 
 #### P2 稳定与运维
 
 - [x] **`/health`**：向量库块数、入库任务、重建状态；`?probe=1` 带 LLM 探测（15s 缓存）；空库/不可达返回 503，`check_health.py` 10 项冒烟
-- [ ] **指标（Prometheus）**：QPS、P95、检索/LLM 耗时、错误率；需引入 prometheus_client 与 `/metrics`
+- [x] **指标（Prometheus）**：`/metrics` 覆盖请求/错误、端到端与检索/LLM 耗时、首 token、索引块数、入库任务、重建状态；可选 `METRICS_TOKEN`
+- [ ] **多进程指标聚合**：多 worker 时各进程独立，需 Pushgateway 或按 instance 聚合；指标也未持久化
 - [ ] **缓存**：`dept + 规范化问题` 精确 LRU（命中 <10ms），embedding 结果缓存
 - [ ] **限流与降级**：按 user_id/IP 限流；LLM 失败时返回检索摘要或换备用模型
 - [ ] **管理台增强**：操作审计（谁/何时/删了什么）、任务持久化、上传总量上限、上传进度条

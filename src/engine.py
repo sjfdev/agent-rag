@@ -53,6 +53,14 @@ class BaseVectorStore(ABC):
         """Total number of indexed chunks (0 when the store is missing)."""
 
     @abstractmethod
+    def fetch_documents(self, dept: str) -> List[Document]:
+        """All chunks for one department, used to build the lexical index."""
+
+    @abstractmethod
+    def list_depts(self) -> Set[str]:
+        """Departments that currently have at least one indexed chunk."""
+
+    @abstractmethod
     def get_doc_hash(self, doc_id: str) -> Optional[str]:
         """Return the stored content hash for a document id, or None if absent."""
 
@@ -126,6 +134,42 @@ class MilvusDriver(BaseVectorStore):
 
     def count(self) -> int:
         return self._count("")
+
+    _FETCH_FIELDS = [
+        "text", "source", "dept", "doc_id", "doc_hash", "kind",
+        "page", "slide", "sheet", "title", "chunk_index",
+    ]
+
+    def fetch_documents(self, dept: str) -> List[Document]:
+        safe_dept = validate_dept(dept)
+        expr = f"dept == '{safe_dept}'"
+        docs: List[Document] = []
+        try:
+            iterator = self.vector_db.client.query_iterator(
+                collection_name=self.collection,
+                batch_size=1000,
+                filter=expr,
+                output_fields=self._FETCH_FIELDS,
+            )
+            while True:
+                rows = iterator.next()
+                if not rows:
+                    iterator.close()
+                    break
+                for row in rows:
+                    text = row.pop("text", "")
+                    docs.append(Document(page_content=text, metadata=row))
+        except Exception:
+            logger.warning("failed to fetch dept=%s from milvus", dept, exc_info=True)
+            return []
+        return docs
+
+    def list_depts(self) -> Set[str]:
+        try:
+            res = self._query("", ["dept"], limit=16384)
+            return {row["dept"] for row in res if row.get("dept")}
+        except Exception:
+            return set()
 
     def get_doc_hash(self, doc_id: str) -> Optional[str]:
         try:
@@ -227,6 +271,21 @@ class FAISSDriver(BaseVectorStore):
         except Exception:
             return 0
 
+    def fetch_documents(self, dept: str) -> List[Document]:
+        safe_dept = validate_dept(dept)
+        return [
+            doc
+            for doc in self._docs().values()
+            if doc.metadata.get("dept") == safe_dept
+        ]
+
+    def list_depts(self) -> Set[str]:
+        return {
+            doc.metadata["dept"]
+            for doc in self._docs().values()
+            if doc.metadata.get("dept")
+        }
+
     def get_doc_hash(self, doc_id: str) -> Optional[str]:
         for doc in self._docs().values():
             if doc.metadata.get("doc_id") == doc_id:
@@ -271,17 +330,75 @@ class KnowledgeBaseEngine:
     """Factory class to handle seamless switching between Milvus and FAISS."""
 
     def __init__(self):
+        from src.lexical import LexicalCache
+
         self.embeddings = build_embeddings()
+        # Bumped on every write so the cached BM25 indexes are rebuilt.
+        self._version = 0
+        self._lexical = LexicalCache()
 
         if settings.VECTOR_STORE_TYPE == "milvus":
             self.driver = MilvusDriver(self.embeddings)
         else:
             self.driver = FAISSDriver(self.embeddings)
 
+    def _touch(self) -> None:
+        self._version += 1
+        self._lexical.invalidate()
+
     def add_documents(self, texts: List[str], metadatas: List[Dict[str, Any]]):
         self.driver.add_documents(texts, metadatas)
+        self._touch()
+
+    def fetch_documents(self, dept: str) -> List[Document]:
+        return self.driver.fetch_documents(dept)
+
+    def list_depts(self) -> Set[str]:
+        return self.driver.list_depts()
+
+    def warm_lexical(self, depts: Optional[Set[str]] = None) -> List[str]:
+        """Build BM25 indexes up front so the first query is not slow.
+
+        Intended to run in a background thread after startup or ingestion.
+        """
+        warmed = []
+        for dept in sorted(depts if depts is not None else self.list_depts()):
+            try:
+                self.lexical_search("warmup", dept, 1)
+                warmed.append(dept)
+            except Exception:
+                logger.warning("lexical warmup failed for dept=%s", dept, exc_info=True)
+        return warmed
+
+    def lexical_search(self, query: str, user_dept: str, k: int) -> List[Document]:
+        """BM25 over the department's chunks, built on demand and cached."""
+        if not query.strip() or k <= 0:
+            return []
+        index = self._lexical.get(
+            user_dept,
+            self._version,
+            self.driver.fetch_documents,
+            max_docs=settings.HYBRID_MAX_DOCS,
+        )
+        return index.search(query, k)
 
     def search(self, query: str, user_dept: str, k: int = 5) -> List[Document]:
+        from src.lexical import rrf_fuse
+
+        if settings.HYBRID_ENABLED:
+            from src.reranker import rerank_documents
+
+            candidates = max(k, settings.HYBRID_CANDIDATES)
+            if settings.RERANK_ENABLED:
+                candidates = max(candidates, settings.RERANK_CANDIDATES)
+            vector_docs = self.driver.search(query, user_dept, candidates)
+            lexical_docs = self.lexical_search(query, user_dept, candidates)
+            fused = rrf_fuse([vector_docs, lexical_docs], candidates)
+            if settings.RERANK_ENABLED:
+                rerank_pool = max(k, settings.RERANK_CANDIDATES)
+                return rerank_documents(query, fused[:rerank_pool], k)
+            return fused[:k]
+
         if settings.RERANK_ENABLED:
             from src.reranker import rerank_documents
 
@@ -301,7 +418,9 @@ class KnowledgeBaseEngine:
         return self.driver.get_doc_hash(doc_id)
 
     def delete_by_doc_id(self, doc_id: str) -> int:
-        return self.driver.delete_by_doc_id(doc_id)
+        removed = self.driver.delete_by_doc_id(doc_id)
+        self._touch()
+        return removed
 
     def count_by_doc_id(self, doc_id: str) -> int:
         return self.driver.count_by_doc_id(doc_id)
@@ -311,6 +430,7 @@ class KnowledgeBaseEngine:
 
     def reset(self) -> None:
         self.driver.reset()
+        self._touch()
 
 
 # Singleton instance for global use

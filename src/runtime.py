@@ -9,10 +9,22 @@ MAINTENANCE = threading.Event()
 
 def begin_maintenance() -> None:
     MAINTENANCE.set()
+    try:
+        from src.metrics import set_maintenance
+
+        set_maintenance(True)
+    except Exception:  # metrics must never break ingestion
+        pass
 
 
 def end_maintenance() -> None:
     MAINTENANCE.clear()
+    try:
+        from src.metrics import set_maintenance
+
+        set_maintenance(False)
+    except Exception:
+        pass
 
 
 def in_maintenance() -> bool:

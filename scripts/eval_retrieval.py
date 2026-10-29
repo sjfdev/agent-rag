@@ -58,7 +58,20 @@ def main() -> int:
     args = parser.parse_args()
 
     cases = load_cases(args.cases)
-    print(f"backend={settings.VECTOR_STORE_TYPE} k={args.k} cases={len(cases)}")
+    print(
+        f"backend={settings.VECTOR_STORE_TYPE} k={args.k} cases={len(cases)} "
+        f"hybrid={settings.HYBRID_ENABLED}"
+    )
+
+    if settings.HYBRID_ENABLED:
+        # Building BM25 indexes is a one-off cost per department; keep it out
+        # of the latency numbers. The API warms them at startup too.
+        started = time.perf_counter()
+        warmed = kb_engine.warm_lexical({case["dept"] for case in cases})
+        print(
+            f"warmup: {', '.join(warmed) or '-'} "
+            f"({(time.perf_counter() - started) * 1000:.0f}ms)"
+        )
 
     hits = 0
     expected = 0

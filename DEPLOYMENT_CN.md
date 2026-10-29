@@ -188,6 +188,15 @@ readinessProbe:
   periodSeconds: 10
 ```
 
+### 4.1.3 Prometheus 监控
+```bash
+curl -s http://localhost:8000/metrics | grep '^agent_rag_'
+```
+- 指标覆盖：请求量/成功率、端到端与检索/LLM 耗时、首 token 延迟、索引块数、入库任务、重建状态
+- 部门名不作为标签（避免敏感信息与高基数）
+- 如需鉴权：`.env` 设置 `METRICS_TOKEN=xxx`，Prometheus 配置 `authorization: { credentials: xxx }`
+- 多 worker/多副本时各进程指标独立，请在 Prometheus 侧按 instance 聚合
+
 ### 4.2 功能验证
 先做**离线检索验证**（不需要 LLM，检查入库与部门隔离）：
 ```bash
@@ -205,6 +214,7 @@ python test_agent.py
 ## 📈 5. 生产环境优化建议
 - **重排序 (Reranking)**: 默认关闭；开启前先把模型缓存到本地（`RERANK_MODEL`）。CPU 上 BGE-base 约 +1.2s/次，MiniLM 约 +200ms，按数据量选择。
 - **健康检查**: 用 `GET /health` 做存活/就绪探针；`/health?probe=1` 会真的调用一次 LLM，建议只在内网监控使用（结果缓存 15s）。
+- **混合检索**: 默认开启（向量 + 进程内 BM25）。启动与入库后台自动预热；单部门语料很大时用 `HYBRID_MAX_DOCS` 限制，或设 `HYBRID_ENABLED=false` 回退纯向量。
 - **性能扩展**: 对于高并发场景，建议使用 `gunicorn` 配合 `uvicorn` 工作进程：
   `gunicorn -w 4 -k uvicorn.workers.UvicornWorker main:app`
 - **数据备份**: 定期备份 `docker-compose.yml` 中映射的 Milvus 数据卷。

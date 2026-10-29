@@ -9,7 +9,7 @@ frequent monitor does not spend tokens on every request.
 import threading
 import time
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 from fastapi import APIRouter, Query
 from fastapi.responses import JSONResponse
@@ -124,6 +124,7 @@ def health(probe: bool = Query(False, description="also call the LLM endpoint"))
     checks["maintenance"] = maintenance
     checks["time"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
     checks["rerank_enabled"] = settings.RERANK_ENABLED
+    checks["hybrid_enabled"] = settings.HYBRID_ENABLED
 
     code = 503 if status == "down" else 200
     return JSONResponse(status_code=code, content=checks)

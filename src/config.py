@@ -34,6 +34,14 @@ class Settings(BaseSettings):
     # /health reports "down" when fewer chunks than this are indexed, which
     # makes a load balancer stop routing to an empty instance.
     HEALTH_MIN_CHUNKS: int = 1
+    # Hybrid retrieval: fuse vector and BM25 results with reciprocal rank
+    # fusion before optional reranking.
+    HYBRID_ENABLED: bool = True
+    HYBRID_CANDIDATES: int = 20
+    # Cap the in-memory BM25 corpus per department (0 = unlimited).
+    HYBRID_MAX_DOCS: int = 20000
+    # Optional bearer token for GET /metrics (empty = open, rely on the network).
+    METRICS_TOKEN: str = ""
     MILVUS_HOST: str = "localhost"
     MILVUS_PORT: str = "19530"
     MILVUS_COLLECTION: str = "enterprise_kb"
