@@ -18,3 +18,7 @@
 {"id": "iso-fin-leave", "dept": "Finance", "query": "annual leave days employee handbook", "forbid_sources": ["employee_handbook"]}
 {"id": "iso-demo-budget", "dept": "Demo", "query": "salary bands 2026 budget", "forbid_sources": ["confidential_budget"]}
 {"id": "iso-fin-demo", "dept": "Finance", "query": "visitor Wi-Fi password DEMO-GUEST", "forbid_sources": ["Demo/policy.md", "Demo/faq.txt"]}
+{"id": "zh-hr-leave", "dept": "HR", "query": "员工每年有多少天年假？", "expect_sources": ["employee_handbook"]}
+{"id": "zh-demo-wifi", "dept": "Demo", "query": "访客 Wi-Fi 密码是什么？", "expect_sources": ["faq.txt", "policy.md"]}
+{"id": "zh-tech-password", "dept": "Tech", "query": "密码多久需要更换一次？", "expect_sources": ["security_policy"]}
+{"id": "iso-zh-hr-budget", "dept": "HR", "query": "2026 年薪资预算区间", "forbid_sources": ["confidential_budget"]}

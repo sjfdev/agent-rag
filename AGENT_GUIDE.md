@@ -626,7 +626,7 @@ python scripts/bench_retrieval.py
 4. **切分参数**：`RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=100)`。chunk 太小召回碎片化，太大增加 prompt；按文档类型调整。
 5. **二阶段重排**：`src/reranker.py` 已接入 `kb_engine.search`，设置 `RERANK_ENABLED=true` 后先取 `RERANK_CANDIDATES` 个候选，再由 CrossEncoder 取 top-k。默认关闭；CPU 上实测 MiniLM 增加约 190ms（p50），评测 MRR 0.91 → 0.97。中文语料建议用 `BAAI/bge-reranker-base`（约 1.1GB，CPU 更慢）。
 6. **多轮检索改写**：`src/agent.py::_retrieval_query` 检测代词/指示词或极短问句，把上一轮问题拼进检索 query，不额外调用 LLM。实测追问 "Who approves it?" 时目标文档从第 3 位升到第 1 位。
-7. **评测闭环**：`eval/cases.jsonl` + `scripts/eval_retrieval.py`，覆盖 Tech/Finance/HR/Demo 共 15 个命中用例和 5 个跨部门泄漏用例；调参或换重排模型后先跑它。
+7. **评测闭环**：`eval/cases.jsonl` + `scripts/eval_retrieval.py`，覆盖 Tech/Finance/HR/Demo 共 18 个命中用例和 6 个跨部门泄漏用例；调参或换重排模型后先跑它。
 
 ### 8.4 服务层
 
