@@ -44,17 +44,20 @@ curl -f http://localhost:9091/healthz   # 返回 OK
 export VECTOR_STORE_TYPE=milvus
 python run_ingestion.py
 python scripts/verify_retrieval.py
+# 2.5+ 可选：验证服务端稀疏 BM25（临时集合，不会动现有数据）
+python scripts/check_hybrid_milvus.py
 ```
 
 镜像拉取失败时的替代方案（任选其一可用）：
 ```bash
-# Milvus 官方镜像经 1panel 代理拉取后重命名
-docker pull docker.1panel.live/milvusdb/milvus:v2.4.0
-docker tag docker.1panel.live/milvusdb/milvus:v2.4.0 milvusdb/milvus:v2.4.0
+# Milvus 官方镜像经 1ms.run 镜像源拉取后重命名
+docker pull docker.1ms.run/milvusdb/milvus:v2.5.4
+docker tag docker.1ms.run/milvusdb/milvus:v2.5.4 milvusdb/milvus:v2.5.4
 # etcd 直接走 quay（本机实测可用）
 docker pull quay.io/coreos/etcd:v3.5.5
 ```
-也可用 `MILVUS_IMAGE=docker.1panel.live/milvusdb/milvus:v2.4.0 docker compose up -d` 直接指定镜像。
+也可用 `MILVUS_IMAGE=docker.1ms.run/milvusdb/milvus:v2.5.4 docker compose up -d` 直接指定镜像。
+若仍失败，把镜像源写入 **colima** 配置 `~/.colima/default/colima.yaml` 的 `docker.registry-mirrors`（本机实测 `docker.1ms.run` 可用），然后 `colima restart`。
 
 如果确实需要 MinIO/S3，可把 `COMMON_STORAGETYPE` 改回 `remote` 并补一个 minio 服务。
 
@@ -118,8 +121,6 @@ python -c "import numpy, torch, faiss, langchain; print(numpy.__version__, torch
 国内下载已自动走 `HF_ENDPOINT=https://hf-mirror.com`（见 `src/__init__.py`），可用环境变量覆盖。
 
 > 只有 **对话生成** 需要 LLM 端点；数据入库（ingestion）和检索验证可完全离线运行。
-
-
 
 ---
 
@@ -229,3 +230,10 @@ LLM_MODEL=glm-4-flash
 ```
 验证：`python scripts/check_llm.py`，看到 `LLM endpoint is ready` 即可。
 
+---
+
+## 📚 6. 相关文档
+
+- `WORKLOG.md`：本轮功能与验证记录（管理台、评测、混合检索、健康检查、指标、Milvus 2.5 升级）
+- `AGENT_GUIDE.md`：完整使用说明、FAQ 与性能优化
+- `OPTIMIZATION_PLAN.md`：待办清单与进度记录

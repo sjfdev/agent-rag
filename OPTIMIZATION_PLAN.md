@@ -98,38 +98,37 @@ VECTOR_STORE_TYPE=milvus uvicorn main:app --port 8000   # 当前 .env 是 faiss�
 - [ ] 验收：`python -c "import src.engine"` 不再加载模型；`python scripts/check_llm.py` 启动更快
 
 ### 2.2 配置强类型与外置
-- [ ] 位置：`src/config.py`
-- [ ] `VECTOR_STORE_TYPE: Literal["faiss","milvus"]`
-- [ ] `EMBEDDING_BACKEND: Literal["local","openai"]`
-- [ ] 新增：`MILVUS_HOST`、`MILVUS_PORT`、`MILVUS_COLLECTION`、`MILVUS_URI`（优先级高于 host/port）
-- [ ] 新增：`RETRIEVAL_K=4`、`LLM_TIMEOUT=30`、`LLM_MAX_TOKENS=512`、`RERANK_ENABLED=false`
-- [ ] 移除重复的 `HF_ENDPOINT` 设置（保留 `src/__init__.py`）
-- [ ] 验收：`VECTOR_STORE_TYPE=mysql` 启动即报校验错误；`.env` 改 collection 名生效
+- [x] 位置：`src/config.py`
+- [x] `VECTOR_STORE_TYPE: Literal["faiss","milvus"]`
+- [x] `EMBEDDING_BACKEND: Literal["local","openai"]`
+- [x] 新增：`MILVUS_HOST`、`MILVUS_PORT`、`MILVUS_COLLECTION`、`MILVUS_URI`（优先级高于 host/port）
+- [x] 新增：`RETRIEVAL_K=4`、`LLM_TIMEOUT=30`、`LLM_MAX_TOKENS=256`、`RERANK_ENABLED=false`
+- [x] 新增（本轮）：`HYBRID_*`、`HEALTH_MIN_CHUNKS`、`METRICS_TOKEN`
+- [x] 移除重复的 `HF_ENDPOINT` 设置（保留 `src/__init__.py`）
+- [x] 验收：`VECTOR_STORE_TYPE=mysql` 启动即报校验错误；`.env` 改 collection 名生效
 
 ### 2.3 元数据与增量入库
-- [ ] 位置：`src/etl.py`
-- [ ] 现有：仅 `dept`、`source`
-- [ ] 新增：`page`（PyPDFLoader 已提供）、`doc_id`（`hash(source)`）、`chunk_id`、`ingested_at`
-- [ ] 去重：入库前按 `doc_id` 删除旧 chunk（Milvus `delete(expr=...)`；FAISS 重建索引）
-- [ ] 或先用内容 hash 在 ETL 内去重，避免重复执行翻倍
-- [ ] 验收：连续跑两次 `run_ingestion.py`，Milvus `count(*)` 不变；FAISS `index.ntotal` 不变
+- [x] 位置：`src/etl.py`
+- [x] 新增：`page`/`slide`/`sheet`、`doc_id`、`doc_hash`、`kind`、`chunk_index`
+- [x] 去重：内容哈希不变则跳过，变更则按 `doc_id` 替换（Milvus `delete(expr=...)`；FAISS 重建）
+- [x] 验收：连续跑两次 `run_ingestion.py`，chunk 数不变；删除文件后由 prune 清理
 
 ### 2.4 收敛工具集
-- [ ] 位置：`src/tools.py` / `src/agent.py`
-- [ ] 检索已前置到 `call_model`，`search_knowledge_base` 只会诱导多一次 LLM 回路（+1–3s）
-- [ ] 方案 A（推荐）：删除检索工具，只保留 `create_support_ticket`
-- [ ] 方案 B：保留但系统提示明确「excerpts 已足够，不要调用检索工具」
-- [ ] 验收：工单场景 `timings.llm_calls` 仍为 2，普通问答为 1；无额外检索回路
+- [x] 位置：`src/tools.py` / `src/agent.py`
+- [x] 检索已前置到 `call_model`，`search_knowledge_base` 只会诱导多一次 LLM 回路（+1–3s）
+- [x] 已从 `agent_tools` 移除，只保留 `create_support_ticket`
+- [ ] `search_knowledge_base` 函数本体仍是死代码，可直接删除
+- [x] 验收：工单场景 `timings.llm_calls` 仍为 2，普通问答为 1；无额外检索回路
 
 ### 2.5 重排模块取舍
-- [ ] 位置：`src/reranker.py`
-- [ ] 现状：未接入主链路，属死代码
-- [ ] 方案：接成 `RERANK_ENABLED=true` 时 `top20 → CrossEncoder → top3`，或直接删除
-- [ ] 若接入：模型单例 + 启动预热，避免每请求加载
-- [ ] 验收：开启后 `timings` 新增 `rerank_ms`；关闭时无额外开销
+- [x] 位置：`src/reranker.py`
+- [x] 已接入 `kb_engine.search`，`RERANK_ENABLED=true` 时先融合候选再重排取 top-k
+- [x] 懒加载 + 失败降级（加载/推理失败保持原顺序），默认关闭
+- [ ] `timings` 暂未单独暴露 `rerank_ms`（包含在 `retrieval_ms` 内）
+- [x] 验收：24 条评测 MiniLM MRR 0.88→0.92（+205ms）、BGE 0.88→0.97（+1.2s）
 
 ### 2.6 工程基建
-- [ ] 生成 `requirements.txt`（精确 pin，含安装顺序注释）
+- [x] 生成 `requirements.txt`（精确 pin，含安装顺序注释）
 - [ ] 可选 `pyproject.toml` + `uv`/`pip-tools` 锁文件
 - [ ] `Makefile`：`install / data / ingest / run / test / milvus-up / milvus-down / reset-faiss / reset-milvus / doctor`
 - [ ] `scripts/doctor.py`：Python 版本、numpy/torch、依赖、Docker/Milvus、LLM、索引状态一键体检
@@ -215,6 +214,7 @@ curl -f http://localhost:9091/healthz
 | 2026-10-29 | 健康检查 | `/health` + `?probe=1`（15s 缓存）+ `check_health.py`；空库 503、重建期间 degraded 实测通过 |
 | 2026-10-29 | 可观测与混合检索 | `/metrics`（9 组指标、可选 token）+ 进程内 BM25/RRF（默认开启、后台预热、12 项单测）；评测 MRR 0.89 |
 | 2026-10-29 | 混合检索能力自适应 | `HYBRID_ENGINE=auto\|local\|milvus` + 版本/稀疏字段/BM25 索引探测；2.5+ 走服务端 hybrid_search+RRF，否则回退；`/info`、`/health`、`/metrics` 暴露实际引擎；42 项单测 + 2.5 端到端脚本 |
+| 2026-10-30 | Milvus 升级 2.5.4 + 服务端稀疏 BM25 | colima 配置镜像源后拉取成功；备份数据卷；`--reset` 先 drop 再建；实测 18/18、MRR 0.89、P50 24ms；详见 `WORKLOG.md` |
 |  |  |  |
 
 ---
@@ -315,7 +315,7 @@ curl -f http://localhost:9091/healthz
 - [ ] **零停机 alias 切换**：Milvus 仍为 drop→rebuild；FAISS 写在原目录
 - [x] **混合检索（本地 BM25）**：`src/lexical.py` 中英文分词 + RRF 融合，默认开启；24 条评测 MRR 0.88→0.89，精确标识符类查询收益明显；后台预热、入库后预热、按部门缓存
 - [x] **能力自适应混合检索**：`HYBRID_ENGINE=auto` 探测 Milvus 版本与集合稀疏字段/BM25 索引，2.5+ 走服务端 `hybrid_search`+RRF，否则回退进程内 BM25；`milvus` 显式模式下能力不足启动即报错；`/info`、`/health`、`/metrics` 暴露实际引擎
-- [ ] **升级 Milvus 到 2.5 并重建集合**：升级镜像 → `run_ingestion.py --reset` → 验证 `hybrid.engine=milvus`；需先备份 `volumes/milvus`
+- [x] **升级 Milvus 到 2.5 并重建集合**：已升级 2.5.4（先备份数据卷），`run_ingestion.py --reset` 重建，实测 `hybrid.engine=milvus`、端到端 18/18
 - [ ] **引用去重/score**：同页多 chunk 合并、展示相关性分数
 
 #### P2 稳定与运维

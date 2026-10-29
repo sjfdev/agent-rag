@@ -45,11 +45,12 @@ python scripts/verify_retrieval.py
 
 If image pulls fail:
 ```bash
-docker pull docker.1panel.live/milvusdb/milvus:v2.4.0
-docker tag docker.1panel.live/milvusdb/milvus:v2.4.0 milvusdb/milvus:v2.4.0
+docker pull docker.1ms.run/milvusdb/milvus:v2.5.4
+docker tag docker.1ms.run/milvusdb/milvus:v2.5.4 milvusdb/milvus:v2.5.4
 docker pull quay.io/coreos/etcd:v3.5.5
 ```
-Or pass the mirror directly: `MILVUS_IMAGE=docker.1panel.live/milvusdb/milvus:v2.4.0 docker compose up -d`.
+Or pass the mirror directly: `MILVUS_IMAGE=docker.1ms.run/milvusdb/milvus:v2.5.4 docker compose up -d`.
+If pulls keep failing, set `docker.registry-mirrors` in `~/.colima/default/colima.yaml` (on this machine `docker.1ms.run` worked) and run `colima restart`.
 
 To use MinIO/S3 instead, set `COMMON_STORAGETYPE=remote` and add a minio service.
 
@@ -176,7 +177,11 @@ python test_agent.py
 ---
 
 ## 📈 5. Production Optimization
-- **Reranking**: Ensure the `BGE-Reranker` model is cached locally to avoid download delays on startup.
+- **Health checks**: use `GET /health` for liveness/readiness (`down` = 503 on an empty/unreachable index, `degraded` = 200 while ingesting/rebuilding). `/health?probe=1` also calls the LLM (cached 15s).
+- **Metrics**: `GET /metrics` for Prometheus (requests, latency, retrieval/LLM time, index size, ingestion, rebuild state). Set `METRICS_TOKEN` to require a bearer token; per-process values.
+- **Hybrid retrieval**: `HYBRID_ENGINE=auto` (default) prefers Milvus server-side sparse BM25 on 2.5+ and falls back to in-process BM25 otherwise. Check `GET /info` → `hybrid.engine`.
+- **Milvus 2.5+**: the compose default is `v2.5.4`. After upgrading, rebuild the collection with `python run_ingestion.py --reset` so the sparse field and BM25 index exist; back up `volumes/milvus` first (Milvus cannot downgrade).
+- **Reranking**: off by default; cache `RERANK_MODEL` before enabling (CPU cost ≈+200ms for MiniLM, ≈+1.2s for BGE-base).
 - **Scaling**: For high traffic, replace the `uvicorn` worker with `gunicorn`:
   `gunicorn -w 4 -k uvicorn.workers.UvicornWorker main:app`
 - **Backup**: Regularly backup the Milvus data volume mapped in `docker-compose.yml`.
@@ -190,3 +195,9 @@ LLM_MODEL=glm-4-flash
 ```
 Verify with `python scripts/check_llm.py`; expect `LLM endpoint is ready`.
 
+---
+
+## 📚 6. Related docs
+- `WORKLOG.md`: what changed in the 2026-10-29/30 iteration, verification matrix, remaining work
+- `AGENT_GUIDE.md`: full Chinese guide (install, usage, FAQ, tuning)
+- `OPTIMIZATION_PLAN.md`: prioritized backlog and progress log

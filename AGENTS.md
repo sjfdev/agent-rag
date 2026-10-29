@@ -31,7 +31,7 @@ All commands assume the conda env `agent-rag` is active (`conda activate agent-r
 - **Retrieval Flow**: `_retrieval_query` concatenates the previous question for follow-ups (pronouns/short messages); `call_model` does deterministic first-stage retrieval (`kb_engine.search(query, state["user_dept"])`) and injects excerpts as a system message; the LLM only formats the answer or triggers `create_support_ticket`.
 - **Embeddings**: `EMBEDDING_BACKEND="local"` by default (sentence-transformers + `HF_ENDPOINT=https://hf-mirror.com`). Only chat generation needs `LLM_API_BASE`; ingestion and `scripts/verify_retrieval.py` work offline.
 - **Vector Backend**: `src/config.py` `VECTOR_STORE_TYPE` switches `"faiss"` (default, local) vs `"milvus"` (Docker). Same interface in `src/engine.py`.
-- **Infra**: `docker compose up -d` starts etcd + Milvus only (local storage, no MinIO). Both must be `healthy` and `curl -f localhost:9091/healthz` must pass before setting `VECTOR_STORE_TYPE=milvus`. If `milvusdb/milvus` pull fails, use `docker.1panel.live/milvusdb/milvus:v2.4.0` and `docker tag` it, or pass `MILVUS_IMAGE=...`. etcd pulls from `quay.io` directly.
+- **Infra**: `docker compose up -d` starts etcd + Milvus only (local storage, no MinIO). Both must be `healthy` and `curl -f localhost:9091/healthz` must pass before setting `VECTOR_STORE_TYPE=milvus`. Default image is `milvusdb/milvus:v2.5.4` (needed for server-side sparse BM25). If the pull fails, configure registry mirrors in **colima** (`~/.colima/default/colima.yaml` → `docker.registry-mirrors`; on this machine `docker.1ms.run` worked) and `colima restart`; or pass `MILVUS_IMAGE=...`. etcd pulls from `quay.io` directly.
 - **Data Structure**: Files live under `DATA_DIR` (default `./data`) as `data/{department_name}/**/*`; supported: PDF/DOCX/PPTX/XLSX/CSV/MD/TXT/HTML/JSON. `data/Demo` ships fixtures for every format (regenerate with `scripts/generate_demo_files.py`). Switching FAISS/Milvus or changing chunk metadata requires `python run_ingestion.py --reset`.
 
 ## Testing & Verification
@@ -39,5 +39,6 @@ All commands assume the conda env `agent-rag` is active (`conda activate agent-r
 - **Reranking**: `src/reranker.py` is wired into `kb_engine.search` behind `RERANK_ENABLED` (default off). Uses a Cross-Encoder (`RERANK_MODEL`, 12 candidates); cache the model first, and expect +~200ms (MiniLM) to +seconds (BGE) on CPU.
 
 ## Documentation
+- **`WORKLOG.md`**: what was built in the 2026-10-29/30 iteration (admin console, evaluation, hybrid retrieval, health/metrics, Milvus 2.5 upgrade), verification matrix and remaining work.
 - **`AGENT_GUIDE.md`**: full Chinese guide (tech stack, install, usage, FAQ, performance tuning).
 - **`OPTIMIZATION_PLAN.md`**: prioritized TODO checklist (P0 security/stability → P1 architecture → P2 scale, plus docs tasks) with file:line refs and acceptance commands.

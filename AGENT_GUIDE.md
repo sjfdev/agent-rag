@@ -2,6 +2,8 @@
 
 面向研发与运维的完整说明：技术栈、架构、安装、使用、常见问题与性能优化。
 
+> 本轮（2026-10-29 ~ 10-30）的功能与验证记录见 `WORKLOG.md`；待办事项见 `OPTIMIZATION_PLAN.md`。
+
 ---
 
 ## 1. 项目概述
@@ -13,7 +15,9 @@
 - **部门级权限隔离**：每个 chunk 带 `dept` 元数据，检索时强制按部门过滤，跨部门数据不可见
 - **多轮对话**：客户端回传 `history`，服务端按会话还原上下文
 - **工具调用**：知识库无解时自动创建工单（`create_support_ticket`）
-- **双向量后端**：本地 FAISS（零依赖）与 Milvus（企业级）随时切换
+- **双向量后端**：本地 FAISS（零依赖）与 Milvus（企业级，默认 2.5.4）随时切换
+- **混合检索**：向量 + BM25（Milvus ≥ 2.5 用服务端稀疏向量，否则进程内 BM25），RRF 融合，能力自适应
+- **可观测**：`/health` 探针（含 LLM 探测）、Prometheus `/metrics`、`/info` 暴露实际检索引擎
 - **双 Embedding 后端**：本地 sentence-transformers（离线）或 OpenAI 兼容接口
 - **内置测试台**：`/ui/` 网页端可直接按部门提问并查看分段耗时
 - **入库管理台**：`/admin` 支持上传、状态检查、增量入库、删除、重建索引
@@ -64,7 +68,7 @@
 | Agent 编排 | LangGraph | 1.2.18 | `StateGraph` + `ToolNode` + 条件边 |
 | LLM 框架 | LangChain | 1.4.7 | 注意 1.x 有破坏性 API 变更 |
 | LLM 客户端 | langchain-openai | 1.7.3 | 任意 OpenAI 兼容端点 |
-| 向量库 | FAISS / Milvus | faiss-cpu 1.15.1 / pymilvus 3.0.2 | FAISS 默认；Milvus 2.4.0 容器 |
+| 向量库 | FAISS / Milvus | faiss-cpu 1.15.1 / pymilvus 3.0.2 | FAISS 默认；Milvus 2.5.4 容器（稀疏 BM25） |
 | Milvus 适配 | langchain-milvus | 0.4.0 | 支持 `expr` 元数据过滤 |
 | Embedding | sentence-transformers | 3.4.1 | 本地 `BAAI/bge-small-zh-v1.5`（512 维） |
 | 推理底座 | transformers / torch | 4.49.0 / 2.2.2 | 版本强绑定，见 FAQ |
@@ -93,22 +97,28 @@ agent-rag/
 │   ├── HR/ Finance/ Tech/
 ├── db/vector_db/            # FAISS 索引与元数据
 ├── volumes/                 # Milvus/etcd 数据卷
+├── eval/cases.jsonl         # 检索评测集（命中 + 泄漏用例）
+├── WORKLOG.md               # 本轮迭代记录与验证矩阵
 ├── scripts/
 │   ├── generate_samples.py  # 生成 8 份样例 PDF
+│   ├── generate_demo_files.py # 生成 data/Demo 多格式样例
 │   ├── check_llm.py         # 探测 LLM 端点
 │   ├── verify_retrieval.py  # 离线验证入库 + 部门隔离
 │   ├── eval_retrieval.py    # 离线评测 hit@k / MRR / 泄漏
 │   ├── check_health.py      # /health 冒烟测试
 │   ├── check_hybrid.py      # BM25/RRF 单元检查
 │   ├── check_hybrid_milvus.py # 服务端稀疏 BM25 端到端
+│   ├── check_loaders.py     # 9 种格式解析检查
+│   ├── check_admin.py       # 管理台冒烟测试
 │   └── bench_retrieval.py   # 延迟基准（embedding/FAISS/Milvus/LLM）
 └── src/
     ├── config.py            # 所有开关（pydantic-settings）
-    ├── engine.py            # Embedding 工厂 + FAISS/Milvus 驱动 + 单例
-    ├── etl.py               # PDF 加载、切分、打 dept 标签
-    ├── agent.py             # LangGraph 状态机与检索注入
-    ├── tools.py             # search_knowledge_base / create_support_ticket
-    ├── lexical.py           # BM25 索引 + RRF 融合（混合检索）
+    ├── engine.py            # Embedding 工厂 + FAISS/Milvus 驱动 + 能力探测
+    ├── hybrid.py            # 版本/能力判定 + 集合 drop 辅助
+    ├── etl.py               # 多格式加载、切分、打 dept 标签
+    ├── agent.py             # LangGraph 状态机、检索注入、多轮改写
+    ├── tools.py             # 工单工具（检索已前置，不再暴露给模型）
+    ├── lexical.py           # 进程内 BM25 + RRF 融合
     ├── reranker.py          # CrossEncoder 重排（可选，默认关闭）
     ├── health.py            # /health 探针
     ├── metrics.py           # Prometheus 指标
@@ -471,6 +481,13 @@ python scripts/generate_demo_files.py  # 重建 data/Demo 多格式样例
 python test_agent.py                 # 端到端 13 项断言（需服务已启动）
 ```
 
+补充说明：
+
+- `check_hybrid.py` 不需要向量库，任何环境都能跑
+- `check_hybrid_milvus.py` 在 Milvus < 2.5 或非 milvus 后端时自动 SKIP（退出码 0）
+- `eval_retrieval.py` 支持 `HYBRID_ENGINE=local` 与 `auto` 对比，便于评估两种引擎
+- 所有脚本的详细结果与验证矩阵见 `WORKLOG.md`
+
 ### 5.5 数据组织与增量更新
 
 - 目录名即部门名：`data/Finance/...` → `dept="Finance"`，支持多级子目录
@@ -603,10 +620,38 @@ curl -f http://localhost:9091/healthz
 本项目实测可用组合：
 ```bash
 docker pull quay.io/coreos/etcd:v3.5.5
-docker pull docker.1panel.live/milvusdb/milvus:v2.4.0
-docker tag docker.1panel.live/milvusdb/milvus:v2.4.0 milvusdb/milvus:v2.4.0
+docker pull docker.1ms.run/milvusdb/milvus:v2.5.4
+docker tag docker.1ms.run/milvusdb/milvus:v2.5.4 milvusdb/milvus:v2.5.4
 ```
-或直接：`MILVUS_IMAGE=docker.1panel.live/milvusdb/milvus:v2.4.0 docker compose up -d`。
+或直接：`MILVUS_IMAGE=docker.1ms.run/milvusdb/milvus:v2.5.4 docker compose up -d`。
+
+国内网络下更可靠的做法是把镜像源写进 **colima** 配置（本机实测 `docker.1ms.run` 可用）：
+
+```yaml
+# ~/.colima/default/colima.yaml
+docker:
+  registry-mirrors:
+    - https://docker.1ms.run
+    - https://docker.xuanyuan.me
+    - https://docker.m.daocloud.io
+    - https://docker.1panel.live
+```
+
+然后 `colima restart`，再执行 `docker pull milvusdb/milvus:v2.5.4`。
+
+### Q6.1 升级到 Milvus 2.5 后 `hybrid.engine` 还是 `local`
+
+说明集合还是 2.4 时代建的，没有 `sparse` 字段。处理：
+
+```bash
+# 先备份（Milvus 不支持降级）
+tar -czf milvus-backup.tgz volumes/milvus volumes/etcd
+python run_ingestion.py --reset
+```
+
+重建后 `GET /info` 应显示 `hybrid.engine=milvus`、`sparse_ready=true`。
+如果显式设置 `HYBRID_ENGINE=milvus`，能力不足时服务会直接启动失败并给出提示，这是刻意设计（避免静默降级）。
+临时回退：`HYBRID_ENGINE=local`。
 
 ### Q7. `docker compose` 里为什么没有 MinIO
 Milvus 2.4 支持 `common.storageType: local`，数据直接落盘到 `./volumes/milvus`，避免受限网络下拉取 minio 镜像。需要 S3 时改回 `remote` 并补 minio 服务。
