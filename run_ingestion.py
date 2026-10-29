@@ -13,11 +13,10 @@ Usage:
 
 import argparse
 import os
+import shutil
 import sys
 
 from src.config import settings
-from src.engine import kb_engine
-from src.etl import EnterpriseETL
 
 
 def main():
@@ -51,7 +50,20 @@ def main():
     print(f"Vector store: {settings.VECTOR_STORE_TYPE}")
     if args.reset:
         print("Resetting index...")
-        kb_engine.reset()
+        if settings.VECTOR_STORE_TYPE == "milvus":
+            # Drop before the engine is created: the driver decides which
+            # schema to build from the collection that exists at startup.
+            from src.hybrid import drop_milvus_collection
+
+            if not drop_milvus_collection():
+                print("  (collection did not exist)")
+        else:
+            shutil.rmtree(settings.DB_PATH, ignore_errors=True)
+            print(f"  Removed FAISS index at {settings.DB_PATH}.")
+
+    # Imported after the reset so schema decisions see the fresh state.
+    from src.engine import kb_engine  # noqa: F401  (constructs the singleton)
+    from src.etl import EnterpriseETL
 
     etl = EnterpriseETL(data_dir=root)
     keep = set()

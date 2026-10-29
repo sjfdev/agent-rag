@@ -230,12 +230,14 @@ def _run_job(job_id: str, dept: Optional[str], reset: bool) -> None:
             if pruned:
                 _job_log(job_id, f"Pruned {pruned} document(s) no longer present.")
 
-        if settings.HYBRID_ENABLED:
+        if kb_engine.hybrid_mode == "local":
             try:
                 depts = kb_engine.warm_lexical(set(departments))
                 _job_log(job_id, f"Lexical index warmed for: {', '.join(depts) or '-'}")
             except Exception:
                 logger.warning("lexical warmup after ingest failed", exc_info=True)
+        elif kb_engine.hybrid_mode == "milvus":
+            _job_log(job_id, "Server-side sparse BM25 index updated by Milvus.")
 
         stats = dict(etl.stats)
         _job_log(

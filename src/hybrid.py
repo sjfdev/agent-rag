@@ -6,10 +6,44 @@ Otherwise it falls back to the in-process BM25 index. These helpers keep the
 decision logic pure so it can be unit-tested without a Milvus instance.
 """
 
+import logging
 import re
-from typing import Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
+
+from src.config import settings
+
+logger = logging.getLogger(__name__)
 
 VERSION_RE = re.compile(r"v?(\d+)\.(\d+)(?:\.(\d+))?")
+
+
+def connection_args() -> Dict[str, Any]:
+    """Milvus connection kwargs from settings."""
+    if settings.MILVUS_URI:
+        return {"uri": settings.MILVUS_URI}
+    return {"host": settings.MILVUS_HOST, "port": settings.MILVUS_PORT}
+
+
+def drop_milvus_collection(collection: Optional[str] = None) -> bool:
+    """Drop a Milvus collection without constructing the engine.
+
+    Used by `run_ingestion.py --reset` so a schema change (for example adding
+    the sparse BM25 field) can be applied before the driver decides whether
+    server-side hybrid search is available.
+    """
+    try:
+        from pymilvus import MilvusClient
+
+        client = MilvusClient(**connection_args())
+        name = collection or settings.MILVUS_COLLECTION
+        existed = client.has_collection(name)
+        if existed:
+            client.drop_collection(name)
+        client.close()
+        return existed
+    except Exception:
+        logger.warning("could not drop milvus collection", exc_info=True)
+        return False
 
 
 def parse_version(raw: Optional[str]) -> Optional[Tuple[int, int, int]]:

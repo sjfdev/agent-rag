@@ -22,7 +22,7 @@ services:
 
   standalone:
     container_name: milvus-standalone
-    image: ${MILVUS_IMAGE:-milvusdb/milvus:v2.4.0}
+    image: ${MILVUS_IMAGE:-milvusdb/milvus:v2.5.4}
     restart: unless-stopped
     mem_limit: 5g
     command: ["milvus", "run", "standalone"]

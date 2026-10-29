@@ -61,14 +61,14 @@ def main() -> int:
         check("status reports ready", driver.capabilities.sparse_ready)
 
         docs = [
-            Document("Visitor wifi uses the DEMO-GUEST network at reception.",
-                     {"source": "demo.txt", "dept": "Demo", "doc_id": "d1",
-                      "doc_hash": "h1", "kind": "txt", "page": 1, "slide": 0,
-                      "sheet": "", "title": "", "chunk_index": 0}),
-            Document("Passwords rotate every 90 days on the VPN portal.",
-                     {"source": "tech.txt", "dept": "Tech", "doc_id": "d2",
-                      "doc_hash": "h2", "kind": "txt", "page": 1, "slide": 0,
-                      "sheet": "", "title": "", "chunk_index": 0}),
+            Document(page_content="Visitor wifi uses the DEMO-GUEST network at reception.",
+                     metadata={"source": "demo.txt", "dept": "Demo", "doc_id": "d1",
+                               "doc_hash": "h1", "kind": "txt", "page": 1, "slide": 0,
+                               "sheet": "", "title": "", "chunk_index": 0}),
+            Document(page_content="Passwords rotate every 90 days on the VPN portal.",
+                     metadata={"source": "tech.txt", "dept": "Tech", "doc_id": "d2",
+                               "doc_hash": "h2", "kind": "txt", "page": 1, "slide": 0,
+                               "sheet": "", "title": "", "chunk_index": 0}),
         ]
         driver.add_documents([d.page_content for d in docs],
                              [dict(d.metadata) for d in docs])
@@ -102,10 +102,18 @@ def main() -> int:
         check("delete by doc_id", driver.delete_by_doc_id("d1") >= 0)
         check("reset rebuilds schema", True)
         driver.reset()
-        check("reset leaves empty collection", driver.count() == 0, str(driver.count()))
-        check("reset keeps sparse field", settings.HYBRID_SPARSE_FIELD in {
+        check("reset leaves empty store", driver.count() == 0, str(driver.count()))
+        # The collection is created lazily on the next write; verify the new
+        # schema still carries the sparse field and BM25 index.
+        driver.add_documents([docs[0].page_content], [dict(docs[0].metadata)])
+        client.flush(collection)
+        fields_after = {
             f["name"] for f in client.describe_collection(collection)["fields"]
-        })
+        }
+        check("reset rebuilds sparse field", settings.HYBRID_SPARSE_FIELD in fields_after)
+        check("reset rebuilds bm25 index", driver.capabilities.bm25_index)
+        check("reset collection is searchable", bool(
+            driver.hybrid_search("DEMO-GUEST", "Demo", 1, 5)))
     finally:
         settings.MILVUS_COLLECTION = old_collection
         settings.HYBRID_ENGINE = old_engine

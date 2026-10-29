@@ -12,7 +12,8 @@ from langchain_milvus import Milvus
 from langchain_openai import OpenAIEmbeddings
 
 from src.config import settings
-from src.hybrid import resolve_hybrid_mode, version_at_least
+from src.hybrid import connection_args as _connection_args
+from src.hybrid import drop_milvus_collection, resolve_hybrid_mode, version_at_least
 from src.validation import validate_dept
 
 logger = logging.getLogger(__name__)
@@ -122,12 +123,6 @@ class MilvusCapabilities:
             # A fresh collection will be created with a sparse field.
             return True
         return self.sparse_field and self.bm25_index
-
-
-def _connection_args() -> Dict[str, Any]:
-    if settings.MILVUS_URI:
-        return {"uri": settings.MILVUS_URI}
-    return {"host": settings.MILVUS_HOST, "port": settings.MILVUS_PORT}
 
 
 def _inspect_milvus(collection: str, sparse_field: str) -> MilvusCapabilities:
@@ -308,13 +303,20 @@ class MilvusDriver(BaseVectorStore):
             limit=limit,
         )
 
-    def _count(self, expr: str) -> int:
+    def _count(self, expr: str, allow_missing: bool = False) -> int:
         # Milvus rejects count(*) when a pagination limit is present.
-        res = self.vector_db.client.query(
-            collection_name=self.collection,
-            filter=expr,
-            output_fields=["count(*)"],
-        )
+        try:
+            res = self.vector_db.client.query(
+                collection_name=self.collection,
+                filter=expr,
+                output_fields=["count(*)"],
+            )
+        except Exception as exc:
+            # Right after a reset the collection may not exist yet; that is an
+            # empty store, not a broken one. Connection errors still propagate.
+            if allow_missing and "collection not found" in str(exc).lower():
+                return 0
+            raise
         return int(res[0]["count(*)"]) if res else 0
 
     def add_documents(self, texts: List[str], metadatas: List[Dict[str, Any]]):
@@ -327,9 +329,10 @@ class MilvusDriver(BaseVectorStore):
     def search(self, query: str, user_dept: str, k: int = 5) -> List[Document]:
         safe_dept = validate_dept(user_dept)
         expr = f"dept == '{safe_dept}'"
-        if self.sparse_enabled:
-            # Two vector fields: similarity_search() refuses multi-vector stores,
-            # so query the dense field explicitly.
+        # A collection with a sparse field cannot be queried through
+        # similarity_search(): Milvus refuses to return raw sparse data.
+        if self.sparse_enabled or settings.HYBRID_SPARSE_FIELD in self.vector_db.fields:
+            # Query the dense field explicitly.
             try:
                 results = self.vector_db.client.search(
                     collection_name=self.collection,
@@ -353,7 +356,7 @@ class MilvusDriver(BaseVectorStore):
             return True
 
     def count(self) -> int:
-        return self._count("")
+        return self._count("", allow_missing=True)
 
     _FETCH_FIELDS = [
         "text", "source", "dept", "doc_id", "doc_hash", "kind",
