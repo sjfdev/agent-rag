@@ -1,0 +1,13 @@
+Demo support FAQ
+
+Q: How do I request VPN access?
+A: Open a request in the self-service IT portal; your manager approves it.
+
+Q: What is the Wi-Fi password for visitors?
+A: Use the DEMO-GUEST network; the password is available at reception.
+
+Q: 访客如何连接 Wi-Fi？
+A: 使用访客网络 DEMO-GUEST，密码可在前台获取。
+
+Q: Who owns the demo environment?
+A: The QA team owns it; ask in the #demo-support channel.

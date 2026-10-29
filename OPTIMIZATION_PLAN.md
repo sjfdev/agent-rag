@@ -208,6 +208,7 @@ curl -f http://localhost:9091/healthz
 | 2026-10-29 | 流式输出：`POST /chat/stream`（SSE）+ UI 逐字渲染 | 热态 TTFT ≈0.68s；`test_agent.py` 仍走非流式 /chat |
 | 2026-10-29 | 引用来源 + 增量入库 + compose 自愈 | 元数据新增 page/doc_id/doc_hash/chunk_index；重复入库 count 不变；Milvus 重导 15 chunks |
 | 2026-10-29 | 多格式入库（9 类） | `check_loaders.py` 17/17；混合格式入库 21 chunks 后 prune 回 15；FAISS/Milvus 隔离均通过 |
+| 2026-10-29 | 内置 Demo 多格式数据 | `data/Demo` 9 文件 → 26 chunks；UI 新增 Demo 部门与预设；隔离校验通过 |
 |  |  |  |
 
 ---
@@ -280,5 +281,6 @@ curl -f http://localhost:9091/healthz
 - [x] 表格转行文本（`a | b`）、PPT 备注、HTML 去脚本、编码兜底
 - [x] 嵌套子目录、50MB 上限、旧格式 `.doc/.ppt/.xls` 提示
 - [x] `scripts/check_loaders.py` 无依赖自检（17 项）
+- [x] 内置 `data/Demo/` 9 文件多格式数据集 + `scripts/generate_demo_files.py`
 - [ ] 扫描版 PDF OCR（建议 `ocrmypdf` 预处理或接 PaddleOCR）
 - [ ] 大文件流式解析与分页入库（当前 50MB 一次性读取）

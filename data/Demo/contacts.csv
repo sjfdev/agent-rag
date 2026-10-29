@@ -1,0 +1,4 @@
+name,team,email,responsibility
+Alice,QA,alice@example.com,smoke tests
+Bob,Ops,bob@example.com,on-call rotation
+Carol,Security,carol@example.com,access reviews

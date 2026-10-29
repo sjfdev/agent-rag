@@ -1,0 +1,7 @@
+{
+  "service": "demo-api",
+  "owner": "qa-team",
+  "sla": "99.9%",
+  "environment": "demo",
+  "refresh": "every Monday 06:00 UTC"
+}

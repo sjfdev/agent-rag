@@ -17,6 +17,8 @@ CASES = [
     ("Finance", "What are the salary bands in the 2026 budget?", "budget"),
     ("Finance", "When must expense claims be submitted?", "expense"),
     ("HR", "How many annual leave days do employees get?", "leave"),
+    ("Demo", "How do I request VPN access?", "vpn"),
+    ("Demo", "What is the test coverage metric?", "coverage"),
 ]
 
 

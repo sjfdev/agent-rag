@@ -153,6 +153,7 @@
         <option>Tech</option>
         <option>HR</option>
         <option>Finance</option>
+        <option>Demo</option>
       </select>
     </label>
     <button class="ghost" id="newchat" title="在新标签页打开一个全新会话">新对话（新窗口）</button>
@@ -170,6 +171,8 @@
     <button data-q="What is the total 2026 operating budget?">2026 预算</button>
     <button data-q="My laptop is broken and I need a replacement.">报修/工单</button>
     <button data-q="What are the salary bands in the 2026 budget?">越权测试（薪资）</button>
+    <button data-q="How do I request VPN access?" data-dept="Demo">Demo VPN（多格式）</button>
+    <button data-q="What is the test coverage metric?" data-dept="Demo">Demo 指标（Excel）</button>
   </div>
   <div class="hint">多轮对话会携带历史消息；右侧时间单位均为毫秒。</div>
 </footer>
@@ -424,7 +427,14 @@ resetBtn.onclick = () => {
 };
 
 document.querySelectorAll(".presets button").forEach(b => {
-  b.onclick = () => { input.value = b.dataset.q; input.focus(); };
+  b.onclick = () => {
+    if (b.dataset.dept && deptSel.value !== b.dataset.dept) {
+      deptSel.value = b.dataset.dept;
+      deptSel.dispatchEvent(new Event("change"));
+    }
+    input.value = b.dataset.q;
+    input.focus();
+  };
 });
 
 fetch("/info").then(r => r.json()).then(d => {

@@ -210,7 +210,7 @@ Vector store: milvus
   add      HR/benefits_guide.pdf (2 chunks)
   ...
 
-Done. docs: added=8 updated=0 skipped=0 pruned=0; chunks written=15
+Done. docs: added=17 updated=0 skipped=0 pruned=0; chunks written=26
 ```
 
 再次执行时未改动的文件会显示 `skip ... (unchanged)`，向量数不变。
@@ -236,6 +236,29 @@ Done. docs: added=8 updated=0 skipped=0 pruned=0; chunks written=15
 - `.doc/.ppt/.xls` 旧格式需先转成新格式（会打印提示并跳过）
 - 扫描版 PDF 需 OCR，当前未内置；可先用 `ocrmypdf` 生成可搜索 PDF
 - 无 LLM 快速自检：`python scripts/check_loaders.py`
+
+### 内置多格式 Demo 数据
+
+仓库自带 `data/Demo/`（9 个文件，覆盖全部格式），可直接用于联调：
+
+```bash
+python scripts/generate_demo_files.py   # 重新生成（幂等）
+python run_ingestion.py                 # 增量入库
+```
+
+| 文件 | 格式 | 示例问题 |
+|---|---|---|
+| `program_overview.pdf` | PDF | Demo 环境多久刷新一次？ |
+| `release_checklist.docx` | Word | 发布前必须完成哪些步骤？ |
+| `onboarding.pptx` | PPT | 入职第一周做什么？ |
+| `metrics.xlsx` | Excel | test coverage 是多少？ |
+| `contacts.csv` | CSV | 谁负责 on-call？ |
+| `policy.md` | Markdown | 如何申请 VPN？ |
+| `faq.txt` | 文本 | 访客 Wi-Fi 密码？ |
+| `runbook.html` | HTML | 错误率超过多少要叫 on-call？ |
+| `metadata.json` | JSON | demo-api 的 SLA 是多少？ |
+
+在 `/ui/` 中选择 **Demo** 部门，或点「Demo VPN（多格式）」「Demo 指标（Excel）」预设，即可验证多格式检索与来源展示（`slide` / `sheet` 标签）。
 
 每个 chunk 的元数据：
 
