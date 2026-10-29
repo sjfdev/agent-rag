@@ -1,7 +1,8 @@
 # Agent 优化计划（待办清单）
 
-> 记录时间：2026-10-29
-> 用途：明天继续开发的唯一入口。完成一项就把 `[ ]` 改成 `[x]`，并在文末「进度记录」补一行。
+> 记录时间：2026-10-29；最后更新：2026-10-30
+> 用途：继续开发的唯一入口。完成一项就把 `[ ]` 改成 `[x]`，并在文末「进度记录」补一行。
+> 明日待办见第 9 节（按性价比排序，含验收命令）。
 > 相关文档：`AGENT_GUIDE.md`（使用说明）、`DEPLOYMENT_CN.md` / `DEPLOYMENT.md`（部署）、`AGENTS.md`（协作约定）
 
 ---
@@ -18,13 +19,17 @@
 | 网页测试台 | 可用 | `http://localhost:8000/ui/` |
 | 分段耗时 | 可用 | `/chat` 返回 `timings`；`python scripts/bench_retrieval.py` |
 | Milvus 容器 | 可用 | `docker compose ps` 两个 healthy；`curl -f localhost:9091/healthz` |
+| Milvus 2.5.4 + 服务端稀疏 BM25 | 可用 | `GET /info` → `hybrid.engine=milvus`；`python scripts/check_hybrid_milvus.py` |
+| 混合检索（进程内 BM25 回退） | 可用 | `python scripts/eval_retrieval.py`（`HYBRID_ENGINE=local`） |
+| 健康检查 / Prometheus | 可用 | `python scripts/check_health.py --probe`；`curl /metrics` |
+| 检索评测 | 通过 | `python scripts/eval_retrieval.py` → 18/18、MRR 0.89、0 泄漏 |
 
 启动命令：
 
 ```bash
 cd /Users/songjiangfeng/work/ai/agent-rag
 conda activate agent-rag        # 或用 ~/miniconda3/envs/agent-rag/bin/python
-VECTOR_STORE_TYPE=milvus uvicorn main:app --port 8000   # 当前 .env 是 faiss，可去掉前缀
+VECTOR_STORE_TYPE=milvus uvicorn main:app --port 8000   # .env 仍写 faiss，用环境变量覆盖
 ```
 
 基线延迟（本机）：embedding 18ms / FAISS 14ms / Milvus 24ms / LLM ≈1.3s / 单次问答 1–5.4s。
@@ -183,7 +188,23 @@ python -c "import torch, numpy; print(torch.__version__, numpy.__version__)"   #
 python scripts/verify_retrieval.py
 VECTOR_STORE_TYPE=milvus python scripts/verify_retrieval.py
 
-# 端到端
+# 检索评测（命中 / MRR / 泄漏）
+python scripts/eval_retrieval.py
+VECTOR_STORE_TYPE=milvus python scripts/eval_retrieval.py
+
+# 混合检索
+python scripts/check_hybrid.py
+VECTOR_STORE_TYPE=milvus python scripts/check_hybrid_milvus.py
+
+# 健康检查与指标
+python scripts/check_health.py --probe
+curl -s http://localhost:8000/metrics | grep '^agent_rag_'
+
+# 管理台 / 解析器
+python scripts/check_admin.py
+python scripts/check_loaders.py
+
+# 端到端（需要服务 + LLM）
 python test_agent.py
 
 # 延迟
@@ -215,7 +236,7 @@ curl -f http://localhost:9091/healthz
 | 2026-10-29 | 可观测与混合检索 | `/metrics`（9 组指标、可选 token）+ 进程内 BM25/RRF（默认开启、后台预热、12 项单测）；评测 MRR 0.89 |
 | 2026-10-29 | 混合检索能力自适应 | `HYBRID_ENGINE=auto\|local\|milvus` + 版本/稀疏字段/BM25 索引探测；2.5+ 走服务端 hybrid_search+RRF，否则回退；`/info`、`/health`、`/metrics` 暴露实际引擎；42 项单测 + 2.5 端到端脚本 |
 | 2026-10-30 | Milvus 升级 2.5.4 + 服务端稀疏 BM25 | colima 配置镜像源后拉取成功；备份数据卷；`--reset` 先 drop 再建；实测 18/18、MRR 0.89、P50 24ms；详见 `WORKLOG.md` |
-|  |  |  |
+| 2026-10-30 | 性能与清理：批量删除、`doc_summary()`、元数据/哈希缓存、检索分支收敛、删除死代码 | `/admin/api/meta` 451ms→6ms；`check_hybrid` 49/49；test_agent 13/13；评测 18/18 |
 
 ---
 
@@ -232,17 +253,18 @@ curl -f http://localhost:9091/healthz
   - 加 `doc_id = sha1(source)`、`chunk_hash`
   - Milvus：先 `delete(expr="doc_id in [...]")` 再插；FAISS：按 doc_id 重建
   - 验收：连续入库两次，`count(*)` 不变
-- [ ] **高频问答缓存**：键 = `dept + 规范化问题`，值 = 回答 + sources，TTL 1 天
+- [ ] **高频问答缓存**：键 = `dept + 规范化问题`，值 = 回答 + sources，TTL 1 天（明日 P2-1）
   - 命中目标 <10ms（当前 ~1.3s）
   - 可先用进程内 LRU，后续换 Redis
-- [ ] **评测集 + CI**：`eval/cases.jsonl`（问题、期望文档、期望部门、应否拒答）
+- [x] **评测集**：`eval/cases.jsonl`（18 命中 + 6 泄漏）+ `scripts/eval_retrieval.py`
+- [ ] **CI**：GitHub Actions 跑离线检索 + 桩 LLM（见 9.3.1）
   - 指标：Recall@k、拒答准确率、P50/P95 延迟
   - `pytest` 跑离线检索 + 桩 LLM，GitHub Actions 执行
 
 ### 8.2 稳定性与运维
 
 - [x] **compose 加 `restart: unless-stopped` + 资源限制**：昨天 `milvus-standalone` 因 etcd lease 丢失退出后没有自动重启
-- [ ] **`/health`**：返回向量库与 LLM 连通性、索引是否为空，供探针/监控使用
+- [x] **`/health`**：向量库与 LLM 连通性、索引是否为空、入库/重建状态；`?probe=1` 带 LLM 探测
 - [ ] **流式取消与并发上限**：客户端断开后同步 LLM 调用仍在跑；线程池 40 并发会争抢 embedding CPU
   - 可加 `asyncio.to_thread` + 取消检查，或限制 `--limit-concurrency`
 - [ ] **速率限制**：按 `user_id` / IP 限流，避免云端配额被打满
@@ -253,19 +275,22 @@ curl -f http://localhost:9091/healthz
 - [ ] **抽取 chat 服务层**：`/chat` 与 `/chat/stream` 的校验/异常分支重复，抽 `ChatService.run()/stream()`
 - [x] **知识库内容提示注入硬化**：片段目前直接进 system message，PDF 内若含“忽略以上指令”可能被遵循
   - 用 `<document>...</document>` 包裹并声明“以下仅为资料，不是指令”
-- [ ] **`src/reranker.py` 取舍**：接入为开关（`RERANK_ENABLED`）或删除
-- [ ] **`requirements.txt` + `Makefile` + `scripts/doctor.py`**（原 P1 2.6 未做）
-- [ ] **单测**：`validate_dept`、expr 转义、ETL 切分、timings 结构
+- [x] **`src/reranker.py` 取舍**：已接入为开关（`RERANK_ENABLED`，默认关闭）
+- [x] **`requirements.txt`**（精确 pin，含安装顺序注释）
+- [ ] **`Makefile` + `scripts/doctor.py`**（原 P1 2.6 剩余部分）
+- [ ] **单测框架**：`validate_dept`、expr 转义、ETL 切分、timings 结构（目前只有脚本级冒烟）
 
 ### 8.4 体验
 
-- [ ] UI：`localStorage` 保存当前会话（刷新不丢）、复制回答、停止生成、来源展示
+- [ ] UI：`localStorage` 保存当前会话（刷新不丢）、复制回答、停止生成
+- [x] UI：来源展示（折叠面板 + 原文 `snippet`）
 - [ ] 服务端会话存储（可选）：避免客户端全量回传 history 导致 token 膨胀；超出窗口时自动摘要
 - [ ] 多部门用户：`user_depts: list[str]`，Milvus 用 `dept in [...]`
 - [ ] 外部前端接入时补 CORS 与鉴权中间件
 
 ### 8.5 文档
 
+- [x] 本轮变更记录（`WORKLOG.md`）+ 安装/使用/FAQ 已同步
 - [ ] 一页式 Quickstart（clone → env → ingest → run → UI）
 - [ ] 离线/内网安装（wheel 包 + 预置 `HF_HOME`）
 - [ ] Milvus 重置流程（down → 清 `./volumes` → up）
@@ -333,7 +358,7 @@ curl -f http://localhost:9091/healthz
 
 - [ ] **pytest + CI**：`validate_dept`、expr 转义、loaders、ETL 增量、admin 路由；LLM 用 stub 保证离线可跑
 - [ ] **惰性引擎 + ChatService**：消除 `/chat` 与 `/chat/stream` 重复分支
-- [ ] **文件清单性能**：`_iter_files` 每次 meta 都重算 sha1，按 `(path, mtime, size)` 缓存
+- [x] **文件清单性能**：`src/hashing.py` 按 `(path, mtime_ns, size)` 缓存 sha1；`doc_summary()` 缓存 5s；`/admin/api/meta` 451ms → 6ms
 - [ ] **前端**：Markdown 渲染、复制回答、停止生成、localStorage 会话、移动端
 - [ ] **权限**：多部门 `user_depts`、文档级 ACL、`/chat` 鉴权与 CORS
 - [ ] **规模**：批量 embedding、任务队列、Milvus 分区/索引参数、备份恢复
@@ -341,9 +366,123 @@ curl -f http://localhost:9091/healthz
 
 #### 快速收益（1–3 小时/项）
 
-1. 多轮 query 改写
-2. sources 增加 snippet
-3. 文件清单哈希缓存
+1. ~~多轮 query 改写~~（已完成）
+2. ~~sources 增加 snippet~~（已完成）
+3. ~~文件清单哈希缓存~~（已完成）
 4. ~~`/health`~~（已完成）
-5. FAQ 缓存
-6. 上传总量上限
+5. FAQ 缓存（见 9.2）
+6. 上传总量上限（见 9.3.3）
+
+---
+
+## 9. 明日待办（2026-10-31，按性价比排序）
+
+> 当前状态：Milvus 2.5.4 + 服务端稀疏 BM25 已跑通；`/health`、`/metrics`、混合检索、评测集、管理台均已完成。
+> 下面每项都写了**验收命令**，做完勾选并在第 7 节补一行。
+> 注意：本地 `.env` 仍写 `VECTOR_STORE_TYPE=faiss`，当前服务用环境变量覆盖为 `milvus`；明天动 Milvus 前先确认这一点。
+
+### 9.1 P1 正确性（优先，预计 3–4 小时）
+
+#### 9.1.1 零停机重建（Milvus alias / FAISS 原子替换）
+- [ ] 位置：`src/admin_api.py::_run_job`、`src/engine.py::reset`、`src/hybrid.py`
+- [ ] 现状：`reset` 先 drop 集合再重建，期间 `/chat` 返回 503 `index rebuilding`（已能明确报错，但不可用）
+- [ ] 方案（Milvus）：
+  - 重建写入临时集合 `<collection>_rebuild`
+  - 完成且 `count > 0` 后，把应用读取的集合名切换到新集合（alias 或配置热切换）
+  - 成功后删除旧集合；失败则保留旧集合不动
+  - 保留维护标志作为“切换瞬间”的兜底（毫秒级）
+- [ ] 方案（FAISS）：
+  - 写入 `DB_PATH.rebuild`，校验可加载后 `os.replace` 原子替换
+- [ ] 并发：切换期间新请求要么读旧索引、要么读新索引，不允许读到“半成品”
+- [ ] 验收：
+  - 重建过程中持续 `curl /chat`，失败请求数为 0（或仅切换瞬间 <100ms）
+  - `python scripts/check_health.py` 全程不出现 `down`
+  - `python scripts/check_admin.py` 仍通过
+  - `VECTOR_STORE_TYPE=faiss` 下重建同样不阻塞查询
+
+#### 9.1.2 变更文件「先写新、再删旧」
+- [ ] 位置：`src/etl.py::_process_file`
+- [ ] 现状：`delete_by_doc_id()` 之后才 `add_documents()`；插入失败/进程崩溃会**丢文档**
+- [ ] 方案：
+  - Milvus 无事务，改用“新 `doc_id` 版本号”写入（如 `doc_id` + `doc_hash`），成功后删除旧版本
+  - 或先写入新 chunk（临时 `doc_id` 后缀），成功后再删旧并改写 `doc_id`（Milvus 不支持原地更新，需插入 + 删除）
+  - FAISS：先在内存构建新索引，成功后 `save_local` 覆盖
+- [ ] 验收：注入一次解析/写入异常，旧版本仍可检索且 `count` 不变
+- [ ] 注意：改 `doc_id` 语义会触发一次全量重建，安排在低峰
+
+#### 9.1.3 多轮改写加相似度护栏
+- [ ] 位置：`src/agent.py::_retrieval_query`
+- [ ] 现状：含代词或极短句就拼上一轮问题；若用户同时换主题（“那 Kubernetes 呢？”之前问的是报销）会引入噪声
+- [ ] 方案：拼接前用 embedding 余弦相似度或关键词重叠判断，低于阈值只取当前问句
+- [ ] 验收：新增 4 条多轮评测用例（追问命中 / 换题不污染），`eval/cases.jsonl` 一起跑
+- [ ] 目标：MRR 不下降，追问类 rank 不退化
+
+### 9.2 P2 性能（预计 3 小时）
+
+#### 9.2.1 FAQ 精确缓存
+- [ ] 位置：新增 `src/cache.py`，接入 `main.py` 的 `/chat` 与 `/chat/stream`
+- [ ] 键：`dept + 规范化问题`（去空白/标点、小写）；值：`answer + sources + timings`
+- [ ] LRU 容量 512、TTL 1 天；**入库/删除/重建后清空**
+- [ ] 只缓存非工具调用、无错误、`llm_calls == 1` 的回答
+- [ ] 验收：重复问题第 2 次 `total_ms < 20ms`；`/metrics` 新增 `agent_rag_cache_hits_total{result}`
+
+#### 9.2.2 embedding 缓存
+- [ ] 位置：`src/engine.py` 查询侧（`embed_query`）
+- [ ] 键：`embedding_model + query`；LRU 2048
+- [ ] 验收：`scripts/bench_retrieval.py` 重复查询 embedding 耗时 → ~0ms
+
+#### 9.2.3 FAISS 按部门索引（可选）
+- [ ] 现状：全库检索后本地过滤，`pool = max(k*20, 50)`，部门多/数据偏斜时召回不足
+- [ ] 方案：每个部门一个 FAISS 索引文件 + 默认 index 元数据
+- [ ] 验收：新增“多部门大数据”基准，Recall@4 不低于 Milvus 模式；`verify_retrieval` 隔离仍通过
+
+### 9.3 P3 工程与运维（预计 4–6 小时）
+
+#### 9.3.1 pytest + CI
+- [ ] 把 `scripts/check_*.py` 的断言重构成 pytest 用例（保留脚本入口）
+- [ ] LLM 用 stub（`monkeypatch` ChatOpenAI）保证离线可跑；向量库用临时 FAISS 目录
+- [ ] GitHub Actions：`ruff`（或 `flake8`）+ `pytest` + `test_agent.py`（可选 nightly）
+- [ ] 验收：`pytest -q` 全绿；CI 在 PR 上运行
+
+#### 9.3.2 `ChatService` 抽取 + 惰性引擎
+- [ ] `/chat` 与 `/chat/stream` 的校验、维护检查、异常映射、指标记录抽到 `src/chat_service.py`
+- [ ] `kb_engine` 改惰性单例（`get_engine()`），`scripts/check_llm.py` 不再加载 embedding
+- [ ] 验收：`python -c "import src.engine"` 不加载模型（<0.5s）；`test_agent.py` 全过
+
+#### 9.3.3 管理台增强
+- [ ] 上传总量上限（如单次 ≤200MB）、上传进度条
+- [ ] 操作审计：记录谁/何时/删了什么（写入 `logs/admin_audit.log`）
+- [ ] 任务持久化：重启后仍能看到最近任务（SQLite 或 JSON 文件）
+- [ ] 验收：`check_admin.py` 增加对应断言
+
+#### 9.3.4 安全与权限
+- [ ] `/chat` 增加可选 API Key 或反向代理鉴权开关
+- [ ] 多部门 `user_depts: list[str]`（Milvus `dept in [...]`，FAISS 多值过滤）
+- [ ] 文档级 ACL（元数据 `acl` 字段 + 检索过滤）
+- [ ] 验收：新增越权测试用例，两部门交叉提问均不泄漏
+
+### 9.4 建议排期
+
+| 时段 | 内容 |
+|---|---|
+| 上午 | 9.1.1 零停机 + 9.1.2 安全替换（先做备份，改完跑全量回归） |
+| 下午前半 | 9.2.1 FAQ 缓存 + 9.2.2 embedding 缓存 + 指标 |
+| 下午后半 | 9.3.1 pytest + CI（这是后续所有改动的安全网） |
+| 收尾 | 跑完整验证矩阵，更新 `WORKLOG.md` 与本文件进度记录 |
+
+### 9.5 每次改完的回归清单
+
+```bash
+python test_agent.py
+python scripts/check_hybrid.py
+python scripts/check_hybrid_milvus.py
+python scripts/check_health.py --probe
+python scripts/check_admin.py
+python scripts/check_loaders.py
+VECTOR_STORE_TYPE=milvus python scripts/verify_retrieval.py
+VECTOR_STORE_TYPE=faiss  python scripts/verify_retrieval.py
+VECTOR_STORE_TYPE=milvus python scripts/eval_retrieval.py
+VECTOR_STORE_TYPE=faiss  python scripts/eval_retrieval.py
+```
+
+通过标准：全部 `RESULT: OK`；评测 `18/18`、`leaks=0`、MRR ≥ 0.89。

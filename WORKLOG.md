@@ -271,6 +271,6 @@
 ## 10. 相关文档
 
 - `AGENT_GUIDE.md`：安装、使用、接口、配置、FAQ、性能优化
-- `OPTIMIZATION_PLAN.md`：待办清单与历史进度
+- `OPTIMIZATION_PLAN.md`：待办清单与历史进度；**下一次开发直接看第 9 节「明日待办」**
 - `DEPLOYMENT_CN.md` / `DEPLOYMENT.md`：私有化部署步骤
 - `AGENTS.md`：协作约定与常用命令

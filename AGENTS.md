@@ -42,4 +42,4 @@ All commands assume the conda env `agent-rag` is active (`conda activate agent-r
 ## Documentation
 - **`WORKLOG.md`**: what was built in the 2026-10-29/30 iteration (admin console, evaluation, hybrid retrieval, health/metrics, Milvus 2.5 upgrade), verification matrix and remaining work.
 - **`AGENT_GUIDE.md`**: full Chinese guide (tech stack, install, usage, FAQ, performance tuning).
-- **`OPTIMIZATION_PLAN.md`**: prioritized TODO checklist (P0 security/stability → P1 architecture → P2 scale, plus docs tasks) with file:line refs and acceptance commands.
+- **`OPTIMIZATION_PLAN.md`**: prioritized TODO checklist (P0 security/stability → P1 architecture → P2 scale, plus docs tasks) with file:line refs and acceptance commands. **Section 9 is the next-session backlog** (zero-downtime rebuild, safe replace, FAQ/embedding cache, pytest+CI, ChatService, admin hardening, permissions) with acceptance criteria.
