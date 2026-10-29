@@ -8,7 +8,8 @@
 
 一个可私有化部署的企业知识库问答 Agent，核心能力：
 
-- **RAG 检索问答**：PDF 文档 → 切分 → 向量化 → 检索 → 交给 LLM 组织答案
+- **多格式 RAG**：PDF / DOCX / PPTX / XLSX / CSV / Markdown / TXT / HTML / JSON → 切分 → 向量化 → 检索 → 答案附带来源
+- **增量入库**：按内容哈希跳过未变文件、替换变更文件、清理已删除文件
 - **部门级权限隔离**：每个 chunk 带 `dept` 元数据，检索时强制按部门过滤，跨部门数据不可见
 - **多轮对话**：客户端回传 `history`，服务端按会话还原上下文
 - **工具调用**：知识库无解时自动创建工单（`create_support_ticket`）
@@ -67,7 +68,9 @@
 | Embedding | sentence-transformers | 3.4.1 | 本地 `BAAI/bge-small-zh-v1.5`（512 维） |
 | 推理底座 | transformers / torch | 4.49.0 / 2.2.2 | 版本强绑定，见 FAQ |
 | 数值 | numpy / pandas | 1.26.4 / 2.2.3 | 必须 `numpy<2` |
-| PDF | pypdf / PyPDF2 / reportlab | 6.21.3 / - / 5.1.0 | 解析与样例生成 |
+| PDF | pypdf / reportlab | 6.21.3 / 5.1.0 | 解析与样例生成 |
+| Office | python-docx / python-pptx / openpyxl | 1.2.0 / 1.0.2 / 3.1.5 | Word / PPT / Excel 抽取 |
+| Web/文本 | beautifulsoup4 / chardet | 4.15.0 / 7.7.0 | HTML 清洗、编码识别 |
 | 配置 | pydantic-settings | 2.14.1 | `.env` + 环境变量 |
 | 容器 | Docker Compose | 28.4.0 | etcd + Milvus（本地存储，无 MinIO） |
 
@@ -147,7 +150,8 @@ pip install -i https://pypi.tuna.tsinghua.edu.cn/simple \
   "numpy<2" "pandas<2.3" \
   "langchain" "langgraph" "langchain-openai" "langchain-milvus" \
   "langchain-huggingface" faiss-cpu fastapi uvicorn pydantic-settings \
-  requests pypdf PyPDF2 reportlab
+  requests pypdf reportlab \
+  python-docx python-pptx openpyxl beautifulsoup4 chardet
 
 # 锁定与 torch 2.2.2 兼容的推理栈
 pip install -i https://pypi.tuna.tsinghua.edu.cn/simple \
@@ -155,6 +159,7 @@ pip install -i https://pypi.tuna.tsinghua.edu.cn/simple \
 ```
 
 > 安装完成后务必验证：`python -c "import torch, numpy, faiss, langchain; print(torch.__version__, numpy.__version__)"`，应为 `2.2.2 1.26.4` 且无 NumPy ABI 警告。
+> 完整版本清单见仓库根目录 `requirements.txt`（与本文档实测版本一致）。
 
 ### 4.4 配置 `.env`
 
@@ -210,6 +215,28 @@ Done. docs: added=8 updated=0 skipped=0 pruned=0; chunks written=15
 
 再次执行时未改动的文件会显示 `skip ... (unchanged)`，向量数不变。
 
+支持的格式（`src/loaders.py`）：
+
+| 格式 | 扩展名 | 定位字段 | 说明 |
+|---|---|---|---|
+| PDF | `.pdf` | `page` | 按页解析 |
+| Word | `.docx` | - | 段落 + 表格（表格转 `a | b` 行） |
+| PowerPoint | `.pptx` | `slide` | 文本框 + 表格 + 演讲者备注 |
+| Excel | `.xlsx` | `sheet` | 每个工作表一条，最多 5000 行/表 |
+| CSV | `.csv` | - | 自动识别 `, ; \t |` 分隔符 |
+| Markdown | `.md` `.markdown` | - | 纯文本 |
+| 文本 | `.txt` | - | UTF-8 / GB18030 / chardet 兜底 |
+| HTML | `.html` `.htm` | - | 去脚本样式，保留 `<title>` |
+| JSON | `.json` | - | 解析失败时按原文入库 |
+
+限制与建议：
+
+- 单文件 ≤50MB；忽略 `.` 开头与 Office 临时文件 `~$*`
+- 支持部门目录下多级子目录（`data/Tech/runbooks/*.md`）
+- `.doc/.ppt/.xls` 旧格式需先转成新格式（会打印提示并跳过）
+- 扫描版 PDF 需 OCR，当前未内置；可先用 `ocrmypdf` 生成可搜索 PDF
+- 无 LLM 快速自检：`python scripts/check_loaders.py`
+
 每个 chunk 的元数据：
 
 | 字段 | 说明 |
@@ -220,6 +247,10 @@ Done. docs: added=8 updated=0 skipped=0 pruned=0; chunks written=15
 | `doc_id` | `sha1(dept|source)`，文档级去重/删除的键 |
 | `doc_hash` | 文件内容 sha1，用于判断是否变更 |
 | `chunk_index` | 文档内切片序号 |
+| `kind` | 来源类型（pdf/docx/pptx/xlsx/csv/markdown/text/html/json） |
+| `slide` | PPT 页码（仅 pptx） |
+| `sheet` | 工作表名（仅 xlsx） |
+| `title` | 文档标题（HTML `<title>`、DOCX 属性，若存在） |
 
 增量行为：
 
@@ -547,6 +578,7 @@ python scripts/bench_retrieval.py
 1. `run_ingestion.py` 按部门循环、逐个 `add_documents`；文档多时可改为批量/并发 embedding（`encode_kwargs={"batch_size": 64}`）。
 2. 大文件可先做 OCR/表格抽取，避免 PDF 解析丢内容导致检索命中率低。
 3. 增量入库已按 `doc_hash` 跳过未变文件、按 `doc_id` 替换与清理；如需彻底清空用 `--reset`。
+4. 新增格式只需在 `src/loaders.py` 实现 `_load_xxx` 并注册扩展名；解析器应返回带 `kind` 与定位元数据的 `Document`。
 
 ---
 

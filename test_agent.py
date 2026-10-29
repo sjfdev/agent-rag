@@ -60,7 +60,10 @@ def has_sources(data, dept):
     if not sources:
         return False
     return all(
-        s.get("dept") == dept and s.get("source") and isinstance(s.get("page"), int)
+        s.get("dept") == dept
+        and s.get("source")
+        and s.get("kind")
+        and (s.get("page") is None or isinstance(s.get("page"), int))
         for s in sources
     )
 

@@ -2,7 +2,8 @@
 
 ## Core Architecture
 - **RAG Pipeline**: LangGraph $\rightarrow$ Milvus $\rightarrow$ Cross-Encoder Reranker. Answers return `sources` (`source`+`page`) built from retrieval metadata; excerpts are wrapped in `<document>` tags and treated as untrusted data.
-- **Ingestion**: incremental — chunks carry `dept/source/page/doc_id/doc_hash/chunk_index`; unchanged PDFs are skipped by hash, changed ones replaced by `doc_id`, removed ones pruned (`--reset` rebuilds).
+- **Ingestion**: multi-format (`pdf/docx/pptx/xlsx/csv/md/txt/html/json`) via `src/loaders.py`; incremental — chunks carry `dept/source/page|slide|sheet/doc_id/doc_hash/kind/chunk_index`; unchanged files skipped by hash, changed ones replaced by `doc_id`, removed ones pruned (`--reset` rebuilds).
+- **Citations**: answers include `sources` (`source` + `page`/`slide`/`sheet` + `kind`) from retrieval metadata.
 - **Permission Model**: Department-based isolation implemented via Milvus `expr` metadata filtering (`dept == 'dept_name'`). Department names are validated/escaped in `src/validation.py` before being embedded in the expression; the API returns 400 for invalid values. The department is injected into tools from `AgentState` (`InjectedState`), never supplied by the LLM.
 - **State Management**: Handled by LangGraph `AgentState`, tracking `user_id` and `user_dept` per session.
 
@@ -12,12 +13,13 @@ All commands assume the conda env `agent-rag` is active (`conda activate agent-r
 - **Data Ingestion**: `python run_ingestion.py` (Must be run before API to populate the vector store).
 - **LLM Check**: `python scripts/check_llm.py` (probes `/models` + one chat completion before starting the API).
 - **Offline Retrieval Check**: `python scripts/verify_retrieval.py` (no LLM needed; asserts dept isolation).
+- **Loader Check**: `python scripts/check_loaders.py` (extracts every supported format in /tmp, no vector store needed).
 - **Latency Benchmark**: `python scripts/bench_retrieval.py` (embedding vs FAISS vs Milvus vs LLM). `/chat` responses include `timings` (`retrieval_ms`, `llm_ms`, `llm_calls`, `overhead_ms`, `total_ms`).
 - **Verification**: `python test_agent.py` (requires the API server + a working LLM endpoint).
 
 ## Critical Gotchas & Setup
 - **Python**: MUST be 3.11. System Python is 3.13/3.14 and has no `torch` wheels. Use conda env `agent-rag` (`~/miniconda3/envs/agent-rag/bin/python`).
-- **Install Order**: `pydantic`/`typing-extensions` $\rightarrow$ `torch` $\rightarrow$ `langchain*` $\rightarrow$ app deps. Pin `numpy<2`, `pandas<2.3`, `transformers==4.49.0`, `sentence-transformers==3.4.1`, `huggingface-hub==0.36.0` (torch 2.2.2 breaks with NumPy 2.x ABI; transformers 5.x needs torch>=2.6).
+- **Install Order**: `pydantic`/`typing-extensions` $\rightarrow$ `torch` $\rightarrow$ `langchain*` $\rightarrow$ app deps (`requirements.txt` lists tested pins; loaders need `python-docx python-pptx openpyxl beautifulsoup4 chardet`). Pin `numpy<2`, `pandas<2.3`, `transformers==4.49.0`, `sentence-transformers==3.4.1`, `huggingface-hub==0.36.0` (torch 2.2.2 breaks with NumPy 2.x ABI; transformers 5.x needs torch>=2.6).
 - **Startup**: HF metadata lookups can stall ~10s per launch; `src/__init__.py` caps them with `HF_HUB_ETAG_TIMEOUT=3`. Set `HF_HUB_OFFLINE=1` once the model is cached.
 - **LLM Config**: `.env` (gitignored, see `.env.example`) overrides defaults. Current default is free GLM-4-Flash (`https://open.bigmodel.cn/api/paas/v4/`). Local Ollama (`qwen2.5:latest`) works but CPU inference is ~3 tok/s, so cloud is preferred for tests.
 - **Retrieval Flow**: `call_model` does deterministic first-stage retrieval (`kb_engine.search(query, state["user_dept"])`) and injects excerpts as a system message; the LLM only formats the answer or triggers `create_support_ticket`.

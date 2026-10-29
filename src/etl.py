@@ -3,25 +3,26 @@ import logging
 from pathlib import Path
 from typing import Dict, List, Set
 
-from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from src.engine import kb_engine
+from src.loaders import LEGACY_EXTENSIONS, SUPPORTED_EXTENSIONS, load_file
 
 logger = logging.getLogger(__name__)
 
+MAX_FILE_BYTES = 50 * 1024 * 1024
+
 
 class EnterpriseETL:
-    """PDF -> chunks with department, page and document identity metadata.
+    """Multi-format, incremental ingestion with department and page metadata.
 
-    Ingestion is incremental: a document is skipped when its sha1 content hash
-    already exists in the vector store, replaced when the hash changed, and
-    pruned when the file is gone.
+    A document is skipped when its sha1 content hash already exists in the
+    vector store, replaced when the hash changed, and pruned when the file is
+    gone. Nested folders under a department are supported.
     """
 
     def __init__(self, data_dir: str = "./data"):
         self.data_dir = Path(data_dir)
-        # Enterprise-grade splitting: balancing context and granularity
         self.splitter = RecursiveCharacterTextSplitter(
             chunk_size=800,
             chunk_overlap=100,
@@ -31,43 +32,108 @@ class EnterpriseETL:
             "added": 0,
             "updated": 0,
             "skipped": 0,
-            "chunks": 0,
             "pruned": 0,
+            "failed": 0,
+            "chunks": 0,
         }
 
-    def _source_name(self, pdf: Path) -> str:
+    def _source_name(self, path: Path) -> str:
         try:
-            return pdf.relative_to(self.data_dir).as_posix()
+            return path.relative_to(self.data_dir).as_posix()
         except ValueError:
-            return pdf.name
+            return path.name
+
+    def _iter_files(self, folder: Path) -> List[Path]:
+        files = []
+        for path in sorted(folder.rglob("*")):
+            if not path.is_file() or path.name.startswith((".", "~$")):
+                continue
+            suffix = path.suffix.lower()
+            if suffix in LEGACY_EXTENSIONS:
+                print(
+                    f"  skip     {self._source_name(path)} "
+                    f"(legacy {suffix}; convert to {LEGACY_EXTENSIONS[suffix]})"
+                )
+                continue
+            if suffix in SUPPORTED_EXTENSIONS:
+                files.append(path)
+        return files
 
     def process_department_folder(self, dept_name: str, folder_path: str) -> Set[str]:
-        """Ingest every PDF in a folder, tagging chunks with the department.
+        """Ingest every supported file in a folder for one department.
 
         Returns the doc ids seen on disk so callers can prune deleted files.
         """
         folder = Path(folder_path)
         seen: Set[str] = set()
-        pdfs = sorted(folder.glob("*.pdf"))
-        if not pdfs:
-            logger.warning("no PDFs found for dept=%s in %s", dept_name, folder)
+        files = self._iter_files(folder)
+        if not files:
+            logger.warning("no supported files for dept=%s in %s", dept_name, folder)
             return seen
 
-        for pdf in pdfs:
-            doc_id = self._process_file(dept_name, pdf)
+        for path in files:
+            doc_id = self._process_file(dept_name, path)
             if doc_id:
                 seen.add(doc_id)
         return seen
 
-    def _process_file(self, dept_name: str, pdf: Path) -> str:
-        source = self._source_name(pdf)
-        doc_hash = hashlib.sha1(pdf.read_bytes()).hexdigest()
+    def _process_file(self, dept_name: str, path: Path) -> str:
+        source = self._source_name(path)
+        size = path.stat().st_size
         doc_id = hashlib.sha1(f"{dept_name}|{source}".encode()).hexdigest()
 
+        if size == 0:
+            print(f"  skip     {source} (empty file)")
+            self.stats["failed"] += 1
+            return doc_id
+        if size > MAX_FILE_BYTES:
+            print(f"  skip     {source} (> {MAX_FILE_BYTES // (1024 * 1024)}MB)")
+            self.stats["failed"] += 1
+            return doc_id
+
+        doc_hash = hashlib.sha1(path.read_bytes()).hexdigest()
         existing_hash = kb_engine.get_doc_hash(doc_id)
         if existing_hash == doc_hash:
             self.stats["skipped"] += 1
             print(f"  skip     {source} (unchanged)")
+            return doc_id
+
+        # Load first: a parse failure must not delete the previously indexed copy.
+        try:
+            sections = load_file(path)
+        except Exception as exc:
+            logger.exception("failed to parse %s", source)
+            print(f"  error    {source} ({exc.__class__.__name__}: {exc})")
+            self.stats["failed"] += 1
+            return doc_id
+
+        texts: List[str] = []
+        metadatas: List[Dict] = []
+        index = 0
+        for section in sections:
+            meta = section.metadata or {}
+            # Fixed key set with sentinels: the Milvus schema is derived from
+            # the first inserted batch, so every chunk must carry every field.
+            base = {
+                "dept": dept_name,
+                "source": source,
+                "doc_id": doc_id,
+                "doc_hash": doc_hash,
+                "kind": meta.get("kind") or path.suffix.lstrip(".").lower(),
+                "page": meta.get("page") if isinstance(meta.get("page"), int) else 0,
+                "slide": meta.get("slide") if isinstance(meta.get("slide"), int) else 0,
+                "sheet": meta.get("sheet") or "",
+                "title": meta.get("title") or "",
+            }
+            for chunk in self.splitter.split_documents([section]):
+                meta_chunk = dict(base, chunk_index=index)
+                index += 1
+                texts.append(chunk.page_content)
+                metadatas.append(meta_chunk)
+
+        if not texts:
+            print(f"  skip     {source} (no extractable text)")
+            self.stats["failed"] += 1
             return doc_id
 
         if existing_hash is not None:
@@ -77,30 +143,6 @@ class EnterpriseETL:
         else:
             self.stats["added"] += 1
             action = "add"
-
-        pages = PyPDFLoader(str(pdf)).load()
-        chunks = self.splitter.split_documents(pages)
-
-        texts: List[str] = []
-        metadatas: List[Dict] = []
-        for index, chunk in enumerate(chunks):
-            meta = {
-                "dept": dept_name,
-                "source": source,
-                "doc_id": doc_id,
-                "doc_hash": doc_hash,
-                "chunk_index": index,
-            }
-            page = chunk.metadata.get("page")
-            if isinstance(page, int):
-                meta["page"] = page + 1
-            texts.append(chunk.page_content)
-            metadatas.append(meta)
-
-        if not texts:
-            logger.warning("no extractable text in %s", source)
-            print(f"  {action:<8} {source} (no text, skipped)")
-            return doc_id
 
         kb_engine.add_documents(texts, metadatas)
         self.stats["chunks"] += len(texts)
@@ -122,7 +164,6 @@ if __name__ == "__main__":
     import os
 
     etl = EnterpriseETL()
-    # Structure: data/HR/*.pdf, data/Finance/*.pdf, etc.
     os.makedirs("./data/HR", exist_ok=True)
     os.makedirs("./data/Finance", exist_ok=True)
 

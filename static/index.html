@@ -203,9 +203,16 @@ function attachSources(bubble, sources) {
   for (const src of sources) {
     const chip = document.createElement("span");
     chip.className = "chip src";
-    const page = src.page !== undefined ? ` · p.${src.page}` : "";
-    chip.textContent = (src.source || "unknown") + page;
-    chip.title = src.dept ? `部门：${src.dept}` : "";
+    let pos = "";
+    if (src.page !== undefined) pos = ` · p.${src.page}`;
+    else if (src.slide !== undefined) pos = ` · slide ${src.slide}`;
+    else if (src.sheet) pos = ` · sheet ${src.sheet}`;
+    chip.textContent = (src.source || "unknown") + pos;
+    const parts = [];
+    if (src.dept) parts.push(`部门：${src.dept}`);
+    if (src.kind) parts.push(`类型：${src.kind}`);
+    if (src.title) parts.push(src.title);
+    chip.title = parts.join("\n");
     box.appendChild(chip);
   }
   bubble.appendChild(box);

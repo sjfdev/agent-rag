@@ -92,18 +92,35 @@ def call_model(state: AgentState):
         blocks = []
         for doc in docs:
             meta = doc.metadata or {}
-            page = meta.get("page")
-            key = (meta.get("source"), page)
+            page = meta.get("page") if isinstance(meta.get("page"), int) else 0
+            slide = meta.get("slide") if isinstance(meta.get("slide"), int) else 0
+            sheet = meta.get("sheet") or ""
+            page, slide, sheet = page or None, slide or None, sheet or None
+            key = (meta.get("source"), page, slide, sheet)
             if key not in seen:
                 seen.add(key)
                 item = {"source": meta.get("source"), "dept": meta.get("dept")}
-                if isinstance(page, int):
-                    item["page"] = page
+                for field in ("page", "slide", "sheet"):
+                    if field in ("page", "slide") and meta.get(field):
+                        item[field] = meta[field]
+                    elif field == "sheet" and meta.get("sheet"):
+                        item[field] = meta["sheet"]
+                if meta.get("kind"):
+                    item["kind"] = meta["kind"]
+                if meta.get("title"):
+                    item["title"] = meta["title"]
                 sources.append(item)
+
             label = meta.get("source") or "unknown"
             if isinstance(page, int):
                 label += f" p.{page}"
-            blocks.append(f"<document source=\"{label}\">\n{doc.page_content}\n</document>")
+            elif isinstance(slide, int):
+                label += f" slide {slide}"
+            elif sheet:
+                label += f" sheet {sheet}"
+            label = label.replace('"', "'")
+            body = doc.page_content.replace("</document>", "[/document]")
+            blocks.append(f"<document source=\"{label}\">\n{body}\n</document>")
 
         excerpts = "\n\n".join(blocks) if blocks else "(no relevant excerpts found)"
         prompt.append(
