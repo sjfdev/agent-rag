@@ -276,6 +276,7 @@ uvicorn main:app --host 0.0.0.0 --port 8000
 |---|---|---|
 | 400 | 部门名非法（含引号/空格等） | `{"detail":"invalid department name"}` |
 | 422 | 参数校验失败（缺字段、history 超过 20 条、role 非 user/assistant、文本过长） | FastAPI 标准校验结构 |
+| 503 | LLM 上游不可用（网络/DNS/超时） | `{"detail":{"error":"llm upstream unavailable","request_id":"..."}}` |
 | 500 | 内部错误，不回传堆栈 | `{"detail":{"error":"internal error","request_id":"85c68605"}}` |
 
 服务端日志会打印完整堆栈与 `request_id`，响应头也带 `X-Request-ID`，便于对账。
@@ -435,6 +436,14 @@ Milvus 2.4 支持 `common.storageType: local`，数据直接落盘到 `./volumes
 
 ### Q10. 第一个请求特别慢
 embedding 模型/连接冷启动，`retrieval_ms` 可能 1–2 秒；后续稳定在 15–25ms。属正常现象，可在启动后预热一次。
+
+### Q10.5 页面显示「模型服务暂时不可用（网络或 DNS 异常）」
+说明请求没到智谱服务器，通常是本机 DNS/网络问题（例如连手机热点时 DNS 失效）。
+```bash
+nslookup open.bigmodel.cn            # 本机 DNS
+nslookup open.bigmodel.cn 223.5.5.5  # 公共 DNS 对比
+```
+若公共 DNS 能解析，把 Wi-Fi 的 DNS 改成 `223.5.5.5` / `119.29.29.29` 即可。UI 上会显示「重试」按钮，网络恢复后点一下即可，无需重开服务。
 
 ### Q11. `/chat` 超时
 `test_agent.py` 默认 300 秒（`CHAT_TIMEOUT` 可覆盖）。云端限流或本地模型过慢时建议换模型并减小 `max_tokens`。

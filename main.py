@@ -16,6 +16,19 @@ from src.config import settings
 from src.engine import kb_engine
 from src.validation import InvalidDepartment, validate_dept
 
+try:  # openai is a hard dependency of langchain-openai
+    from openai import APIConnectionError, APITimeoutError
+except Exception:  # pragma: no cover
+    APIConnectionError = APITimeoutError = ()
+
+
+def _is_upstream_error(exc: Exception) -> bool:
+    """Network/DNS/timeout failures while talking to the LLM provider."""
+    if APIConnectionError and isinstance(exc, (APIConnectionError, APITimeoutError)):
+        return True
+    names = {cls.__name__ for cls in type(exc).__mro__}
+    return bool(names & {"ConnectError", "ReadTimeout", "ConnectTimeout", "APITimeoutError"})
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s %(name)s %(message)s",
@@ -135,13 +148,20 @@ def chat(request: ChatRequest, response: Response):
         return ChatResponse(
             response=final_state["messages"][-1].content, timings=timings
         )
-    except Exception:
+    except Exception as e:
+        upstream = _is_upstream_error(e)
         logger.exception(
-            "chat failed request_id=%s dept=%s", request_id, inputs["user_dept"]
+            "chat failed request_id=%s dept=%s upstream=%s",
+            request_id,
+            inputs["user_dept"],
+            upstream,
         )
         raise HTTPException(
-            status_code=500,
-            detail={"error": "internal error", "request_id": request_id},
+            status_code=503 if upstream else 500,
+            detail={
+                "error": "llm upstream unavailable" if upstream else "internal error",
+                "request_id": request_id,
+            },
             headers={"X-Request-ID": request_id},
         )
 
@@ -191,16 +211,19 @@ def chat_stream(request: ChatRequest):
                 timings.get("llm_calls"),
             )
             yield _sse({"type": "done", "timings": timings})
-        except Exception:
+        except Exception as e:
+            upstream = _is_upstream_error(e)
             logger.exception(
-                "chat stream failed request_id=%s dept=%s",
+                "chat stream failed request_id=%s dept=%s upstream=%s",
                 request_id,
                 inputs["user_dept"],
+                upstream,
             )
             yield _sse(
                 {
                     "type": "error",
-                    "message": "internal error",
+                    "code": "upstream_unavailable" if upstream else "internal_error",
+                    "message": "llm upstream unavailable" if upstream else "internal error",
                     "request_id": request_id,
                 }
             )

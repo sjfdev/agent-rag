@@ -266,7 +266,13 @@ async function send() {
       try { detail = (await resp.json()).detail || detail; } catch (e) {}
       bubble.classList.remove("streaming");
       bubble.classList.add("error");
-      bubble.textContent = "请求失败：" + (typeof detail === "object" ? JSON.stringify(detail) : detail);
+      if (resp.status === 503) {
+        bubble.textContent = "模型服务暂时不可用（网络或 DNS 异常），请稍后重试。";
+      } else if (resp.status === 400) {
+        bubble.textContent = "部门名称不合法。";
+      } else {
+        bubble.textContent = "请求失败：" + (typeof detail === "object" ? JSON.stringify(detail) : detail);
+      }
       return;
     }
 
@@ -302,7 +308,25 @@ async function send() {
         } else if (ev.type === "error") {
           bubble.classList.remove("streaming");
           bubble.classList.add("error");
-          bubble.textContent = "内部错误（request_id=" + ev.request_id + "）";
+          const msg = ev.code === "upstream_unavailable"
+            ? "模型服务暂时不可用（网络或 DNS 异常），请稍后重试。"
+            : "内部错误，请稍后重试。";
+          bubble.textContent = msg + " request_id=" + ev.request_id;
+
+          if (ev.code === "upstream_unavailable") {
+            const retry = document.createElement("button");
+            retry.className = "ghost";
+            retry.style.marginLeft = "10px";
+            retry.textContent = "重试";
+            retry.onclick = () => {
+              retry.remove();
+              bubble.classList.remove("error");
+              bubble.textContent = "";
+              input.value = text;
+              send();
+            };
+            bubble.appendChild(retry);
+          }
         }
       }
     }
