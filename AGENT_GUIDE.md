@@ -414,6 +414,9 @@ curl -s http://localhost:8000/metrics | grep '^agent_rag_'
 | `agent_rag_index_chunks` | gauge | 当前索引块数（抓取时最多每 5s 刷新） |
 | `agent_rag_ingest_jobs_total{status}` | counter | 入库任务结果 |
 | `agent_rag_maintenance` | gauge | 1 表示正在全量重建 |
+| `agent_rag_hybrid_engine{engine}` | gauge | 实际混合检索引擎（off/local/milvus） |
+| `agent_rag_hybrid_sparse_ready` | gauge | 服务端稀疏 BM25 是否真正可用 |
+| `agent_rag_retrieval_engine_total{engine}` | counter | 每次检索实际路径：vector/local/milvus/fallback |
 
 部门名**不作为标签**，避免敏感信息与高基数。
 
@@ -472,7 +475,7 @@ python scripts/check_llm.py          # 探测 /models + 一次 chat completion
 python scripts/verify_retrieval.py   # 无需 LLM，检查入库与隔离
 python scripts/eval_retrieval.py     # 无需 LLM，hit@k / MRR / 跨部门泄漏
 python scripts/check_health.py       # /health 冒烟（加 --probe 会调一次 LLM）
-python scripts/check_hybrid.py       # 混合检索单元检查（无向量库/LLM）
+python scripts/check_hybrid.py       # 混合检索/哈希缓存/能力判定单元检查（49 项，无向量库/LLM）
 python scripts/check_hybrid_milvus.py # 服务端稀疏 BM25 端到端（需 Milvus 2.5+，低版本自动跳过）
 python scripts/check_loaders.py      # 9 种格式解析（不写向量库）
 python scripts/check_admin.py        # 管理台上传→入库→删除冒烟

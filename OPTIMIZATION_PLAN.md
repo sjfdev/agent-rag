@@ -117,7 +117,7 @@ VECTOR_STORE_TYPE=milvus uvicorn main:app --port 8000   # 当前 .env 是 faiss�
 - [x] 位置：`src/tools.py` / `src/agent.py`
 - [x] 检索已前置到 `call_model`，`search_knowledge_base` 只会诱导多一次 LLM 回路（+1–3s）
 - [x] 已从 `agent_tools` 移除，只保留 `create_support_ticket`
-- [ ] `search_knowledge_base` 函数本体仍是死代码，可直接删除
+- [x] `search_knowledge_base` 函数本体已删除
 - [x] 验收：工单场景 `timings.llm_calls` 仍为 2，普通问答为 1；无额外检索回路
 
 ### 2.5 重排模块取舍
@@ -323,6 +323,7 @@ curl -f http://localhost:9091/healthz
 - [x] **`/health`**：向量库块数、入库任务、重建状态；`?probe=1` 带 LLM 探测（15s 缓存）；空库/不可达返回 503，`check_health.py` 10 项冒烟
 - [x] **指标（Prometheus）**：`/metrics` 覆盖请求/错误、端到端与检索/LLM 耗时、首 token、索引块数、入库任务、重建状态；可选 `METRICS_TOKEN`
 - [ ] **多进程指标聚合**：多 worker 时各进程独立，需 Pushgateway 或按 instance 聚合；指标也未持久化
+- [x] **N+1 查询与重复哈希**：批量删除（每 100 doc 一次）、`doc_summary()` 一次聚合替代逐文件查询、元数据缓存 5s、文件哈希按 stat 缓存；`/admin/api/meta` 451ms → 6ms
 - [ ] **缓存**：`dept + 规范化问题` 精确 LRU（命中 <10ms），embedding 结果缓存
 - [ ] **限流与降级**：按 user_id/IP 限流；LLM 失败时返回检索摘要或换备用模型
 - [ ] **管理台增强**：操作审计（谁/何时/删了什么）、任务持久化、上传总量上限、上传进度条

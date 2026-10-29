@@ -7,6 +7,7 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from src.config import settings
 from src.engine import kb_engine
+from src.hashing import file_sha1
 from src.loaders import LEGACY_EXTENSIONS, SUPPORTED_EXTENSIONS, load_file
 
 logger = logging.getLogger(__name__)
@@ -110,7 +111,7 @@ class EnterpriseETL:
             self.stats["failed"] += 1
             return doc_id
 
-        doc_hash = hashlib.sha1(path.read_bytes()).hexdigest()
+        doc_hash = file_sha1(path)
         existing_hash = kb_engine.get_doc_hash(doc_id)
         if existing_hash == doc_hash:
             self.stats["skipped"] += 1
@@ -170,11 +171,13 @@ class EnterpriseETL:
 
     def prune(self, keep: Set[str]) -> int:
         """Delete chunks whose source file no longer exists under ./data."""
-        stale = kb_engine.list_doc_ids() - keep
-        for doc_id in sorted(stale):
-            removed = kb_engine.delete_by_doc_id(doc_id)
-            if removed:
-                self.stats["pruned"] += 1
+        stale = sorted(kb_engine.list_doc_ids() - keep)
+        if not stale:
+            return 0
+        removed = kb_engine.delete_by_doc_ids(stale)
+        # Count documents rather than chunks or round-trips.
+        self.stats["pruned"] += len(stale)
+        self._log(f"  pruned   {len(stale)} doc(s), {removed} chunk(s)")
         return self.stats["pruned"]
 
 

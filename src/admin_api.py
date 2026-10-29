@@ -21,6 +21,7 @@ from pydantic import BaseModel, Field
 from src.config import settings
 from src.engine import kb_engine
 from src.etl import EnterpriseETL, doc_id_for
+from src.hashing import clear_hash_cache, file_sha1
 from src.runtime import begin_maintenance, end_maintenance
 from src.metrics import observe_ingest_job
 from src.loaders import LEGACY_EXTENSIONS, SUPPORTED_EXTENSIONS
@@ -91,16 +92,15 @@ def _source_of(path: Path) -> str:
 
 
 def _file_hash(path: Path) -> str:
-    import hashlib
-
-    digest = hashlib.sha1()
-    with path.open("rb") as handle:
-        for block in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(block)
-    return digest.hexdigest()
+    return file_sha1(path)
 
 
-def _describe_file(path: Path, dept: str, supported: bool) -> Dict[str, Any]:
+def _describe_file(
+    path: Path,
+    dept: str,
+    supported: bool,
+    summary: Optional[Dict[str, Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
     source = _source_of(path)
     stat = path.stat()
     item: Dict[str, Any] = {
@@ -119,8 +119,11 @@ def _describe_file(path: Path, dept: str, supported: bool) -> Dict[str, Any]:
     doc_id = doc_id_for(dept, source)
     item["doc_id"] = doc_id
     try:
-        existing = kb_engine.get_doc_hash(doc_id)
-        item["chunks"] = kb_engine.count_by_doc_id(doc_id)
+        if summary is None:
+            summary = kb_engine.doc_summary()
+        entry = summary.get(doc_id)
+        item["chunks"] = int(entry.get("chunks", 0)) if entry else 0
+        existing = entry.get("doc_hash") if entry else None
         if existing is None:
             item["status"] = "pending"
         elif existing == _file_hash(path):
@@ -136,6 +139,11 @@ def _describe_file(path: Path, dept: str, supported: bool) -> Dict[str, Any]:
 def _iter_files(dept: Optional[str] = None):
     root = _data_root().resolve()
     depts = [dept] if dept else _list_depts()
+    try:
+        summary = kb_engine.doc_summary()
+    except Exception:
+        logger.warning("could not load doc summary", exc_info=True)
+        summary = {}
     for name in depts:
         folder = root / name
         if not folder.is_dir():
@@ -144,7 +152,7 @@ def _iter_files(dept: Optional[str] = None):
             if not path.is_file() or path.name.startswith((".", "~$")):
                 continue
             supported = path.suffix.lower() in SUPPORTED_EXTENSIONS
-            yield _describe_file(path, name, supported)
+            yield _describe_file(path, name, supported, summary)
 
 
 class DeptRequest(BaseModel):
@@ -390,6 +398,9 @@ def upload_files(
             }
         )
 
+    # Overwrites reuse (path, mtime, size) keys rarely, but clearing keeps the
+    # cache honest when a file is replaced within the same mtime granularity.
+    clear_hash_cache()
     if not saved and errors:
         raise HTTPException(status_code=400, detail={"errors": errors})
     return {"saved": saved, "errors": errors}
@@ -416,6 +427,7 @@ def delete_file(dept: str, source: str):
     except OSError as exc:
         raise HTTPException(status_code=500, detail=f"cannot delete file: {exc}")
 
+    clear_hash_cache()
     removed = kb_engine.delete_by_doc_id(doc_id_for(dept, source_rel))
     return {"deleted": source, "chunks_removed": removed}
 

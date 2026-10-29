@@ -22,6 +22,7 @@
 | 11 | 混合检索能力自适应 | `3c650d3` | 完成 |
 | 12 | Milvus 升级 2.5.4 + 服务端稀疏 BM25 | `c87bccc` | 完成并实测 |
 | 13 | 管理台冒烟测试清理残留部门 | `53e82b9` | 完成 |
+| 14 | 性能与死代码清理（批量删除、哈希缓存、元数据缓存） | 本轮 | 完成 |
 
 当前运行态：`vector_store=milvus`、`hybrid.engine=milvus`、Milvus `v2.5.4`、26 chunks / 4 部门。
 
@@ -116,6 +117,7 @@
 | `agent_rag_maintenance` | 是否重建中 |
 | `agent_rag_hybrid_engine{engine}` | 当前混合检索引擎 |
 | `agent_rag_hybrid_sparse_ready` | 服务端稀疏 BM25 是否可用 |
+| `agent_rag_retrieval_engine_total{engine}` | 检索实际路径（vector/local/milvus/fallback） |
 
 - 部门名**不作为标签**（敏感 + 高基数）
 - 可选 `METRICS_TOKEN`，设置后需 `Authorization: Bearer ...`（实测 401/401/200）
@@ -175,6 +177,20 @@
 
 ---
 
+## 5.5 性能与清理（本轮）
+
+| 改动 | 位置 | 效果 |
+|---|---|---|
+| 批量删除 | `driver.delete_by_doc_ids` | prune/删除由「每文档一次 query + delete + flush」改为每 100 个 doc 一次，实测 3 个 doc 2452ms→单批 |
+| 文档摘要接口 | `driver.doc_summary()` | 一次拉取 `doc_id/doc_hash` 并聚合 chunk 数，替代 `get_doc_hash` + `count_by_doc_id` 的 N+1 |
+| 元数据缓存 | `KnowledgeBaseEngine.doc_summary(max_age=5)` | `/admin/api/meta` 热态 **451ms → 6ms**；本进程写入立即失效 |
+| 文件哈希缓存 | `src/hashing.py` | 按 `(path, mtime_ns, size)` 缓存 sha1，避免每次刷新重读全部文件 |
+| 删除死代码 | `src/tools.py` | 移除未暴露给模型的 `search_knowledge_base` |
+| 检索路径指标 | `agent_rag_retrieval_engine_total{engine}` | 可观测实际走 vector/local/milvus/fallback |
+| 检索分支收敛 | `KnowledgeBaseEngine.search` | 去掉重复的融合/重排分支，行为不变，评测回归通过 |
+
+---
+
 ## 6. Milvus 升级（2.4.0 → 2.5.4）
 
 - 升级前备份数据卷：`volumes/milvus` + `volumes/etcd` → `milvus-2.4-<时间戳>.tgz`
@@ -219,7 +235,7 @@
 | 检查 | 结果 |
 |---|---|
 | `python test_agent.py` | 13/13 通过（需服务 + LLM） |
-| `python scripts/check_hybrid.py` | 42/42 |
+| `python scripts/check_hybrid.py` | 49/49 |
 | `python scripts/check_hybrid_milvus.py` | 18/18（2.5+），低版本 SKIP |
 | `python scripts/check_health.py [--probe]` | 10/10、12/12 |
 | `python scripts/check_admin.py` | 10/10 |
@@ -243,7 +259,7 @@
 - **零停机重建**：目前仍是 drop → rebuild（Milvus），期间 `/chat` 返回 503；可做 alias 切换
 - **多进程指标聚合**：`/metrics` 为单进程，多 worker 需 Pushgateway 或按 instance 聚合
 - **单 worker 约束**：入库任务与锁在进程内，`--workers>1` 状态会分裂
-- **缓存与限流**：FAQ 缓存、embedding 缓存、按用户限流、LLM 降级均未做
+- **缓存与限流**：FAQ 缓存、embedding 缓存、按用户限流、LLM 降级均未做（已做：文件哈希缓存、文档摘要缓存）
 - **pytest + CI**：目前是脚本级冒烟，没有单测框架与流水线
 - **引用**：同页多 chunk 合并、展示相关性分数
 - **前端**：Markdown 渲染、复制回答、停止生成、localStorage 会话

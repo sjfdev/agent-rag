@@ -44,6 +44,12 @@ _FIRST_TOKEN = Histogram(
     buckets=(0.1, 0.25, 0.5, 1.0, 2.0, 3.0, 5.0, 8.0, 13.0),
     registry=REGISTRY,
 )
+_RETRIEVAL_ENGINE = Counter(
+    "agent_rag_retrieval_engine_total",
+    "Retrieval calls by engine (vector / local / milvus / fallback).",
+    ["engine"],
+    registry=REGISTRY,
+)
 _LLM_CALLS = Counter(
     "agent_rag_llm_calls_total",
     "LLM completion calls (multiple per request when a tool is used).",
@@ -130,6 +136,10 @@ def observe_request(
         _LLM.labels(calls=str(int(calls))).observe(float(llm_ms) / 1000)
     if calls:
         _LLM_CALLS.labels(endpoint=endpoint).inc(int(calls))
+
+
+def observe_retrieval(engine: str) -> None:
+    _RETRIEVAL_ENGINE.labels(engine=engine).inc()
 
 
 def observe_first_token(endpoint: str, seconds: float) -> None:

@@ -2,6 +2,8 @@ import json
 import logging
 import os
 import shutil
+import threading
+import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Set
@@ -13,7 +15,7 @@ from langchain_openai import OpenAIEmbeddings
 
 from src.config import settings
 from src.hybrid import connection_args as _connection_args
-from src.hybrid import drop_milvus_collection, resolve_hybrid_mode, version_at_least
+from src.hybrid import version_at_least
 from src.validation import validate_dept
 
 logger = logging.getLogger(__name__)
@@ -77,6 +79,18 @@ class BaseVectorStore(ABC):
     @abstractmethod
     def delete_by_doc_id(self, doc_id: str) -> int:
         """Delete every chunk belonging to a document. Returns chunks removed."""
+
+    def delete_by_doc_ids(self, doc_ids: List[str]) -> int:
+        """Delete several documents at once. Returns chunks removed.
+
+        Drivers override this to issue one round-trip per batch; the default
+        keeps correctness for drivers that only support single-doc deletes.
+        """
+        return sum(self.delete_by_doc_id(doc_id) for doc_id in doc_ids)
+
+    @abstractmethod
+    def doc_summary(self) -> Dict[str, Dict[str, Any]]:
+        """Map doc_id -> {doc_hash, chunks} without loading chunk text."""
 
     @abstractmethod
     def count_by_doc_id(self, doc_id: str) -> int:
@@ -402,19 +416,36 @@ class MilvusDriver(BaseVectorStore):
             # Collection (or field) does not exist yet.
             return None
 
+    @staticmethod
+    def _doc_expr(doc_ids: List[str]) -> str:
+        escaped = [d.replace("\\", "\\\\").replace('"', '\\"') for d in doc_ids]
+        return "doc_id in [" + ", ".join(f'"{d}"' for d in escaped) + "]"
+
     def delete_by_doc_id(self, doc_id: str) -> int:
-        if not doc_id:
+        return self.delete_by_doc_ids([doc_id])
+
+    def delete_by_doc_ids(self, doc_ids: List[str]) -> int:
+        ids = [doc_id for doc_id in doc_ids if doc_id]
+        if not ids:
             return 0
-        try:
-            res = self._query(f'doc_id == "{doc_id}"', ["pk"], limit=1)
-            if not res:
-                return 0
-            self.vector_db.delete(expr=f'doc_id == "{doc_id}"')
-            self.vector_db.client.flush(self.collection)
-            return 1
-        except Exception:
-            logger.warning("failed to delete doc_id=%s from milvus", doc_id, exc_info=True)
-            return 0
+        removed = 0
+        # One delete + one flush per batch instead of one per document.
+        for start in range(0, len(ids), 100):
+            batch = ids[start : start + 100]
+            expr = self._doc_expr(batch)
+            try:
+                removed += self._count(expr)
+                self.vector_db.delete(expr=expr)
+            except Exception:
+                logger.warning(
+                    "failed to delete %d doc(s) from milvus", len(batch), exc_info=True
+                )
+        if removed:
+            try:
+                self.vector_db.client.flush(self.collection)
+            except Exception:
+                logger.warning("flush after delete failed", exc_info=True)
+        return removed
 
     def count_by_doc_id(self, doc_id: str) -> int:
         if not doc_id:
@@ -425,11 +456,33 @@ class MilvusDriver(BaseVectorStore):
             return 0
 
     def list_doc_ids(self) -> Set[str]:
+        return set(self.doc_summary().keys())
+
+    def doc_summary(self) -> Dict[str, Dict[str, Any]]:
+        summary: Dict[str, Dict[str, Any]] = {}
         try:
-            res = self._query("", ["doc_id"], limit=16384)
-            return {r["doc_id"] for r in res if r.get("doc_id")}
+            iterator = self.vector_db.client.query_iterator(
+                collection_name=self.collection,
+                batch_size=1000,
+                filter="",
+                output_fields=["doc_id", "doc_hash"],
+            )
+            while True:
+                rows = iterator.next()
+                if not rows:
+                    iterator.close()
+                    break
+                for row in rows:
+                    doc_id = row.get("doc_id")
+                    if not doc_id:
+                        continue
+                    entry = summary.setdefault(
+                        doc_id, {"doc_hash": row.get("doc_hash"), "chunks": 0}
+                    )
+                    entry["chunks"] += 1
         except Exception:
-            return set()
+            logger.warning("failed to build doc summary from milvus", exc_info=True)
+        return summary
 
     def reset(self) -> None:
         try:
@@ -516,12 +569,16 @@ class FAISSDriver(BaseVectorStore):
         return None
 
     def delete_by_doc_id(self, doc_id: str) -> int:
-        if not doc_id or self.vector_db is None:
+        return self.delete_by_doc_ids([doc_id])
+
+    def delete_by_doc_ids(self, doc_ids: List[str]) -> int:
+        wanted = {doc_id for doc_id in doc_ids if doc_id}
+        if not wanted or self.vector_db is None:
             return 0
         ids = [
             key
             for key, doc in self._docs().items()
-            if doc.metadata.get("doc_id") == doc_id
+            if doc.metadata.get("doc_id") in wanted
         ]
         if not ids:
             return 0
@@ -537,11 +594,19 @@ class FAISSDriver(BaseVectorStore):
         )
 
     def list_doc_ids(self) -> Set[str]:
-        return {
-            doc.metadata["doc_id"]
-            for doc in self._docs().values()
-            if doc.metadata.get("doc_id")
-        }
+        return set(self.doc_summary().keys())
+
+    def doc_summary(self) -> Dict[str, Dict[str, Any]]:
+        summary: Dict[str, Dict[str, Any]] = {}
+        for doc in self._docs().values():
+            doc_id = doc.metadata.get("doc_id")
+            if not doc_id:
+                continue
+            entry = summary.setdefault(
+                doc_id, {"doc_hash": doc.metadata.get("doc_hash"), "chunks": 0}
+            )
+            entry["chunks"] += 1
+        return summary
 
     def reset(self) -> None:
         shutil.rmtree(settings.DB_PATH, ignore_errors=True)
@@ -559,6 +624,12 @@ class KnowledgeBaseEngine:
         # Bumped on every write so the cached BM25 indexes are rebuilt.
         self._version = 0
         self._lexical = LexicalCache()
+        # Admin pages call doc_summary() on every refresh; cache it briefly and
+        # drop it whenever this process writes.
+        self._summary_lock = threading.Lock()
+        self._summary_version = -1
+        self._summary: Dict[str, Dict[str, Any]] = {}
+        self._summary_at = 0.0
 
         if settings.VECTOR_STORE_TYPE == "milvus":
             self.driver = MilvusDriver(self.embeddings)
@@ -568,6 +639,9 @@ class KnowledgeBaseEngine:
     def _touch(self) -> None:
         self._version += 1
         self._lexical.invalidate()
+        with self._summary_lock:
+            self._summary_version = -1
+            self._summary = {}
 
     def add_documents(self, texts: List[str], metadatas: List[Dict[str, Any]]):
         self.driver.add_documents(texts, metadatas)
@@ -627,44 +701,52 @@ class KnowledgeBaseEngine:
         )
         return index.search(query, k)
 
+    def _observe(self, engine: str) -> None:
+        try:
+            from src.metrics import observe_retrieval
+
+            observe_retrieval(engine)
+        except Exception:  # metrics must never break search
+            pass
+
+    def _maybe_rerank(self, query: str, docs: List[Document], k: int) -> List[Document]:
+        if not settings.RERANK_ENABLED:
+            return docs[:k]
+        from src.reranker import rerank_documents
+
+        return rerank_documents(query, docs[: max(k, settings.RERANK_CANDIDATES)], k)
+
     def search(self, query: str, user_dept: str, k: int = 5) -> List[Document]:
         from src.lexical import rrf_fuse
 
-        if self.hybrid_mode == "milvus":
-            from src.reranker import rerank_documents
+        if not query.strip():
+            return []
 
-            candidates = max(k, settings.HYBRID_CANDIDATES)
-            if settings.RERANK_ENABLED:
-                candidates = max(candidates, settings.RERANK_CANDIDATES)
-            fused = self.driver.hybrid_search(query, user_dept, candidates, candidates)
-            if fused is None:
-                # The server call failed; degrade for this query only.
-                fused = self._local_hybrid(query, user_dept, candidates, rrf_fuse)
-            if settings.RERANK_ENABLED:
-                rerank_pool = max(k, settings.RERANK_CANDIDATES)
-                return rerank_documents(query, fused[:rerank_pool], k)
-            return fused[:k]
-
-        if settings.HYBRID_ENABLED:
-            from src.reranker import rerank_documents
-
-            candidates = max(k, settings.HYBRID_CANDIDATES)
-            if settings.RERANK_ENABLED:
-                candidates = max(candidates, settings.RERANK_CANDIDATES)
-            fused = self._local_hybrid(query, user_dept, candidates, rrf_fuse)
-            if settings.RERANK_ENABLED:
-                rerank_pool = max(k, settings.RERANK_CANDIDATES)
-                return rerank_documents(query, fused[:rerank_pool], k)
-            return fused[:k]
-
-        if settings.RERANK_ENABLED:
-            from src.reranker import rerank_documents
-
-            candidates = self.driver.search(
-                query, user_dept, max(k, settings.RERANK_CANDIDATES)
+        if not settings.HYBRID_ENABLED:
+            self._observe("vector")
+            candidates = max(
+                k, settings.RERANK_CANDIDATES if settings.RERANK_ENABLED else k
             )
-            return rerank_documents(query, candidates, k)
-        return self.driver.search(query, user_dept, k)
+            return self._maybe_rerank(
+                query, self.driver.search(query, user_dept, candidates), k
+            )
+
+        candidates = max(k, settings.HYBRID_CANDIDATES)
+        if settings.RERANK_ENABLED:
+            candidates = max(candidates, settings.RERANK_CANDIDATES)
+
+        if self.hybrid_mode == "milvus":
+            fused = self.driver.hybrid_search(query, user_dept, candidates, candidates)
+            if fused is not None:
+                self._observe("milvus")
+                return self._maybe_rerank(query, fused, k)
+            # Server-side hybrid failed: degrade for this query only.
+            self._observe("fallback")
+
+        self._observe("local")
+        return self._maybe_rerank(
+            query, self._local_hybrid(query, user_dept, candidates, rrf_fuse), k
+        )
 
     def _local_hybrid(self, query: str, user_dept: str, candidates: int, fuse):
         vector_docs = self.driver.search(query, user_dept, candidates)
@@ -684,6 +766,33 @@ class KnowledgeBaseEngine:
         removed = self.driver.delete_by_doc_id(doc_id)
         self._touch()
         return removed
+
+    def delete_by_doc_ids(self, doc_ids: List[str]) -> int:
+        removed = self.driver.delete_by_doc_ids(doc_ids)
+        self._touch()
+        return removed
+
+    def doc_summary(self, max_age: float = 5.0) -> Dict[str, Dict[str, Any]]:
+        """doc_id -> {doc_hash, chunks}, cached for a few seconds.
+
+        The cache is keyed by the write version, so ingestion/deletion in this
+        process always invalidates it. Writes from another process are picked up
+        after `max_age` seconds.
+        """
+        now = time.monotonic()
+        with self._summary_lock:
+            fresh = (
+                self._summary_version == self._version
+                and now - self._summary_at < max_age
+            )
+            if fresh:
+                return self._summary.copy()
+        summary = self.driver.doc_summary()
+        with self._summary_lock:
+            self._summary_version = self._version
+            self._summary = summary
+            self._summary_at = time.monotonic()
+        return summary.copy()
 
     def count_by_doc_id(self, doc_id: str) -> int:
         return self.driver.count_by_doc_id(doc_id)

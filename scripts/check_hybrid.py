@@ -10,7 +10,16 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from langchain_core.documents import Document
 
-from src.engine import MilvusCapabilities, MilvusDriver, hits_to_documents, kb_engine
+import os
+import tempfile
+
+from src.engine import (
+    MilvusCapabilities,
+    MilvusDriver,
+    hits_to_documents,
+    kb_engine,
+)
+from src.hashing import clear_hash_cache, file_sha1, hash_cache_info
 from src.hybrid import parse_version, resolve_hybrid_mode, version_at_least
 from src.config import settings
 from src.lexical import LexicalCache, LexicalIndex, rrf_fuse, tokenize
@@ -157,6 +166,31 @@ def main() -> int:
     check("hit conversion metadata", converted[0].metadata.get("source") == "a.pdf")
     check("hit conversion drops ids", "id" not in converted[0].metadata and "pk" not in converted[1].metadata)
     check("hit conversion empty", hits_to_documents([]) == [])
+
+    # --- file hashing cache ---
+    with tempfile.TemporaryDirectory() as tmp:
+        target = Path(tmp) / "doc.md"
+        target.write_text("hello world")
+        clear_hash_cache()
+        first = file_sha1(target)
+        before = hash_cache_info().hits
+        second = file_sha1(target)
+        check("hash is stable", first == second)
+        check("hash is cached", hash_cache_info().hits == before + 1, str(hash_cache_info()))
+        target.write_text("hello world!")
+        # Force a distinct mtime so the test does not depend on filesystem
+        # timestamp granularity.
+        stat = target.stat()
+        os.utime(target, ns=(stat.st_atime_ns, stat.st_mtime_ns + 1_000_000))
+        changed = file_sha1(target)
+        check("hash changes on write", changed != first)
+        check("hash cache invalidated by write", hash_cache_info().misses >= 2)
+
+    # --- batch delete expression escaping (Milvus) ---
+    expr = MilvusDriver._doc_expr(["a", 'we"ird', "back\\slash"])
+    check("doc expr uses in-list", expr.startswith("doc_id in [") and expr.endswith("]"), expr)
+    check("doc expr escapes quotes", '\\"' in expr, expr)
+    check("doc expr escapes backslash", "\\\\" in expr, expr)
 
     status = kb_engine.hybrid_status()
     check("status has engine", status["engine"] in {"off", "local", "milvus"}, str(status))
