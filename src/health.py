@@ -125,6 +125,14 @@ def health(probe: bool = Query(False, description="also call the LLM endpoint"))
     checks["time"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
     checks["rerank_enabled"] = settings.RERANK_ENABLED
     checks["hybrid_enabled"] = settings.HYBRID_ENABLED
+    hybrid = kb_engine.hybrid_status()
+    checks["hybrid"] = hybrid
+    if hybrid["engine"] == "local" and hybrid["configured"] == "auto":
+        # Not a failure: auto mode intentionally falls back when the server or
+        # the collection cannot do sparse BM25.
+        pass
+    elif hybrid["enabled"] and hybrid["configured"] == "milvus" and not hybrid["sparse_ready"]:
+        degraded = True
 
     code = 503 if status == "down" else 200
     return JSONResponse(status_code=code, content=checks)

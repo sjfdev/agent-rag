@@ -85,6 +85,7 @@ def info():
         "vector_store": settings.VECTOR_STORE_TYPE,
         "llm_model": settings.LLM_MODEL,
         "embedding_backend": settings.EMBEDDING_BACKEND,
+        "hybrid": kb_engine.hybrid_status(),
     }
 
 

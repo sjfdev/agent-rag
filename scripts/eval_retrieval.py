@@ -60,10 +60,10 @@ def main() -> int:
     cases = load_cases(args.cases)
     print(
         f"backend={settings.VECTOR_STORE_TYPE} k={args.k} cases={len(cases)} "
-        f"hybrid={settings.HYBRID_ENABLED}"
+        f"hybrid={kb_engine.hybrid_mode}"
     )
 
-    if settings.HYBRID_ENABLED:
+    if kb_engine.hybrid_mode == "local":
         # Building BM25 indexes is a one-off cost per department; keep it out
         # of the latency numbers. The API warms them at startup too.
         started = time.perf_counter()

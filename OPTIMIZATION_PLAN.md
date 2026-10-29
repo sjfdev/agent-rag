@@ -214,6 +214,7 @@ curl -f http://localhost:9091/healthz
 | 2026-10-29 | 检索质量批次 | 评测集+eval、多轮改写、snippet、可选重排、reset 维护 503；test_agent 13/13 |
 | 2026-10-29 | 健康检查 | `/health` + `?probe=1`（15s 缓存）+ `check_health.py`；空库 503、重建期间 degraded 实测通过 |
 | 2026-10-29 | 可观测与混合检索 | `/metrics`（9 组指标、可选 token）+ 进程内 BM25/RRF（默认开启、后台预热、12 项单测）；评测 MRR 0.89 |
+| 2026-10-29 | 混合检索能力自适应 | `HYBRID_ENGINE=auto\|local\|milvus` + 版本/稀疏字段/BM25 索引探测；2.5+ 走服务端 hybrid_search+RRF，否则回退；`/info`、`/health`、`/metrics` 暴露实际引擎；42 项单测 + 2.5 端到端脚本 |
 |  |  |  |
 
 ---
@@ -313,7 +314,8 @@ curl -f http://localhost:9091/healthz
 - [x] **重建期间降级**：reset 置维护标志，`/chat` 立即返回 503 `index rebuilding`，完成后自动恢复（已实测）
 - [ ] **零停机 alias 切换**：Milvus 仍为 drop→rebuild；FAISS 写在原目录
 - [x] **混合检索（本地 BM25）**：`src/lexical.py` 中英文分词 + RRF 融合，默认开启；24 条评测 MRR 0.88→0.89，精确标识符类查询收益明显；后台预热、入库后预热、按部门缓存
-- [ ] **大规模混合检索**：Milvus 2.5 稀疏向量/全文索引替代进程内 BM25（当前 BM25 为单进程内存索引，受 `HYBRID_MAX_DOCS` 限制）
+- [x] **能力自适应混合检索**：`HYBRID_ENGINE=auto` 探测 Milvus 版本与集合稀疏字段/BM25 索引，2.5+ 走服务端 `hybrid_search`+RRF，否则回退进程内 BM25；`milvus` 显式模式下能力不足启动即报错；`/info`、`/health`、`/metrics` 暴露实际引擎
+- [ ] **升级 Milvus 到 2.5 并重建集合**：升级镜像 → `run_ingestion.py --reset` → 验证 `hybrid.engine=milvus`；需先备份 `volumes/milvus`
 - [ ] **引用去重/score**：同页多 chunk 合并、展示相关性分数
 
 #### P2 稳定与运维

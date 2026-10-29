@@ -1,7 +1,9 @@
+import json
 import logging
 import os
 import shutil
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Set
 
 from langchain_community.vectorstores import FAISS
@@ -10,6 +12,7 @@ from langchain_milvus import Milvus
 from langchain_openai import OpenAIEmbeddings
 
 from src.config import settings
+from src.hybrid import resolve_hybrid_mode, version_at_least
 from src.validation import validate_dept
 
 logger = logging.getLogger(__name__)
@@ -60,6 +63,12 @@ class BaseVectorStore(ABC):
     def list_depts(self) -> Set[str]:
         """Departments that currently have at least one indexed chunk."""
 
+    def hybrid_search(
+        self, query: str, user_dept: str, k: int, candidates: int
+    ) -> Optional[List[Document]]:
+        """Server-side hybrid search, or None when the driver has no support."""
+        return None
+
     @abstractmethod
     def get_doc_hash(self, doc_id: str) -> Optional[str]:
         """Return the stored content hash for a document id, or None if absent."""
@@ -81,22 +90,213 @@ class BaseVectorStore(ABC):
         """Drop the index/collection. Used by `run_ingestion.py --reset`."""
 
 
+def hits_to_documents(hits: List[Dict[str, Any]]) -> List[Document]:
+    """Convert pymilvus search/hybrid_search hits into LangChain Documents."""
+    docs: List[Document] = []
+    for hit in hits or []:
+        row = dict(hit.get("entity") or hit)
+        text = row.pop("text", "")
+        for key in ("id", "distance", "score", "pk"):
+            row.pop(key, None)
+        docs.append(Document(page_content=text, metadata=row))
+    return docs
+
+
+@dataclass
+class MilvusCapabilities:
+    """What the server/collection can do for server-side hybrid retrieval."""
+
+    server_version: Optional[str] = None
+    version_ok: bool = False
+    collection_exists: bool = False
+    sparse_field: bool = False
+    bm25_index: bool = False
+    error: Optional[str] = None
+
+    @property
+    def sparse_ready(self) -> bool:
+        """True when the collection can serve BM25 sparse search right now."""
+        if not self.version_ok:
+            return False
+        if not self.collection_exists:
+            # A fresh collection will be created with a sparse field.
+            return True
+        return self.sparse_field and self.bm25_index
+
+
+def _connection_args() -> Dict[str, Any]:
+    if settings.MILVUS_URI:
+        return {"uri": settings.MILVUS_URI}
+    return {"host": settings.MILVUS_HOST, "port": settings.MILVUS_PORT}
+
+
+def _inspect_milvus(collection: str, sparse_field: str) -> MilvusCapabilities:
+    """Probe server version and whether the collection has a BM25 sparse field."""
+    caps = MilvusCapabilities()
+    try:
+        from pymilvus import DataType, MilvusClient
+
+        args = _connection_args()
+        client = MilvusClient(**args)
+        caps.server_version = client.get_server_version()
+        caps.version_ok = version_at_least(caps.server_version, "2.5.0")
+        caps.collection_exists = client.has_collection(collection)
+        if caps.collection_exists:
+            fields = client.describe_collection(collection).get("fields", [])
+            caps.sparse_field = any(
+                f.get("name") == sparse_field
+                and f.get("type") == DataType.SPARSE_FLOAT_VECTOR
+                for f in fields
+            )
+            for index in client.list_indexes(collection):
+                info = client.describe_index(collection, index)
+                if (
+                    info.get("field_name") == sparse_field
+                    and str(info.get("metric_type", "")).upper() == "BM25"
+                ):
+                    caps.bm25_index = True
+        client.close()
+    except Exception as exc:  # connection issues must not stop startup
+        caps.error = f"{type(exc).__name__}: {exc}"
+        logger.warning("milvus capability probe failed: %s", caps.error)
+    return caps
+
+
 class MilvusDriver(BaseVectorStore):
     """Enterprise-scale driver using Milvus distributed cluster."""
 
     def __init__(self, embeddings):
         self.embeddings = embeddings
         self.collection = settings.MILVUS_COLLECTION
-        connection_args = {"host": settings.MILVUS_HOST, "port": settings.MILVUS_PORT}
-        if settings.MILVUS_URI:
-            connection_args = {"uri": settings.MILVUS_URI}
+        connection_args = _connection_args()
+        self.capabilities = _inspect_milvus(
+            self.collection, settings.HYBRID_SPARSE_FIELD
+        )
+        self.sparse_enabled = self._decide_sparse()
+
+        builtin_function = None
+        vector_field = "vector"
+        if self.sparse_enabled:
+            from langchain_milvus.function import BM25BuiltInFunction
+
+            analyzer = None
+            try:
+                analyzer = json.loads(settings.HYBRID_ANALYZER)
+            except json.JSONDecodeError:
+                logger.warning(
+                    "invalid HYBRID_ANALYZER=%r, using default analyzer",
+                    settings.HYBRID_ANALYZER,
+                )
+            builtin_function = BM25BuiltInFunction(
+                output_field_names=settings.HYBRID_SPARSE_FIELD,
+                analyzer_params=analyzer,
+            )
+            vector_field = ["vector", settings.HYBRID_SPARSE_FIELD]
+
         self.vector_db = Milvus(
             embedding_function=embeddings,
             connection_args=connection_args,
             collection_name=self.collection,
             auto_id=True,
             drop_old=False,
+            vector_field=vector_field,
+            builtin_function=builtin_function,
         )
+
+    def _decide_sparse(self) -> bool:
+        """Resolve HYBRID_ENGINE for this Milvus server; may raise on misconfig."""
+        caps = self.capabilities
+        choice = (settings.HYBRID_ENGINE or "auto").lower()
+        if not settings.HYBRID_ENABLED or choice == "local":
+            return False
+        if choice == "milvus":
+            if not caps.version_ok:
+                raise RuntimeError(
+                    "HYBRID_ENGINE=milvus requires Milvus >= 2.5, "
+                    f"server reports {caps.server_version or 'unknown'}. "
+                    "Either upgrade Milvus or set HYBRID_ENGINE=auto/local."
+                )
+            if caps.collection_exists and not caps.sparse_field:
+                raise RuntimeError(
+                    "HYBRID_ENGINE=milvus requires a sparse field "
+                    f"'{settings.HYBRID_SPARSE_FIELD}' in collection "
+                    f"'{self.collection}'. Run "
+                    "`python run_ingestion.py --reset` to rebuild the schema."
+                )
+            if caps.collection_exists and caps.sparse_field and not caps.bm25_index:
+                raise RuntimeError(
+                    f"sparse field '{settings.HYBRID_SPARSE_FIELD}' has no BM25 "
+                    "index. Recreate it with "
+                    "`python run_ingestion.py --reset`."
+                )
+            return True
+
+        # auto: use sparse only when it is genuinely usable
+        if caps.sparse_ready:
+            logger.info(
+                "hybrid=server-side BM25 (milvus %s, collection=%s)",
+                caps.server_version,
+                self.collection,
+            )
+            return True
+        reason = caps.error or (
+            "server < 2.5" if not caps.version_ok else "collection lacks BM25 sparse field"
+        )
+        logger.info(
+            "hybrid=in-process BM25 (server-side unavailable: %s); "
+            "set HYBRID_ENGINE=milvus to make this fatal",
+            reason,
+        )
+        return False
+
+    @property
+    def hybrid_mode(self) -> str:
+        return "milvus" if self.sparse_enabled else "local"
+
+    def refresh_capabilities(self) -> None:
+        self.capabilities = _inspect_milvus(
+            self.collection, settings.HYBRID_SPARSE_FIELD
+        )
+
+    def hybrid_search(
+        self, query: str, user_dept: str, k: int, candidates: int
+    ) -> Optional[List[Document]]:
+        if not self.sparse_enabled:
+            return None
+        safe_dept = validate_dept(user_dept)
+        expr = f"dept == '{safe_dept}'"
+        try:
+            from pymilvus import AnnSearchRequest, RRFRanker
+
+            dense = AnnSearchRequest(
+                data=[self.embeddings.embed_query(query)],
+                anns_field="vector",
+                param={"metric_type": "L2"},
+                limit=candidates,
+                expr=expr,
+            )
+            sparse = AnnSearchRequest(
+                data=[query],
+                anns_field=settings.HYBRID_SPARSE_FIELD,
+                param={"metric_type": "BM25"},
+                limit=candidates,
+                expr=expr,
+            )
+            results = self.vector_db.client.hybrid_search(
+                collection_name=self.collection,
+                reqs=[dense, sparse],
+                ranker=RRFRanker(),
+                limit=k,
+                output_fields=self._FETCH_FIELDS,
+            )
+        except Exception:
+            logger.warning(
+                "server-side hybrid search failed; falling back to in-process BM25",
+                exc_info=True,
+            )
+            return None
+
+        return hits_to_documents(results[0] if results else [])
 
     def _query(
         self, expr: str, fields: List[str], limit: int = 1
@@ -120,10 +320,30 @@ class MilvusDriver(BaseVectorStore):
     def add_documents(self, texts: List[str], metadatas: List[Dict[str, Any]]):
         docs = [Document(page_content=t, metadata=m) for t, m in zip(texts, metadatas)]
         self.vector_db.add_documents(docs)
+        if self.sparse_enabled:
+            # The first insert may have just created the collection/BM25 index.
+            self.refresh_capabilities()
 
     def search(self, query: str, user_dept: str, k: int = 5) -> List[Document]:
         safe_dept = validate_dept(user_dept)
         expr = f"dept == '{safe_dept}'"
+        if self.sparse_enabled:
+            # Two vector fields: similarity_search() refuses multi-vector stores,
+            # so query the dense field explicitly.
+            try:
+                results = self.vector_db.client.search(
+                    collection_name=self.collection,
+                    data=[self.embeddings.embed_query(query)],
+                    anns_field="vector",
+                    search_params={"metric_type": "L2"},
+                    limit=k,
+                    filter=expr,
+                    output_fields=self._FETCH_FIELDS,
+                )
+            except Exception:
+                logger.warning("dense search failed", exc_info=True)
+                return []
+            return hits_to_documents(results[0] if results else [])
         return self.vector_db.similarity_search(query, k=k, expr=expr)
 
     def is_empty(self) -> bool:
@@ -356,11 +576,33 @@ class KnowledgeBaseEngine:
     def list_depts(self) -> Set[str]:
         return self.driver.list_depts()
 
+    @property
+    def hybrid_mode(self) -> str:
+        if not settings.HYBRID_ENABLED:
+            return "off"
+        return getattr(self.driver, "hybrid_mode", "local")
+
+    def hybrid_status(self) -> Dict[str, Any]:
+        """Capability summary for /health and /info."""
+        caps = getattr(self.driver, "capabilities", None)
+        return {
+            "enabled": settings.HYBRID_ENABLED,
+            "engine": self.hybrid_mode,
+            "configured": settings.HYBRID_ENGINE,
+            "server_version": getattr(caps, "server_version", None),
+            "sparse_field": settings.HYBRID_SPARSE_FIELD,
+            "sparse_ready": bool(getattr(caps, "sparse_ready", False)),
+            "sparse_error": getattr(caps, "error", None),
+        }
+
     def warm_lexical(self, depts: Optional[Set[str]] = None) -> List[str]:
         """Build BM25 indexes up front so the first query is not slow.
 
         Intended to run in a background thread after startup or ingestion.
         """
+        if self.hybrid_mode == "milvus":
+            # The server owns the sparse index; there is nothing to build here.
+            return []
         warmed = []
         for dept in sorted(depts if depts is not None else self.list_depts()):
             try:
@@ -385,15 +627,28 @@ class KnowledgeBaseEngine:
     def search(self, query: str, user_dept: str, k: int = 5) -> List[Document]:
         from src.lexical import rrf_fuse
 
+        if self.hybrid_mode == "milvus":
+            from src.reranker import rerank_documents
+
+            candidates = max(k, settings.HYBRID_CANDIDATES)
+            if settings.RERANK_ENABLED:
+                candidates = max(candidates, settings.RERANK_CANDIDATES)
+            fused = self.driver.hybrid_search(query, user_dept, candidates, candidates)
+            if fused is None:
+                # The server call failed; degrade for this query only.
+                fused = self._local_hybrid(query, user_dept, candidates, rrf_fuse)
+            if settings.RERANK_ENABLED:
+                rerank_pool = max(k, settings.RERANK_CANDIDATES)
+                return rerank_documents(query, fused[:rerank_pool], k)
+            return fused[:k]
+
         if settings.HYBRID_ENABLED:
             from src.reranker import rerank_documents
 
             candidates = max(k, settings.HYBRID_CANDIDATES)
             if settings.RERANK_ENABLED:
                 candidates = max(candidates, settings.RERANK_CANDIDATES)
-            vector_docs = self.driver.search(query, user_dept, candidates)
-            lexical_docs = self.lexical_search(query, user_dept, candidates)
-            fused = rrf_fuse([vector_docs, lexical_docs], candidates)
+            fused = self._local_hybrid(query, user_dept, candidates, rrf_fuse)
             if settings.RERANK_ENABLED:
                 rerank_pool = max(k, settings.RERANK_CANDIDATES)
                 return rerank_documents(query, fused[:rerank_pool], k)
@@ -407,6 +662,11 @@ class KnowledgeBaseEngine:
             )
             return rerank_documents(query, candidates, k)
         return self.driver.search(query, user_dept, k)
+
+    def _local_hybrid(self, query: str, user_dept: str, candidates: int, fuse):
+        vector_docs = self.driver.search(query, user_dept, candidates)
+        lexical_docs = self.lexical_search(query, user_dept, candidates)
+        return fuse([vector_docs, lexical_docs], candidates)
 
     def is_empty(self) -> bool:
         return self.driver.is_empty()

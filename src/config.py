@@ -40,6 +40,17 @@ class Settings(BaseSettings):
     HYBRID_CANDIDATES: int = 20
     # Cap the in-memory BM25 corpus per department (0 = unlimited).
     HYBRID_MAX_DOCS: int = 20000
+    # auto  -> server-side sparse BM25 when Milvus >= 2.5 and the collection
+    #          has a sparse field, otherwise the in-process BM25 index
+    # local -> always in-process BM25 (works with FAISS and Milvus)
+    # milvus-> require server-side sparse BM25 (fails loudly if unavailable)
+    HYBRID_ENGINE: Literal["auto", "local", "milvus"] = "auto"
+    # Field populated by the Milvus BM25 function. Existing collections need
+    # `python run_ingestion.py --reset` after upgrading to 2.5.
+    HYBRID_SPARSE_FIELD: str = "sparse"
+    # Analyzer used by the server-side BM25 function (JSON). "chinese" handles
+    # mixed Chinese/Latin text best for this corpus.
+    HYBRID_ANALYZER: str = '{"type": "chinese"}'
     # Optional bearer token for GET /metrics (empty = open, rely on the network).
     METRICS_TOKEN: str = ""
     MILVUS_HOST: str = "localhost"

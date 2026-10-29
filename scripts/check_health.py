@@ -9,7 +9,9 @@ import sys
 
 import requests
 
-REQUIRED = {"status", "vector_store", "ingestion", "llm", "maintenance", "time"}
+REQUIRED = {
+    "status", "vector_store", "ingestion", "llm", "maintenance", "time", "hybrid",
+}
 PASS, FAIL = [], []
 
 
@@ -47,6 +49,20 @@ def main() -> int:
 
     if r.status_code == 200:
         check("rerank flag present", "rerank_enabled" in data)
+
+    hybrid = data.get("hybrid") or {}
+    check(
+        "hybrid engine known",
+        hybrid.get("engine") in {"off", "local", "milvus"},
+        str(hybrid),
+    )
+    check(
+        "hybrid sparse flag is bool",
+        isinstance(hybrid.get("sparse_ready"), bool),
+        str(hybrid),
+    )
+    if hybrid.get("configured") == "milvus":
+        check("explicit milvus is ready", bool(hybrid.get("sparse_ready")), str(hybrid))
 
     if args.probe:
         try:

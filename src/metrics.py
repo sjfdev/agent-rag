@@ -66,6 +66,23 @@ _MAINTENANCE = Gauge(
     "1 while a full index rebuild is in progress.",
     registry=REGISTRY,
 )
+_HYBRID_ENGINE = Gauge(
+    "agent_rag_hybrid_engine",
+    "Active hybrid retrieval engine (1 for the selected engine).",
+    ["engine"],
+    registry=REGISTRY,
+)
+_HYBRID_SPARSE_READY = Gauge(
+    "agent_rag_hybrid_sparse_ready",
+    "1 when the vector store can serve server-side BM25 sparse search.",
+    registry=REGISTRY,
+)
+
+
+def set_hybrid(engine: str, sparse_ready: bool) -> None:
+    for name in ("off", "local", "milvus"):
+        _HYBRID_ENGINE.labels(engine=name).set(1.0 if name == engine else 0.0)
+    _HYBRID_SPARSE_READY.set(1.0 if sparse_ready else 0.0)
 
 _INDEX_REFRESH_SECONDS = 5.0
 _index_state = {"at": 0.0, "refreshing": False, "ok": 1.0}
@@ -129,8 +146,14 @@ def set_maintenance(active: bool) -> None:
 
 def render() -> bytes:
     """Refresh gauges that depend on live state, then return the exposition text."""
+    from src.engine import kb_engine
     from src.runtime import in_maintenance
 
     _MAINTENANCE.set(1 if in_maintenance() else 0)
+    try:
+        status = kb_engine.hybrid_status()
+        set_hybrid(status["engine"], status["sparse_ready"])
+    except Exception:
+        pass
     _refresh_index_gauge()
     return generate_latest(REGISTRY)

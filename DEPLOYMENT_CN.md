@@ -214,7 +214,8 @@ python test_agent.py
 ## 📈 5. 生产环境优化建议
 - **重排序 (Reranking)**: 默认关闭；开启前先把模型缓存到本地（`RERANK_MODEL`）。CPU 上 BGE-base 约 +1.2s/次，MiniLM 约 +200ms，按数据量选择。
 - **健康检查**: 用 `GET /health` 做存活/就绪探针；`/health?probe=1` 会真的调用一次 LLM，建议只在内网监控使用（结果缓存 15s）。
-- **混合检索**: 默认开启（向量 + 进程内 BM25）。启动与入库后台自动预热；单部门语料很大时用 `HYBRID_MAX_DOCS` 限制，或设 `HYBRID_ENABLED=false` 回退纯向量。
+- **混合检索**: 默认 `HYBRID_ENGINE=auto`。Milvus 为 2.5+ 且集合含稀疏字段时自动使用服务端 BM25（推荐，多副本/多 worker 安全）；否则回退进程内 BM25（启动与入库后台预热，`HYBRID_MAX_DOCS` 限制语料）。FAISS 只能走进程内 BM25。
+- **升级到 Milvus 2.5 后**: 旧集合没有稀疏字段，需 `python run_ingestion.py --reset` 重建；重建前先备份 `volumes/milvus`。可用 `GET /info` 的 `hybrid.engine` 确认，或运行 `python scripts/check_hybrid_milvus.py`。
 - **性能扩展**: 对于高并发场景，建议使用 `gunicorn` 配合 `uvicorn` 工作进程：
   `gunicorn -w 4 -k uvicorn.workers.UvicornWorker main:app`
 - **数据备份**: 定期备份 `docker-compose.yml` 中映射的 Milvus 数据卷。

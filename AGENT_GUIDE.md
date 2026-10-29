@@ -100,6 +100,7 @@ agent-rag/
 │   ├── eval_retrieval.py    # 离线评测 hit@k / MRR / 泄漏
 │   ├── check_health.py      # /health 冒烟测试
 │   ├── check_hybrid.py      # BM25/RRF 单元检查
+│   ├── check_hybrid_milvus.py # 服务端稀疏 BM25 端到端
 │   └── bench_retrieval.py   # 延迟基准（embedding/FAISS/Milvus/LLM）
 └── src/
     ├── config.py            # 所有开关（pydantic-settings）
@@ -383,7 +384,7 @@ python scripts/check_health.py --probe          # 冒烟测试
 | `llm.probe` | 仅在 `?probe=1` 时为 `ok`/`failed`，含 `latency_ms` |
 | `rerank_enabled` | 当前是否启用二阶段重排 |
 
-`down` 才会返回 503，`degraded` 仍为 200，便于负载均衡只摘除空库/故障实例。`hybrid_enabled` 表示混合检索是否开启。
+`down` 才会返回 503，`degraded` 仍为 200，便于负载均衡只摘除空库/故障实例。`hybrid.engine` 表示实际生效的混合检索引擎（`off`/`local`/`milvus`）。
 
 Prometheus 指标：
 
@@ -462,6 +463,7 @@ python scripts/verify_retrieval.py   # 无需 LLM，检查入库与隔离
 python scripts/eval_retrieval.py     # 无需 LLM，hit@k / MRR / 跨部门泄漏
 python scripts/check_health.py       # /health 冒烟（加 --probe 会调一次 LLM）
 python scripts/check_hybrid.py       # 混合检索单元检查（无向量库/LLM）
+python scripts/check_hybrid_milvus.py # 服务端稀疏 BM25 端到端（需 Milvus 2.5+，低版本自动跳过）
 python scripts/check_loaders.py      # 9 种格式解析（不写向量库）
 python scripts/check_admin.py        # 管理台上传→入库→删除冒烟
 python scripts/bench_retrieval.py    # embedding / FAISS / Milvus / LLM 延迟
@@ -535,7 +537,10 @@ python run_ingestion.py --no-prune # 不清理已删除文件
 | `RERANK_MODEL` | `BAAI/bge-reranker-base` | 重排模型（中文推荐；英文可用 `cross-encoder/ms-marco-MiniLM-L-6-v2`） |
 | `RERANK_CANDIDATES` | `12` | 送入重排的候选数 |
 | `HEALTH_MIN_CHUNKS` | `1` | 低于该块数时 `/health` 判定为 down |
-| `HYBRID_ENABLED` | `true` | 向量 + BM25 混合检索（RRF 融合） |
+| `HYBRID_ENABLED` | `true` | 是否启用混合检索 |
+| `HYBRID_ENGINE` | `auto` | `auto` / `local` / `milvus`，按服务端能力自适应 |
+| `HYBRID_SPARSE_FIELD` | `sparse` | Milvus BM25 函数输出的稀疏字段名 |
+| `HYBRID_ANALYZER` | `{"type":"chinese"}` | 服务端 BM25 分析器（升级 2.5 后生效） |
 | `HYBRID_CANDIDATES` | `20` | 融合前每路取多少候选 |
 | `HYBRID_MAX_DOCS` | `20000` | 单部门 BM25 语料上限（0 为不限） |
 | `METRICS_TOKEN` | 空 | 非空时 `/metrics` 需要 Bearer token |
@@ -683,7 +688,9 @@ python scripts/bench_retrieval.py
 4. **切分参数**：`RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=100)`。chunk 太小召回碎片化，太大增加 prompt；按文档类型调整。
 5. **二阶段重排**：`src/reranker.py` 已接入 `kb_engine.search`，设置 `RERANK_ENABLED=true` 后先对融合后的候选做 CrossEncoder 重排再取 top-k。默认关闭。24 条中英评测（纯向量）：不重排 MRR 0.88 / p50≈16ms；MiniLM +≈205ms、MRR 0.92；`bge-reranker-base` +≈1.2s（p95 4.8s）、MRR 0.97。混合检索 + MiniLM 同样为 0.92。中文优先 BGE，英文/低延迟选 MiniLM，二者都需先缓存模型。
 6. **多轮检索改写**：`src/agent.py::_retrieval_query` 检测代词/指示词或极短问句，把上一轮问题拼进检索 query，不额外调用 LLM。实测追问 "Who approves it?" 时目标文档从第 3 位升到第 1 位。
-7. **混合检索**：`src/lexical.py` 对每个部门构建内存 BM25（中英文分词：英文按词、中文按字 + 二元组），与向量结果用 RRF 融合，默认 `HYBRID_ENABLED=true`。首次查询某部门需要加载该部门全部 chunk 建索引，因此启动后后台预热，入库完成也会预热；可用 `HYBRID_MAX_DOCS` 限制单部门语料。24 条评测 MRR 0.88 → 0.89，精确标识符（如 `DEMO-GUEST`）类查询收益最明显。
+7. **混合检索（能力自适应）**：`HYBRID_ENGINE=auto` 默认。Milvus ≥ 2.5 且集合含 BM25 稀疏字段时，用服务端 `hybrid_search` + `RRFRanker`（一次请求完成稠密+稀疏融合）；否则自动回退到 `src/lexical.py` 的进程内 BM25（中英文分词：英文按词、中文按字 + 二元组，RRF 融合）。FAISS 永远走进程内 BM25。`local` 强制进程内，`milvus` 在能力不足时启动即报错（不会静默降级）。进程内 BM25 首次查询需加载该部门全部 chunk，启动后与入库后都会后台预热；`HYBRID_MAX_DOCS` 限制单部门语料。24 条评测 MRR 0.88 → 0.89，精确标识符（如 `DEMO-GUEST`）类查询收益最明显。
+
+    从 2.4 升级到 2.5 后，旧集合没有稀疏字段：要么 `python run_ingestion.py --reset` 重建（推荐），要么先设 `HYBRID_ENGINE=local` 继续跑。可用 `GET /info` 的 `hybrid.engine` 确认当前实际走哪条路径；2.5 上运行 `python scripts/check_hybrid_milvus.py` 做端到端验证（使用临时集合，完成后删除）。
 8. **评测闭环**：`eval/cases.jsonl` + `scripts/eval_retrieval.py`，覆盖 Tech/Finance/HR/Demo 共 18 个命中用例和 6 个跨部门泄漏用例；调参、换重排模型或改混合策略后先跑它。
 
 ### 8.4 服务层
@@ -720,7 +727,7 @@ python scripts/bench_retrieval.py
 - 对话接口无鉴权，`user_id`/`user_dept` 由调用方提供（管理台另有 `ADMIN_TOKEN`）
 - 入库为同步 CPU/IO 操作；全量 reset 期间 `/chat` 返回 503 `index rebuilding`，增量入库期间索引保持可读
 - 多轮检索为启发式改写（代词/短句拼接上轮问题），复杂指代仍可能失败；更稳的方案是 LLM 改写（会多一次调用）
-- 混合检索的 BM25 索引是**进程内**的：多 worker 各自构建，首次查询或重启后需预热；超大数据量建议改用 Milvus 稀疏向量/全文索引
+- 进程内 BM25（FAISS 模式或 Milvus < 2.5）是**单进程**索引：多 worker 各自构建，重启需预热；超大数据量请升级 Milvus 2.5 并用 `HYBRID_ENGINE=milvus`
 - `/metrics` 为单进程指标，多 worker 需在 Prometheus 侧聚合
 - 可扩展：OCR、会话持久化、文档级 ACL、零停机 alias 切换、召回率监控
 
