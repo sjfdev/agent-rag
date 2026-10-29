@@ -211,6 +211,7 @@ curl -f http://localhost:9091/healthz
 | 2026-10-29 | 内置 Demo 多格式数据 | `data/Demo` 9 文件 → 26 chunks；UI 新增 Demo 部门与预设；隔离校验通过 |
 | 2026-10-29 | 入库管理台 | `/admin` 上传/删除/增量/重建；`check_admin.py` 10/10；令牌与本机限制验证通过 |
 | 2026-10-29 | 复审：下一步聚焦检索质量与零停机 | 见 8.9；reranker 仍为死代码，多轮检索只用最后一句 |
+| 2026-10-29 | 检索质量批次 | 评测集+eval、多轮改写、snippet、可选重排、reset 维护 503；test_agent 13/13 |
 |  |  |  |
 
 ---
@@ -303,10 +304,14 @@ curl -f http://localhost:9091/healthz
 
 #### P1 质量与正确性
 
-- [ ] **检索质量闭环**：`eval/cases.jsonl`（Recall@k、拒答准确率、P95 延迟）→ 混合检索（BM25 + 向量，Milvus 2.4 hybrid / 本地 rank-bm25）→ 接入 `src/reranker.py`（目前是死代码，CrossEncoder 在 CPU 上约 +100–300ms）
-- [ ] **多轮检索改写**：`src/agent.py:60` 只取最后一条 HumanMessage，遇到「那它呢」这类追问会检索失败；用历史拼独立 query（规则或 LLM 改写）
-- [ ] **零停机重建**：`reset` 会先 drop 集合，期间 `/chat` 报 500；Milvus 用 alias 切换、FAISS 写临时目录后原子替换；变更文件改为「先写新、再删旧」避免崩溃丢文档
-- [ ] **引用增强**：`sources` 增加 score/snippet，UI 可展开原文；同页多 chunk 合并
+- [x] **检索评测**：`eval/cases.jsonl`（15 命中 + 5 泄漏用例）+ `scripts/eval_retrieval.py`；两后端 hit@4=100%、MRR=0.91、leaks=0，p50 10–16ms
+- [x] **多轮检索改写**：`_retrieval_query` 检测代词/短句并拼接上一轮问题；追问时目标文档从第 3 升到第 1
+- [x] **重排接入**：`kb_engine.search` 支持 `RERANK_ENABLED`；MiniLM 实测 MRR 0.91→0.97、p50 +190ms，默认关闭
+- [x] **引用增强**：`sources` 增加 `snippet`，UI 折叠面板可展开原文
+- [x] **重建期间降级**：reset 置维护标志，`/chat` 立即返回 503 `index rebuilding`，完成后自动恢复（已实测）
+- [ ] **零停机 alias 切换**：Milvus 仍为 drop→rebuild；FAISS 写在原目录
+- [ ] **混合检索**：BM25 + 向量（Milvus 2.5 稀疏向量或本地 rank-bm25），需先基于评测集对比
+- [ ] **引用去重/score**：同页多 chunk 合并、展示相关性分数
 
 #### P2 稳定与运维
 

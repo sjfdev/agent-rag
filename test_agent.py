@@ -63,6 +63,8 @@ def has_sources(data, dept):
         s.get("dept") == dept
         and s.get("source")
         and s.get("kind")
+        and isinstance(s.get("snippet"), str)
+        and bool(s.get("snippet"))
         and (s.get("page") is None or isinstance(s.get("page"), int))
         for s in sources
     )

@@ -21,6 +21,7 @@ from pydantic import BaseModel, Field
 from src.config import settings
 from src.engine import kb_engine
 from src.etl import EnterpriseETL, doc_id_for
+from src.runtime import begin_maintenance, end_maintenance
 from src.loaders import LEGACY_EXTENSIONS, SUPPORTED_EXTENSIONS
 from src.validation import validate_dept
 
@@ -190,6 +191,7 @@ def _run_job(job_id: str, dept: Optional[str], reset: bool) -> None:
     try:
         if reset:
             _job_log(job_id, "Dropping the existing index/collection...")
+            begin_maintenance()
             kb_engine.reset()
 
         etl = EnterpriseETL(
@@ -224,6 +226,8 @@ def _run_job(job_id: str, dept: Optional[str], reset: bool) -> None:
             job_id, status="error", error=str(exc), finished=time.time()
         )
     finally:
+        if reset:
+            end_maintenance()
         _ingest_lock.release()
 
 

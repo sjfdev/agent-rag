@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 from src.admin_api import router as admin_router
 from src.agent import app as agent_app
 from src.config import settings
+from src.runtime import in_maintenance
 from src.engine import kb_engine
 from src.validation import InvalidDepartment, validate_dept
 
@@ -134,6 +135,12 @@ def chat(request: ChatRequest, response: Response):
     # Sync def: FastAPI runs it in a threadpool so LLM calls don't block the loop.
     request_id = uuid.uuid4().hex[:8]
     response.headers["X-Request-ID"] = request_id
+    if in_maintenance():
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "index rebuilding", "request_id": request_id},
+            headers={"X-Request-ID": request_id},
+        )
     started = time.perf_counter()
 
     try:
@@ -188,6 +195,13 @@ def chat_stream(request: ChatRequest):
     Events: {"type":"token","content":...} ... {"type":"done","sources":[...],"timings":{...}}
     """
     request_id = uuid.uuid4().hex[:8]
+
+    if in_maintenance():
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "index rebuilding", "request_id": request_id},
+            headers={"X-Request-ID": request_id},
+        )
 
     try:
         inputs = _prepare(request)

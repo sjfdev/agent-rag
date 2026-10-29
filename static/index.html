@@ -124,9 +124,12 @@
   .presets button:hover { color: var(--text); border-color: #3a4150; }
   .hint { font-size: 11px; color: var(--muted); margin-top: 8px; }
   .error { color: #ff6b6b; }
-  .sources { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
-  .sources-title { font-size: 11px; color: var(--muted); letter-spacing: .5px; }
-  .chip.src { font-size: 11px; color: var(--muted); border-color: #2a3444; }
+  .sources { margin-top: 10px; font-size: 12px; color: var(--muted); }
+  .sources summary { cursor: pointer; color: var(--accent); outline: none; }
+  .sources ul { margin: 8px 0 0; padding-left: 16px; }
+  .sources li { margin: 8px 0; }
+  .srcpath { color: var(--text); }
+  .snippet { color: var(--muted); margin-top: 2px; line-height: 1.5; }
   .bubble.streaming::after { content: "▍"; margin-left: 2px; animation: blink 1s steps(1) infinite; }
   @keyframes blink { 50% { opacity: 0; } }
 </style>
@@ -194,31 +197,68 @@ function esc(s) {
   }[c]));
 }
 
+function sourceLabel(src) {
+  let pos = "";
+  if (src.page !== undefined) pos = ` · p.${src.page}`;
+  else if (src.slide !== undefined) pos = ` · slide ${src.slide}`;
+  else if (src.sheet) pos = ` · sheet ${src.sheet}`;
+  return (src.source || "unknown") + pos;
+}
+
 function attachSources(bubble, sources) {
   if (!sources || !sources.length) return;
-  const box = document.createElement("div");
+  const box = document.createElement("details");
   box.className = "sources";
-  const title = document.createElement("span");
-  title.className = "sources-title";
-  title.textContent = "来源";
-  box.appendChild(title);
 
+  const summary = document.createElement("summary");
+  summary.textContent = `来源（${sources.length}）`;
+  box.appendChild(summary);
+
+  const list = document.createElement("ul");
   for (const src of sources) {
-    const chip = document.createElement("span");
-    chip.className = "chip src";
-    let pos = "";
-    if (src.page !== undefined) pos = ` · p.${src.page}`;
-    else if (src.slide !== undefined) pos = ` · slide ${src.slide}`;
-    else if (src.sheet) pos = ` · sheet ${src.sheet}`;
-    chip.textContent = (src.source || "unknown") + pos;
+    const item = document.createElement("li");
+
+    const path = document.createElement("div");
+    path.className = "srcpath";
+    path.textContent = sourceLabel(src);
     const parts = [];
     if (src.dept) parts.push(`部门：${src.dept}`);
     if (src.kind) parts.push(`类型：${src.kind}`);
     if (src.title) parts.push(src.title);
-    chip.title = parts.join("\n");
-    box.appendChild(chip);
+    path.title = parts.join("\n");
+    item.appendChild(path);
+
+    if (src.snippet) {
+      const snippet = document.createElement("div");
+      snippet.className = "snippet";
+      snippet.textContent = src.snippet;
+      item.appendChild(snippet);
+    }
+    list.appendChild(item);
   }
+  box.appendChild(list);
   bubble.appendChild(box);
+}
+
+function addRetry(bubble, text) {
+  const retry = document.createElement("button");
+  retry.className = "ghost";
+  retry.style.marginLeft = "10px";
+  retry.textContent = "重试";
+  retry.onclick = () => {
+    retry.remove();
+    bubble.classList.remove("error");
+    bubble.textContent = "";
+    input.value = text;
+    send();
+  };
+  bubble.appendChild(retry);
+}
+
+function errorMessage(code, requestId) {
+  if (code === "upstream_unavailable") return "模型服务暂时不可用（网络或 DNS 异常），请稍后重试。";
+  if (code === "maintenance" || code === "index rebuilding") return "系统正在重建索引，请稍后重试。";
+  return "内部错误，请稍后重试。";
 }
 
 function attachTimings(bubble, timings) {
@@ -301,8 +341,10 @@ async function send() {
       try { detail = (await resp.json()).detail || detail; } catch (e) {}
       bubble.classList.remove("streaming");
       bubble.classList.add("error");
-      if (resp.status === 503) {
-        bubble.textContent = "模型服务暂时不可用（网络或 DNS 异常），请稍后重试。";
+      const code = typeof detail === "object" && detail ? detail.error : null;
+      if (resp.status === 503 || code === "maintenance") {
+        bubble.textContent = errorMessage(code || "upstream_unavailable", detail && detail.request_id);
+        addRetry(bubble, text);
       } else if (resp.status === 400) {
         bubble.textContent = "部门名称不合法。";
       } else {
@@ -344,24 +386,9 @@ async function send() {
         } else if (ev.type === "error") {
           bubble.classList.remove("streaming");
           bubble.classList.add("error");
-          const msg = ev.code === "upstream_unavailable"
-            ? "模型服务暂时不可用（网络或 DNS 异常），请稍后重试。"
-            : "内部错误，请稍后重试。";
-          bubble.textContent = msg + " request_id=" + ev.request_id;
-
-          if (ev.code === "upstream_unavailable") {
-            const retry = document.createElement("button");
-            retry.className = "ghost";
-            retry.style.marginLeft = "10px";
-            retry.textContent = "重试";
-            retry.onclick = () => {
-              retry.remove();
-              bubble.classList.remove("error");
-              bubble.textContent = "";
-              input.value = text;
-              send();
-            };
-            bubble.appendChild(retry);
+          bubble.textContent = errorMessage(ev.code, ev.request_id) + " request_id=" + ev.request_id;
+          if (ev.code === "upstream_unavailable" || ev.code === "maintenance") {
+            addRetry(bubble, text);
           }
         }
       }

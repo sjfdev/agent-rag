@@ -1,0 +1,20 @@
+{"id": "tech-code-review", "dept": "Tech", "query": "What is required before merging a change?", "expect_sources": ["coding_standards"]}
+{"id": "tech-oncall", "dept": "Tech", "query": "How does the on-call rotation work?", "expect_sources": ["oncall_runbook"]}
+{"id": "tech-password", "dept": "Tech", "query": "How often must passwords be rotated?", "expect_sources": ["security_policy"]}
+{"id": "fin-expense", "dept": "Finance", "query": "When must expense claims be submitted?", "expect_sources": ["expense_reimbursement"]}
+{"id": "fin-travel", "dept": "Finance", "query": "What class can I book for a long-haul flight?", "expect_sources": ["travel_policy"]}
+{"id": "fin-budget", "dept": "Finance", "query": "What are the salary bands in the 2026 budget?", "expect_sources": ["confidential_budget"]}
+{"id": "hr-leave", "dept": "HR", "query": "How many annual leave days do employees get?", "expect_sources": ["employee_handbook"]}
+{"id": "hr-benefits", "dept": "HR", "query": "What health insurance benefits are offered?", "expect_sources": ["benefits_guide"]}
+{"id": "demo-vpn", "dept": "Demo", "query": "How do I request VPN access?", "expect_sources": ["faq.txt", "policy.md"]}
+{"id": "demo-wifi", "dept": "Demo", "query": "What is the visitor Wi-Fi password?", "expect_sources": ["faq.txt", "policy.md"]}
+{"id": "demo-coverage", "dept": "Demo", "query": "What is the test coverage metric?", "expect_sources": ["metrics.xlsx"]}
+{"id": "demo-release", "dept": "Demo", "query": "Who signs off before a production release?", "expect_sources": ["release_checklist"]}
+{"id": "demo-incident", "dept": "Demo", "query": "When should the on-call engineer be paged?", "expect_sources": ["runbook.html"]}
+{"id": "demo-contacts", "dept": "Demo", "query": "Who handles access reviews?", "expect_sources": ["contacts.csv"]}
+{"id": "demo-onboarding", "dept": "Demo", "query": "What should I do in my first week?", "expect_sources": ["onboarding.pptx"]}
+{"id": "iso-tech-budget", "dept": "Tech", "query": "salary bands 2026 budget", "forbid_sources": ["confidential_budget"]}
+{"id": "iso-hr-code", "dept": "HR", "query": "pull request code review approvals", "forbid_sources": ["coding_standards"]}
+{"id": "iso-fin-leave", "dept": "Finance", "query": "annual leave days employee handbook", "forbid_sources": ["employee_handbook"]}
+{"id": "iso-demo-budget", "dept": "Demo", "query": "salary bands 2026 budget", "forbid_sources": ["confidential_budget"]}
+{"id": "iso-fin-demo", "dept": "Finance", "query": "visitor Wi-Fi password DEMO-GUEST", "forbid_sources": ["Demo/policy.md", "Demo/faq.txt"]}

@@ -97,6 +97,7 @@ agent-rag/
 │   ├── generate_samples.py  # 生成 8 份样例 PDF
 │   ├── check_llm.py         # 探测 LLM 端点
 │   ├── verify_retrieval.py  # 离线验证入库 + 部门隔离
+│   ├── eval_retrieval.py    # 离线评测 hit@k / MRR / 泄漏
 │   └── bench_retrieval.py   # 延迟基准（embedding/FAISS/Milvus/LLM）
 └── src/
     ├── config.py            # 所有开关（pydantic-settings）
@@ -341,8 +342,8 @@ uvicorn main:app --host 0.0.0.0 --port 8000
 {
   "response": "Every change must go through a pull request ...",
   "sources": [
-    {"source": "Tech/coding_standards.pdf", "dept": "Tech", "page": 1},
-    {"source": "Tech/security_policy.pdf", "dept": "Tech", "page": 1}
+    {"source": "Tech/coding_standards.pdf", "dept": "Tech", "kind": "pdf", "page": 1, "snippet": "Every change must go through a pull request..."},
+    {"source": "Tech/security_policy.pdf", "dept": "Tech", "kind": "pdf", "page": 1, "snippet": "Rotate credentials every 90 days..."}
   ],
   "timings": {
     "retrieval_ms": 20.2,
@@ -355,7 +356,7 @@ uvicorn main:app --host 0.0.0.0 --port 8000
 }
 ```
 
-时间单位均为**毫秒**，`*_calls` 为次数。`sources` 为本次回答实际使用的去重片段（文档 + 页码），UI 中显示为「来源」标签；改用工具建单时仍保留首次检索到的来源。
+时间单位均为**毫秒**，`*_calls` 为次数。`sources` 为本次回答实际使用的去重片段（文档 + 页码 + `snippet` 原文摘录），UI 中折叠为「来源」面板，可展开查看摘录；改用工具建单时仍保留首次检索到的来源。
 
 错误响应：
 
@@ -364,6 +365,7 @@ uvicorn main:app --host 0.0.0.0 --port 8000
 | 400 | 部门名非法（含引号/空格等） | `{"detail":"invalid department name"}` |
 | 422 | 参数校验失败（缺字段、history 超过 20 条、role 非 user/assistant、文本过长） | FastAPI 标准校验结构 |
 | 503 | LLM 上游不可用（网络/DNS/超时） | `{"detail":{"error":"llm upstream unavailable","request_id":"..."}}` |
+| 503 | 正在全量重建索引 | `{"detail":{"error":"index rebuilding","request_id":"..."}}` |
 | 500 | 内部错误，不回传堆栈 | `{"detail":{"error":"internal error","request_id":"85c68605"}}` |
 
 服务端日志会打印完整堆栈与 `request_id`，响应头也带 `X-Request-ID`，便于对账。
@@ -386,7 +388,7 @@ data: {"type":"token","content":"2026 operating budget is ..."}
 data: {"type":"done","sources":[{"source":"Finance/confidential_budget_2026.pdf","dept":"Finance","page":1}],"timings":{"retrieval_ms":20.1,"llm_ms":1287.2,"llm_calls":1,"total_ms":1311.3,"overhead_ms":4.0}}
 ```
 
-出错时返回 `{"type":"error","code":"internal_error|upstream_unavailable","message":"...","request_id":"..."}`。实测热态首 token ≈0.68s，整段 ≈1.1–1.3s。
+出错时返回 `{"type":"error","code":"internal_error|upstream_unavailable|maintenance","message":"...","request_id":"..."}`。实测热态首 token ≈0.68s，整段 ≈1.1–1.3s。
 
 非流式接口：
 
@@ -408,6 +410,7 @@ curl -s http://localhost:8000/chat \
 ```bash
 python scripts/check_llm.py          # 探测 /models + 一次 chat completion
 python scripts/verify_retrieval.py   # 无需 LLM，检查入库与隔离
+python scripts/eval_retrieval.py     # 无需 LLM，hit@k / MRR / 跨部门泄漏
 python scripts/check_loaders.py      # 9 种格式解析（不写向量库）
 python scripts/check_admin.py        # 管理台上传→入库→删除冒烟
 python scripts/bench_retrieval.py    # embedding / FAISS / Milvus / LLM 延迟
@@ -477,6 +480,9 @@ python run_ingestion.py --no-prune # 不清理已删除文件
 | `VECTOR_STORE_TYPE` | `faiss` | `faiss` 或 `milvus` |
 | `DB_PATH` | `./db/vector_db` | FAISS 索引目录 |
 | `RETRIEVAL_K` | `4` | 注入提示词的片段数 |
+| `RERANK_ENABLED` | `false` | 开启 CrossEncoder 二阶段重排 |
+| `RERANK_MODEL` | `BAAI/bge-reranker-base` | 重排模型（中文推荐；英文可用 `cross-encoder/ms-marco-MiniLM-L-6-v2`） |
+| `RERANK_CANDIDATES` | `12` | 送入重排的候选数 |
 | `MILVUS_HOST` / `MILVUS_PORT` | `localhost` / `19530` | Milvus 连接地址 |
 | `MILVUS_COLLECTION` | `enterprise_kb` | 集合名 |
 | `MILVUS_URI` | 空 | 非空时优先于 host/port（如 `http://host:19530`） |
@@ -599,6 +605,7 @@ python scripts/bench_retrieval.py
 | 本地 embedding | 141ms（首条预热 1.25s） | 18ms |
 | FAISS 检索 | 14ms | 16ms |
 | Milvus 检索 | 24ms | 24ms |
+| MiniLM 重排（12→4，可选） | +196ms | +190ms |
 | 云端 LLM 单次 | 1318ms | 1397ms |
 
 结论：**LLM 占 80–95%**，向量库占比 <2%。优化优先级依次为 LLM → 调用次数 → 输出长度 → 检索/切分。
@@ -607,7 +614,7 @@ python scripts/bench_retrieval.py
 
 1. **用云端或 GPU 推理**：本地 7B CPU ≈3 tok/s；GLM-4-Flash ≈1–2s。
 2. **减少 LLM 调用次数**：当前 `agent → tools → agent` 回路在触发工具时是 2 次。检索已改为确定性前置注入，可考虑直接去掉 `search_knowledge_base` 工具，只保留工单工具，从而减少无谓回路。
-3. **限制输出长度**：`src/agent.py` 中 `max_tokens=512`，系统提示已要求 ≤120 词，可进一步降到 256。
+3. **限制输出长度**：`LLM_MAX_TOKENS=256`，系统提示要求 ≤3 句 / ≤60 词。
 4. **启用流式输出**：`stream`/SSE 降低首字延迟，用户感知更快（总时长不变）。
 5. **精简提示词**：系统提示与注入的 4 个片段都会进入上下文；把 `k=4` 降到 3、或对片段做截断，可减少 prompt token。
 
@@ -617,7 +624,9 @@ python scripts/bench_retrieval.py
 2. **建立索引**：Milvus 默认可为 `enterprise_kb` 建 HNSW 索引并 `load`，大规模下显著降低搜索延迟。
 3. **控制候选数**：`k` 从 4 提到更高会增加 prompt 长度和 LLM 时间。
 4. **切分参数**：`RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=100)`。chunk 太小召回碎片化，太大增加 prompt；按文档类型调整。
-5. **可选重排**：`src/reranker.py` 提供 BGE CrossEncoder 两阶段重排（top20 → top3），能提升准确率但增加 100–300ms/次及模型加载开销，当前未接入主链路。
+5. **二阶段重排**：`src/reranker.py` 已接入 `kb_engine.search`，设置 `RERANK_ENABLED=true` 后先取 `RERANK_CANDIDATES` 个候选，再由 CrossEncoder 取 top-k。默认关闭；CPU 上实测 MiniLM 增加约 190ms（p50），评测 MRR 0.91 → 0.97。中文语料建议用 `BAAI/bge-reranker-base`（约 1.1GB，CPU 更慢）。
+6. **多轮检索改写**：`src/agent.py::_retrieval_query` 检测代词/指示词或极短问句，把上一轮问题拼进检索 query，不额外调用 LLM。实测追问 "Who approves it?" 时目标文档从第 3 位升到第 1 位。
+7. **评测闭环**：`eval/cases.jsonl` + `scripts/eval_retrieval.py`，覆盖 Tech/Finance/HR/Demo 共 15 个命中用例和 5 个跨部门泄漏用例；调参或换重排模型后先跑它。
 
 ### 8.4 服务层
 
@@ -651,8 +660,9 @@ python scripts/bench_retrieval.py
 - 服务端不存储会话，多轮依赖客户端回传 `history`
 - 无文档权限的细粒度控制（目前仅到部门级）
 - 对话接口无鉴权，`user_id`/`user_dept` 由调用方提供（管理台另有 `ADMIN_TOKEN`）
-- 入库为同步 CPU/IO 操作，大库上传后需等待任务完成，期间检索可能短暂不完整
-- 可扩展：OCR、会话持久化、文档级 ACL、重排接入、评测集与召回率监控
+- 入库为同步 CPU/IO 操作；全量 reset 期间 `/chat` 返回 503 `index rebuilding`，增量入库期间索引保持可读
+- 多轮检索为启发式改写（代词/短句拼接上轮问题），复杂指代仍可能失败；更稳的方案是 LLM 改写（会多一次调用）
+- 可扩展：OCR、会话持久化、文档级 ACL、混合检索（BM25）、零停机 alias 切换、召回率监控
 
 ---
 

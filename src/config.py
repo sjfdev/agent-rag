@@ -26,6 +26,11 @@ class Settings(BaseSettings):
     VECTOR_STORE_TYPE: Literal["faiss", "milvus"] = "faiss"
     DB_PATH: str = "./db/vector_db"
     RETRIEVAL_K: int = 4
+    # Optional cross-encoder reranking of the first-stage candidates. Disabled
+    # by default: on CPU it adds noticeable latency and needs the model cached.
+    RERANK_ENABLED: bool = False
+    RERANK_MODEL: str = "BAAI/bge-reranker-base"
+    RERANK_CANDIDATES: int = 12
     MILVUS_HOST: str = "localhost"
     MILVUS_PORT: str = "19530"
     MILVUS_COLLECTION: str = "enterprise_kb"

@@ -1,3 +1,4 @@
+import re
 import time
 from typing import Annotated, Any, Dict, List, TypedDict
 
@@ -57,11 +58,35 @@ llm = ChatOpenAI(
 ).bind_tools(agent_tools)
 
 
-def _latest_user_query(messages: List[BaseMessage]) -> str:
-    for msg in reversed(messages):
-        if isinstance(msg, HumanMessage):
-            return str(msg.content)
-    return ""
+_FOLLOWUP_WORDS = {
+    "it", "its", "itself", "they", "them", "their", "this", "that", "these",
+    "those", "he", "she", "him", "her", "above", "former", "latter", "same",
+}
+_ZH_FOLLOWUP = ("它", "这个", "那个", "他们", "上述", "该", "此", "这些", "那些")
+
+
+def _retrieval_query(messages: List[BaseMessage]) -> str:
+    """Build the search query, carrying context when the user asks a follow-up.
+
+    A follow-up is detected by pronouns / demonstratives or a very short
+    message. Concatenating the previous question keeps retrieval cheap (no
+    extra LLM call) while resolving references like "who approves it?".
+    """
+    user_messages = [m for m in messages if isinstance(m, HumanMessage)]
+    if not user_messages:
+        return ""
+    current = str(user_messages[-1].content).strip()
+    if len(user_messages) < 2:
+        return current
+
+    previous = str(user_messages[-2].content).strip()
+    words = set(re.findall(r"[a-z']+", current.lower()))
+    is_followup = bool(words & _FOLLOWUP_WORDS) or len(current) <= 16 or any(
+        marker in current for marker in _ZH_FOLLOWUP
+    )
+    if previous and is_followup:
+        return f"{previous} {current}"
+    return current
 
 
 def call_model(state: AgentState):
@@ -80,7 +105,7 @@ def call_model(state: AgentState):
     # Deterministic first-stage retrieval: permissions come from state, not the LLM.
     already_retrieved = any(isinstance(m, ToolMessage) for m in messages)
     if not already_retrieved:
-        query = _latest_user_query(messages)
+        query = _retrieval_query(messages)
         t_search = time.perf_counter()
         docs = kb_engine.search(query, dept, k=settings.RETRIEVAL_K) if query else []
         timings["retrieval_ms"] = timings.get("retrieval_ms", 0.0) + (
@@ -109,6 +134,9 @@ def call_model(state: AgentState):
                     item["kind"] = meta["kind"]
                 if meta.get("title"):
                     item["title"] = meta["title"]
+                snippet = " ".join(doc.page_content.split())
+                if snippet:
+                    item["snippet"] = snippet[:220]
                 sources.append(item)
 
             label = meta.get("source") or "unknown"

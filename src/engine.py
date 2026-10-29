@@ -267,6 +267,13 @@ class KnowledgeBaseEngine:
         self.driver.add_documents(texts, metadatas)
 
     def search(self, query: str, user_dept: str, k: int = 5) -> List[Document]:
+        if settings.RERANK_ENABLED:
+            from src.reranker import rerank_documents
+
+            candidates = self.driver.search(
+                query, user_dept, max(k, settings.RERANK_CANDIDATES)
+            )
+            return rerank_documents(query, candidates, k)
         return self.driver.search(query, user_dept, k)
 
     def is_empty(self) -> bool:

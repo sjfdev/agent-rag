@@ -14,6 +14,7 @@ All commands assume the conda env `agent-rag` is active (`conda activate agent-r
 - **Data Ingestion**: `python run_ingestion.py` (Must be run before API to populate the vector store).
 - **LLM Check**: `python scripts/check_llm.py` (probes `/models` + one chat completion before starting the API).
 - **Offline Retrieval Check**: `python scripts/verify_retrieval.py` (no LLM needed; asserts dept isolation).
+- **Retrieval Eval**: `VECTOR_STORE_TYPE=faiss python scripts/eval_retrieval.py` (hit@k, MRR, leakage from `eval/cases.jsonl`; run for both backends after ingestion).
 - **Loader Check**: `python scripts/check_loaders.py` (extracts every supported format in /tmp, no vector store needed).
 - **Admin Check**: `python scripts/check_admin.py` (upload→ingest→delete smoke test; server must be running).
 - **Latency Benchmark**: `python scripts/bench_retrieval.py` (embedding vs FAISS vs Milvus vs LLM). `/chat` responses include `timings` (`retrieval_ms`, `llm_ms`, `llm_calls`, `overhead_ms`, `total_ms`).
@@ -24,7 +25,7 @@ All commands assume the conda env `agent-rag` is active (`conda activate agent-r
 - **Install Order**: `pydantic`/`typing-extensions` $\rightarrow$ `torch` $\rightarrow$ `langchain*` $\rightarrow$ app deps (`requirements.txt` lists tested pins; loaders need `python-docx python-pptx openpyxl beautifulsoup4 chardet`). Pin `numpy<2`, `pandas<2.3`, `transformers==4.49.0`, `sentence-transformers==3.4.1`, `huggingface-hub==0.36.0` (torch 2.2.2 breaks with NumPy 2.x ABI; transformers 5.x needs torch>=2.6).
 - **Startup**: HF metadata lookups can stall ~10s per launch; `src/__init__.py` caps them with `HF_HUB_ETAG_TIMEOUT=3`. Set `HF_HUB_OFFLINE=1` once the model is cached.
 - **LLM Config**: `.env` (gitignored, see `.env.example`) overrides defaults. Current default is free GLM-4-Flash (`https://open.bigmodel.cn/api/paas/v4/`). Local Ollama (`qwen2.5:latest`) works but CPU inference is ~3 tok/s, so cloud is preferred for tests.
-- **Retrieval Flow**: `call_model` does deterministic first-stage retrieval (`kb_engine.search(query, state["user_dept"])`) and injects excerpts as a system message; the LLM only formats the answer or triggers `create_support_ticket`.
+- **Retrieval Flow**: `_retrieval_query` concatenates the previous question for follow-ups (pronouns/short messages); `call_model` does deterministic first-stage retrieval (`kb_engine.search(query, state["user_dept"])`) and injects excerpts as a system message; the LLM only formats the answer or triggers `create_support_ticket`.
 - **Embeddings**: `EMBEDDING_BACKEND="local"` by default (sentence-transformers + `HF_ENDPOINT=https://hf-mirror.com`). Only chat generation needs `LLM_API_BASE`; ingestion and `scripts/verify_retrieval.py` work offline.
 - **Vector Backend**: `src/config.py` `VECTOR_STORE_TYPE` switches `"faiss"` (default, local) vs `"milvus"` (Docker). Same interface in `src/engine.py`.
 - **Infra**: `docker compose up -d` starts etcd + Milvus only (local storage, no MinIO). Both must be `healthy` and `curl -f localhost:9091/healthz` must pass before setting `VECTOR_STORE_TYPE=milvus`. If `milvusdb/milvus` pull fails, use `docker.1panel.live/milvusdb/milvus:v2.4.0` and `docker tag` it, or pass `MILVUS_IMAGE=...`. etcd pulls from `quay.io` directly.
@@ -32,7 +33,7 @@ All commands assume the conda env `agent-rag` is active (`conda activate agent-r
 
 ## Testing & Verification
 - **Permissions**: Always test with at least two different `user_dept` values to verify data isolation.
-- **Reranking**: The `EnterpriseReranker` uses a Cross-Encoder; ensure the model is cached to prevent startup latency.
+- **Reranking**: `src/reranker.py` is wired into `kb_engine.search` behind `RERANK_ENABLED` (default off). Uses a Cross-Encoder (`RERANK_MODEL`, 12 candidates); cache the model first, and expect +~200ms (MiniLM) to +seconds (BGE) on CPU.
 
 ## Documentation
 - **`AGENT_GUIDE.md`**: full Chinese guide (tech stack, install, usage, FAQ, performance tuning).
