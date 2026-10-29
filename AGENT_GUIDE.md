@@ -16,6 +16,7 @@
 - **双向量后端**：本地 FAISS（零依赖）与 Milvus（企业级）随时切换
 - **双 Embedding 后端**：本地 sentence-transformers（离线）或 OpenAI 兼容接口
 - **内置测试台**：`/ui/` 网页端可直接按部门提问并查看分段耗时
+- **入库管理台**：`/admin` 支持上传、状态检查、增量入库、删除、重建索引
 
 ### 1.1 整体架构
 
@@ -398,40 +399,67 @@ curl -s http://localhost:8000/chat \
 ### 5.3 网页测试台
 
 - 选择部门、填写 user_id 后提问；Enter 发送，Shift+Enter 换行
-- 多轮对话会自动携带历史；「新对话」清空
-- 回答**逐字流式渲染**（首字约 0.7s 出现），结束后显示总计 / 检索 / LLM / 框架开销 / 调用次数
-- 预设按钮包含「越权测试（薪资）」，可直接验证 Tech 用户拿不到 Finance 薪资
+- 多轮对话会自动携带历史；「新对话（新窗口）」打开独立会话，「清空当前」只清空本标签页
+- 回答**逐字流式渲染**（首字约 0.7s 出现），结束后显示来源与总计 / 检索 / LLM / 框架开销
+- 预设包含「越权测试（薪资）」与 Demo 多格式示例；左下角「入库管理」进入 `/admin`
 
 ### 5.4 测试与诊断脚本
 
 ```bash
 python scripts/check_llm.py          # 探测 /models + 一次 chat completion
 python scripts/verify_retrieval.py   # 无需 LLM，检查入库与隔离
+python scripts/check_loaders.py      # 9 种格式解析（不写向量库）
+python scripts/check_admin.py        # 管理台上传→入库→删除冒烟
 python scripts/bench_retrieval.py    # embedding / FAISS / Milvus / LLM 延迟
-python test_agent.py                 # 端到端 7 场景（需服务已启动）
+python scripts/generate_demo_files.py  # 重建 data/Demo 多格式样例
+python test_agent.py                 # 端到端 13 项断言（需服务已启动）
 ```
 
 ### 5.5 数据组织与增量更新
 
-- 目录名即部门名：`data/Finance/*.pdf` → `dept="Finance"`
-- 修改文档后重新执行 `python run_ingestion.py`
-- 两种后端**都不做去重**，重复执行会产生重复 chunk。重建方式：
+- 目录名即部门名：`data/Finance/...` → `dept="Finance"`，支持多级子目录
+- 每个 chunk 记录 `source/page/slide/sheet/doc_id/doc_hash/kind`，答案返回 `sources`
+- 增量：未变跳过（哈希一致）、变更替换（按 `doc_id` 先删后插）、删除文件自动清理
+- 全量重建：`python run_ingestion.py --reset`（切换后端或元数据结构变化时必须执行）
+- 保留已删除文件的旧 chunk：加 `--no-prune`
 
 ```bash
-# FAISS
-rm -rf db/vector_db && python run_ingestion.py
-
-# Milvus
-python - <<'PY'
-from pymilvus import connections, utility
-connections.connect(host="localhost", port="19530")
-utility.drop_collection("enterprise_kb")
-print("dropped")
-PY
-VECTOR_STORE_TYPE=milvus python run_ingestion.py
+python run_ingestion.py            # 增量
+python run_ingestion.py --reset    # 清空后全量重建
+python run_ingestion.py --no-prune # 不清理已删除文件
 ```
 
-> 切换后端后必须各自重新入库：FAISS 与 Milvus 的索引互相独立。
+> FAISS 与 Milvus 索引互相独立；切换 `VECTOR_STORE_TYPE` 后需对目标后端单独入库。也可以在 `/admin` 中点击「重建索引」。
+
+### 5.6 入库管理台 `/admin`
+
+打开 `http://localhost:8000/admin`（对话页左下角也有入口）：
+
+- **部门**：切换/创建部门，显示文件总数与各状态数量
+- **上传**：拖拽或选择多文件，可指定子目录；单文件上限 `MAX_UPLOAD_MB`
+- **文件列表**：显示类型、大小、状态（已入库/待入库/有变更/不支持）、chunk 数、修改时间
+- **操作**：增量入库当前部门、全量入库（含清理）、删除文件（同时移除其 chunk）
+- **重建索引**：勾选确认后删除现有集合/索引并全量重导
+- **任务日志**：实时轮询，展示每个文件的 add/update/skip 与最终统计
+
+管理 API（前缀 `/admin/api`）：
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/meta` | 后端、格式、部门与状态统计 |
+| GET | `/files?dept=` | 文件清单与入库状态 |
+| POST | `/dept` | 创建部门目录 `{"name":"QA"}` |
+| POST | `/upload` | multipart：`dept`、`subdir`、`files` |
+| DELETE | `/file?dept=&source=` | 删除文件并移除对应 chunk |
+| POST | `/ingest` | `{"dept": "QA"}` 或 `{"reset": true}` |
+| GET | `/jobs/{id}` | 任务状态与日志 |
+
+安全：
+
+- 未设置 `ADMIN_TOKEN` 时，管理 API 仅接受**本机回环**（127.0.0.1/::1），局域网访问返回 403
+- 设置后所有请求需带 `X-Admin-Token`（管理台右上角可保存到 sessionStorage）
+- 上传会做扩展名白名单、大小限制、文件名与子目录净化；`../` 会被拒绝或剥离
+- 删除/重建会修改知识库，生产环境请配合反向代理鉴权与备份
 
 ---
 
@@ -443,7 +471,7 @@ VECTOR_STORE_TYPE=milvus python run_ingestion.py
 | `LLM_API_KEY` | `ollama` | API Key |
 | `LLM_MODEL` | `qwen2.5:latest` | 模型名，必须与端点一致 |
 | `LLM_TIMEOUT` | `30` | 单次 LLM 请求超时（秒） |
-| `LLM_MAX_TOKENS` | `512` | 生成上限，调小可提速 |
+| `LLM_MAX_TOKENS` | `256` | 生成上限，调小可提速 |
 | `LLM_MAX_RETRIES` | `2` | LLM 失败重试次数 |
 | `AGENT_RECURSION_LIMIT` | `6` | LangGraph 最大步数，防止工具循环 |
 | `VECTOR_STORE_TYPE` | `faiss` | `faiss` 或 `milvus` |
@@ -456,6 +484,9 @@ VECTOR_STORE_TYPE=milvus python run_ingestion.py
 | `LOCAL_EMBEDDING_MODEL` | `BAAI/bge-small-zh-v1.5` | 本地 embedding（512 维） |
 | `EMBEDDING_MODEL` | `text-embedding-3-small` | `EMBEDDING_BACKEND=openai` 时使用 |
 | `HF_ENDPOINT` | `https://hf-mirror.com` | 模型下载镜像（`src/__init__.py` 设定） |
+| `DATA_DIR` | `./data` | 入库根目录（CLI 与管理台共用） |
+| `ADMIN_TOKEN` | 空 | 管理 API 令牌；为空时仅回环可访问 |
+| `MAX_UPLOAD_MB` | `50` | 单文件上传/入库大小上限 |
 
 优先级：**环境变量 > `.env` > 代码默认值**。因此可以临时覆盖而不改文件：
 
@@ -611,16 +642,17 @@ python scripts/bench_retrieval.py
 - 部门隔离依赖 `user_dept` 的来源。生产环境应从前端登录态/网关注入，**不要信任客户端任意传值**；当前实现假设上游已完成身份认证。
 - `create_support_ticket` 目前是占位实现（固定返回 `TICK-12345`），接入 Jira/Zendesk 时需补充鉴权与审计。
 - Milvus/etcd 默认无认证，仅建议在内网或本机使用；生产需开启 TLS/认证并限制 19530 端口暴露。
+- `/admin` 可以写文件、删文件、重建索引：默认仅本机可用；对外开放前必须设置 `ADMIN_TOKEN` 并置于 HTTPS 反向代理之后。
 
 ---
 
 ## 10. 已知限制与后续方向
 
 - 服务端不存储会话，多轮依赖客户端回传 `history`
-- 入库无去重/增量更新机制，重复执行会产生重复 chunk
 - 无文档权限的细粒度控制（目前仅到部门级）
-- 无鉴权中间件，`user_id`/`user_dept` 由调用方提供
-- 可扩展：流式输出、会话持久化、文档级 ACL、重排接入、评测集与召回率监控
+- 对话接口无鉴权，`user_id`/`user_dept` 由调用方提供（管理台另有 `ADMIN_TOKEN`）
+- 入库为同步 CPU/IO 操作，大库上传后需等待任务完成，期间检索可能短暂不完整
+- 可扩展：OCR、会话持久化、文档级 ACL、重排接入、评测集与召回率监控
 
 ---
 

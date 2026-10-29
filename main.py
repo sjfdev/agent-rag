@@ -6,11 +6,12 @@ from pathlib import Path
 from typing import Any, Dict, List, Literal
 
 from fastapi import FastAPI, HTTPException, Response
-from fastapi.responses import RedirectResponse, StreamingResponse
+from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from langchain_core.messages import AIMessage, HumanMessage
 from pydantic import BaseModel, Field
 
+from src.admin_api import router as admin_router
 from src.agent import app as agent_app
 from src.config import settings
 from src.engine import kb_engine
@@ -45,6 +46,17 @@ if STATIC_DIR.is_dir():
 @app.get("/", include_in_schema=False)
 def root():
     return RedirectResponse(url="/ui/")
+
+
+app.include_router(admin_router)
+
+
+@app.get("/admin", include_in_schema=False)
+def admin_page():
+    page = STATIC_DIR / "admin.html"
+    if not page.is_file():
+        raise HTTPException(status_code=404, detail="admin UI not found")
+    return FileResponse(page)
 
 
 @app.get("/info")

@@ -1,0 +1,525 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>知识库管理 - agent-rag</title>
+<style>
+  :root {
+    --bg: #0e1116;
+    --panel: #171a21;
+    --panel-2: #1f232c;
+    --text: #e6e9ef;
+    --muted: #9aa3b2;
+    --accent: #4f8cff;
+    --ok: #3ecf8e;
+    --warn: #f5a524;
+    --bad: #ff6b6b;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 14px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif;
+  }
+  header {
+    display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between;
+    padding: 14px 20px; border-bottom: 1px solid #232833; background: var(--panel);
+  }
+  .brand { font-size: 16px; font-weight: 600; }
+  .brand span { color: var(--muted); font-weight: 400; margin-left: 8px; font-size: 12px; }
+  .meta { display: flex; gap: 14px; align-items: center; color: var(--muted); font-size: 12px; flex-wrap: wrap; }
+  .meta b { color: var(--text); font-weight: 500; }
+  .meta a { color: var(--accent); text-decoration: none; }
+  main { max-width: 1080px; margin: 0 auto; padding: 18px 20px 40px; display: grid; gap: 14px; }
+  .card { background: var(--panel); border: 1px solid #232833; border-radius: 10px; padding: 14px 16px; }
+  h2 { font-size: 13px; margin: 0 0 10px; color: var(--muted); font-weight: 500; letter-spacing: .5px; }
+  h2 .sub { color: var(--muted); font-weight: 400; margin-left: 6px; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  input[type=text], input[type=password], select, textarea {
+    background: var(--panel-2); color: var(--text); border: 1px solid #2a3444;
+    border-radius: 8px; padding: 7px 10px; font: inherit; outline: none;
+  }
+  input:focus, select:focus { border-color: var(--accent); }
+  button {
+    background: var(--panel-2); color: var(--text); border: 1px solid #2a3444;
+    border-radius: 8px; padding: 7px 12px; font: inherit; cursor: pointer;
+  }
+  button:hover:not(:disabled) { border-color: #3a4150; }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.danger { color: var(--bad); border-color: #4a2a2e; }
+  button.tiny { padding: 4px 8px; font-size: 12px; }
+  .drop {
+    border: 1px dashed #33405a; border-radius: 10px; padding: 22px; text-align: center;
+    color: var(--muted); margin-bottom: 10px; transition: border-color .15s, background .15s;
+  }
+  .drop.hot { border-color: var(--accent); background: #141c2b; }
+  .drop label { color: var(--accent); cursor: pointer; text-decoration: underline; }
+  .stats { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+  .pill {
+    font-size: 12px; color: var(--muted); background: var(--panel-2);
+    border: 1px solid #2a3444; border-radius: 999px; padding: 2px 10px;
+  }
+  .pill b { color: var(--text); }
+  table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+  th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid #232833; vertical-align: middle; }
+  th { color: var(--muted); font-weight: 500; font-size: 12px; }
+  td.name { max-width: 380px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  td.mono, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: var(--muted); }
+  .badge { font-size: 11px; border-radius: 999px; padding: 2px 8px; border: 1px solid transparent; white-space: nowrap; }
+  .b-indexed { color: var(--ok); border-color: #1e4636; background: #12261e; }
+  .b-pending { color: var(--warn); border-color: #4a3a1e; background: #241f14; }
+  .b-changed { color: #ff9f43; border-color: #4a3320; background: #241b13; }
+  .b-unsupported, .b-unknown { color: var(--muted); border-color: #2a3444; background: var(--panel-2); }
+  .msg { font-size: 12px; color: var(--muted); margin-top: 8px; min-height: 18px; }
+  .msg.error { color: var(--bad); }
+  .msg.ok { color: var(--ok); }
+  #jobCard pre {
+    margin: 0; max-height: 260px; overflow: auto; background: #0b0e13; border: 1px solid #232833;
+    border-radius: 8px; padding: 10px; font-size: 12px; color: #c7d0df; white-space: pre-wrap;
+  }
+  #jobStatus { margin-left: 6px; font-size: 12px; }
+  .tokenRow { display: flex; gap: 8px; align-items: center; margin-top: 8px; }
+  .tokenRow input { flex: 1; min-width: 180px; }
+  .hint { font-size: 12px; color: var(--muted); }
+  .dangerZone { border-color: #3a2529; }
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">知识库管理<span>ingestion console</span></div>
+  <div class="meta">
+    <span>后端 <b id="store">-</b></span>
+    <span>模型 <b id="model">-</b></span>
+    <span>上传上限 <b id="maxMb">-</b></span>
+    <a href="/ui/">返回对话</a>
+  </div>
+</header>
+
+<main>
+  <section class="card">
+    <h2>部门</h2>
+    <div class="row">
+      <select id="dept"></select>
+      <button id="refresh">刷新</button>
+      <input id="newDept" type="text" placeholder="新部门名称" maxlength="64">
+      <button id="createDept">创建部门</button>
+    </div>
+    <div class="stats" id="stats"></div>
+    <div class="tokenRow">
+      <input id="token" type="password" placeholder="管理令牌（设置 ADMIN_TOKEN 后必填）">
+      <button id="saveToken" class="tiny">保存令牌</button>
+      <span class="hint">未设置 ADMIN_TOKEN 时仅本机可访问，可留空</span>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>上传文件</h2>
+    <div class="drop" id="drop">
+      拖拽文件到这里，或 <label>选择文件<input id="file" type="file" multiple hidden></label>
+      <div class="hint" id="formats"></div>
+    </div>
+    <div class="row">
+      <input id="subdir" type="text" placeholder="子目录（可选，如 runbooks）" maxlength="128">
+      <button id="upload" class="primary">上传到当前部门</button>
+    </div>
+    <div class="msg" id="uploadMsg"></div>
+  </section>
+
+  <section class="card">
+    <h2>入库文件<span class="sub" id="fileCount"></span></h2>
+    <div class="row">
+      <button id="ingestDept">增量入库（当前部门）</button>
+      <button id="ingestAll">增量入库（全部）</button>
+    </div>
+    <table>
+      <thead>
+        <tr>
+          <th>文件</th><th>类型</th><th>大小</th><th>状态</th><th>chunks</th><th>修改时间</th><th></th>
+        </tr>
+      </thead>
+      <tbody id="fileBody"></tbody>
+    </table>
+    <div class="msg" id="fileMsg"></div>
+  </section>
+
+  <section class="card dangerZone">
+    <h2>重建索引</h2>
+    <p class="hint" style="margin:0 0 10px">
+      删除当前索引/集合并重新入库全部部门。Embedding 会重新计算，期间检索结果可能不完整。
+    </p>
+    <label class="row" style="font-size:13px">
+      <input id="resetFlag" type="checkbox"> 我确认要重建全部索引
+    </label>
+    <div class="row" style="margin-top:10px">
+      <button id="resetBtn" class="danger">执行重建</button>
+    </div>
+  </section>
+
+  <section class="card" id="jobCard" hidden>
+    <h2>任务<span id="jobStatus"></span></h2>
+    <pre id="jobLog"></pre>
+  </section>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const deptSel = $("dept");
+const fileBody = $("fileBody");
+
+let token = sessionStorage.getItem("adminToken") || "";
+let currentDept = "";
+let jobId = null;
+let pollTimer = null;
+let pendingFiles = [];
+
+$("token").value = token;
+
+async function api(path, options = {}) {
+  const headers = Object.assign({}, options.headers || {});
+  if (token) headers["X-Admin-Token"] = token;
+  const res = await fetch(path, Object.assign({}, options, { headers }));
+  const type = res.headers.get("content-type") || "";
+  const data = type.includes("application/json") ? await res.json() : await res.text();
+  if (!res.ok) {
+    let detail = res.status;
+    if (data && data.detail !== undefined) {
+      detail = typeof data.detail === "string" ? data.detail : JSON.stringify(data.detail);
+    }
+    throw new Error(detail);
+  }
+  return data;
+}
+
+function setMsg(el, text, kind) {
+  el.textContent = text || "";
+  el.className = "msg" + (kind ? " " + kind : "");
+}
+
+function fmtBytes(n) {
+  if (n < 1024) return n + " B";
+  if (n < 1024 * 1024) return (n / 1024).toFixed(1) + " KB";
+  return (n / 1024 / 1024).toFixed(1) + " MB";
+}
+
+const STATUS_LABEL = {
+  indexed: "已入库",
+  pending: "待入库",
+  changed: "有变更",
+  unsupported: "不支持",
+  unknown: "未知",
+};
+
+function badge(status) {
+  const span = document.createElement("span");
+  span.className = "badge b-" + status;
+  span.textContent = STATUS_LABEL[status] || status;
+  return span;
+}
+
+async function loadMeta() {
+  const meta = await api("/admin/api/meta");
+  $("store").textContent = meta.vector_store;
+  $("model").textContent = meta.llm_model;
+  $("maxMb").textContent = meta.max_upload_mb + " MB";
+  $("formats").textContent = "支持：" + meta.formats.join(" ");
+
+  const previous = currentDept;
+  deptSel.innerHTML = "";
+  for (const dept of meta.depts) {
+    const option = document.createElement("option");
+    option.value = dept.name;
+    option.textContent = dept.name + " (" + dept.files + ")";
+    deptSel.appendChild(option);
+  }
+  if (!meta.depts.length) {
+    const option = document.createElement("option");
+    option.value = "";
+    option.textContent = "（暂无部门）";
+    deptSel.appendChild(option);
+  }
+  if (previous && meta.depts.some((d) => d.name === previous)) {
+    deptSel.value = previous;
+  }
+  currentDept = deptSel.value;
+
+  const c = meta.counts || {};
+  $("stats").innerHTML = "";
+  const pills = [
+    ["文件总数", (meta.depts || []).reduce((n, d) => n + d.files, 0)],
+    ["已入库", c.indexed || 0],
+    ["待入库", c.pending || 0],
+    ["有变更", c.changed || 0],
+    ["不支持", c.unsupported || 0],
+  ];
+  for (const [label, value] of pills) {
+    const pill = document.createElement("span");
+    pill.className = "pill";
+    pill.textContent = label + " ";
+    const b = document.createElement("b");
+    b.textContent = value;
+    pill.appendChild(b);
+    $("stats").appendChild(pill);
+  }
+  if (meta.ingesting) setMsg($("fileMsg"), "已有入库任务在运行", "");
+  return meta;
+}
+
+async function loadFiles() {
+  const query = currentDept ? "?dept=" + encodeURIComponent(currentDept) : "";
+  const data = await api("/admin/api/files" + query);
+  fileBody.innerHTML = "";
+  $("fileCount").textContent = currentDept ? "（" + currentDept + "）" : "（全部）";
+
+  if (!data.files.length) {
+    const tr = document.createElement("tr");
+    const td = document.createElement("td");
+    td.colSpan = 7;
+    td.className = "mono";
+    td.textContent = "暂无文件，先上传或创建部门。";
+    tr.appendChild(td);
+    fileBody.appendChild(tr);
+    return;
+  }
+
+  for (const file of data.files) {
+    const tr = document.createElement("tr");
+
+    const name = document.createElement("td");
+    name.className = "name";
+    name.textContent = file.source;
+    name.title = file.source;
+    tr.appendChild(name);
+
+    const kind = document.createElement("td");
+    kind.className = "mono";
+    kind.textContent = file.ext.replace(".", "") || "-";
+    tr.appendChild(kind);
+
+    const size = document.createElement("td");
+    size.className = "mono";
+    size.textContent = fmtBytes(file.size);
+    tr.appendChild(size);
+
+    const status = document.createElement("td");
+    status.appendChild(badge(file.status));
+    tr.appendChild(status);
+
+    const chunks = document.createElement("td");
+    chunks.className = "mono";
+    chunks.textContent = file.chunks || 0;
+    tr.appendChild(chunks);
+
+    const mtime = document.createElement("td");
+    mtime.className = "mono";
+    mtime.textContent = (file.mtime || "").replace("T", " ");
+    tr.appendChild(mtime);
+
+    const actions = document.createElement("td");
+    const del = document.createElement("button");
+    del.className = "tiny danger";
+    del.textContent = "删除";
+    del.onclick = () => removeFile(file);
+    actions.appendChild(del);
+    tr.appendChild(actions);
+
+    fileBody.appendChild(tr);
+  }
+}
+
+async function refreshAll() {
+  try {
+    await loadMeta();
+    await loadFiles();
+  } catch (error) {
+    setMsg($("fileMsg"), "加载失败：" + error.message, "error");
+  }
+}
+
+async function removeFile(file) {
+  if (!confirm("删除文件并从索引移除？\n" + file.source)) return;
+  try {
+    const result = await api(
+      "/admin/api/file?dept=" + encodeURIComponent(file.dept) +
+      "&source=" + encodeURIComponent(file.source),
+      { method: "DELETE" }
+    );
+    setMsg($("fileMsg"), "已删除 " + result.deleted + "（移除 " + result.chunks_removed + " 个 chunk）", "ok");
+    await refreshAll();
+  } catch (error) {
+    setMsg($("fileMsg"), "删除失败：" + error.message, "error");
+  }
+}
+
+function showPending() {
+  const names = pendingFiles.map((f) => f.name);
+  setMsg($("uploadMsg"), names.length ? "待上传：" + names.join("，") : "", "");
+}
+
+async function upload() {
+  if (!pendingFiles.length) {
+    setMsg($("uploadMsg"), "请先选择文件。", "error");
+    return;
+  }
+  if (!currentDept) {
+    setMsg($("uploadMsg"), "请先创建并选择部门。", "error");
+    return;
+  }
+  const form = new FormData();
+  form.append("dept", currentDept);
+  form.append("subdir", $("subdir").value.trim());
+  for (const file of pendingFiles) form.append("files", file, file.name);
+
+  $("upload").disabled = true;
+  setMsg($("uploadMsg"), "上传中…", "");
+  try {
+    const data = await api("/admin/api/upload", { method: "POST", body: form });
+    const saved = data.saved.map((s) => s.source + (s.overwritten ? "（覆盖）" : "")).join("，");
+    let message = "已上传：" + saved + "。点击「增量入库」后生效。";
+    if (data.errors && data.errors.length) {
+      message += " 失败：" + data.errors.map((e) => e.name + "（" + e.error + "）").join("，");
+    }
+    setMsg($("uploadMsg"), message, data.errors && data.errors.length ? "error" : "ok");
+    pendingFiles = [];
+    $("file").value = "";
+    await refreshAll();
+  } catch (error) {
+    setMsg($("uploadMsg"), "上传失败：" + error.message, "error");
+  } finally {
+    $("upload").disabled = false;
+  }
+}
+
+function setBusy(busy) {
+  for (const id of ["ingestDept", "ingestAll", "resetBtn"]) $(id).disabled = busy;
+}
+
+async function startIngest(dept, reset) {
+  setBusy(true);
+  jobId = null;
+  $("jobCard").hidden = false;
+  $("jobStatus").textContent = "启动中…";
+  $("jobLog").textContent = "";
+  try {
+    const body = { reset: !!reset };
+    if (dept) body.dept = dept;
+    const data = await api("/admin/api/ingest", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    jobId = data.job_id;
+    pollJob();
+  } catch (error) {
+    $("jobStatus").textContent = "失败";
+    $("jobLog").textContent = error.message;
+    setBusy(false);
+  }
+}
+
+async function pollJob() {
+  clearTimeout(pollTimer);
+  if (!jobId) return;
+  try {
+    const job = await api("/admin/api/jobs/" + jobId);
+    $("jobStatus").textContent = job.status;
+    $("jobLog").textContent = job.log.join("\n");
+    $("jobLog").scrollTop = $("jobLog").scrollHeight;
+    if (job.status === "done" || job.status === "error") {
+      setBusy(false);
+      jobId = null;
+      await refreshAll();
+      return;
+    }
+  } catch (error) {
+    $("jobStatus").textContent = "轮询失败：" + error.message;
+    setBusy(false);
+    return;
+  }
+  pollTimer = setTimeout(pollJob, 800);
+}
+
+deptSel.onchange = () => {
+  currentDept = deptSel.value;
+  loadFiles().catch((e) => setMsg($("fileMsg"), e.message, "error"));
+};
+
+$("refresh").onclick = refreshAll;
+
+$("createDept").onclick = async () => {
+  const name = $("newDept").value.trim();
+  if (!name) return;
+  try {
+    await api("/admin/api/dept", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name }),
+    });
+    $("newDept").value = "";
+    currentDept = name;
+    await refreshAll();
+    deptSel.value = name;
+    currentDept = name;
+    await loadFiles();
+    setMsg($("fileMsg"), "部门 " + name + " 就绪", "ok");
+  } catch (error) {
+    setMsg($("fileMsg"), "创建失败：" + error.message, "error");
+  }
+};
+
+$("saveToken").onclick = () => {
+  token = $("token").value.trim();
+  sessionStorage.setItem("adminToken", token);
+  setMsg($("uploadMsg"), token ? "令牌已保存" : "令牌已清空", "ok");
+  refreshAll();
+};
+
+$("upload").onclick = upload;
+
+$("file").onchange = () => {
+  pendingFiles = Array.from($("file").files);
+  showPending();
+};
+
+$("ingestDept").onclick = () => {
+  if (!currentDept) {
+    setMsg($("fileMsg"), "请先选择部门。", "error");
+    return;
+  }
+  startIngest(currentDept, false);
+};
+
+$("ingestAll").onclick = () => startIngest(null, false);
+
+$("resetBtn").onclick = () => {
+  if (!$("resetFlag").checked) {
+    setMsg($("fileMsg"), "请先勾选确认。", "error");
+    return;
+  }
+  if (!confirm("将删除现有索引并重新入库全部文件，确定继续？")) return;
+  startIngest(null, true);
+};
+
+const drop = $("drop");
+["dragenter", "dragover"].forEach((evt) =>
+  drop.addEventListener(evt, (e) => {
+    e.preventDefault();
+    drop.classList.add("hot");
+  })
+);
+["dragleave", "drop"].forEach((evt) =>
+  drop.addEventListener(evt, (e) => {
+    e.preventDefault();
+    drop.classList.remove("hot");
+  })
+);
+drop.addEventListener("drop", (e) => {
+  if (!e.dataTransfer.files.length) return;
+  pendingFiles = Array.from(e.dataTransfer.files);
+  showPending();
+});
+
+refreshAll();
+</script>
+</body>
+</html>

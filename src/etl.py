@@ -1,16 +1,22 @@
 import hashlib
 import logging
 from pathlib import Path
-from typing import Dict, List, Set
+from typing import Callable, Dict, List, Optional, Set
 
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
+from src.config import settings
 from src.engine import kb_engine
 from src.loaders import LEGACY_EXTENSIONS, SUPPORTED_EXTENSIONS, load_file
 
 logger = logging.getLogger(__name__)
 
-MAX_FILE_BYTES = 50 * 1024 * 1024
+MAX_FILE_BYTES = settings.MAX_UPLOAD_MB * 1024 * 1024
+
+
+def doc_id_for(dept_name: str, source: str) -> str:
+    """Stable document identity: sha1(dept|relative/source/path)."""
+    return hashlib.sha1(f"{dept_name}|{source}".encode()).hexdigest()
 
 
 class EnterpriseETL:
@@ -21,8 +27,13 @@ class EnterpriseETL:
     gone. Nested folders under a department are supported.
     """
 
-    def __init__(self, data_dir: str = "./data"):
+    def __init__(
+        self,
+        data_dir: str = "./data",
+        on_log: Optional[Callable[[str], None]] = None,
+    ):
         self.data_dir = Path(data_dir)
+        self.on_log = on_log
         self.splitter = RecursiveCharacterTextSplitter(
             chunk_size=800,
             chunk_overlap=100,
@@ -37,6 +48,14 @@ class EnterpriseETL:
             "chunks": 0,
         }
 
+    def _log(self, message: str) -> None:
+        print(message)
+        if self.on_log:
+            try:
+                self.on_log(message)
+            except Exception:  # never let a logging callback break ingestion
+                pass
+
     def _source_name(self, path: Path) -> str:
         try:
             return path.relative_to(self.data_dir).as_posix()
@@ -50,7 +69,7 @@ class EnterpriseETL:
                 continue
             suffix = path.suffix.lower()
             if suffix in LEGACY_EXTENSIONS:
-                print(
+                self._log(
                     f"  skip     {self._source_name(path)} "
                     f"(legacy {suffix}; convert to {LEGACY_EXTENSIONS[suffix]})"
                 )
@@ -80,14 +99,14 @@ class EnterpriseETL:
     def _process_file(self, dept_name: str, path: Path) -> str:
         source = self._source_name(path)
         size = path.stat().st_size
-        doc_id = hashlib.sha1(f"{dept_name}|{source}".encode()).hexdigest()
+        doc_id = doc_id_for(dept_name, source)
 
         if size == 0:
-            print(f"  skip     {source} (empty file)")
+            self._log(f"  skip     {source} (empty file)")
             self.stats["failed"] += 1
             return doc_id
         if size > MAX_FILE_BYTES:
-            print(f"  skip     {source} (> {MAX_FILE_BYTES // (1024 * 1024)}MB)")
+            self._log(f"  skip     {source} (> {MAX_FILE_BYTES // (1024 * 1024)}MB)")
             self.stats["failed"] += 1
             return doc_id
 
@@ -95,7 +114,7 @@ class EnterpriseETL:
         existing_hash = kb_engine.get_doc_hash(doc_id)
         if existing_hash == doc_hash:
             self.stats["skipped"] += 1
-            print(f"  skip     {source} (unchanged)")
+            self._log(f"  skip     {source} (unchanged)")
             return doc_id
 
         # Load first: a parse failure must not delete the previously indexed copy.
@@ -103,7 +122,7 @@ class EnterpriseETL:
             sections = load_file(path)
         except Exception as exc:
             logger.exception("failed to parse %s", source)
-            print(f"  error    {source} ({exc.__class__.__name__}: {exc})")
+            self._log(f"  error    {source} ({exc.__class__.__name__}: {exc})")
             self.stats["failed"] += 1
             return doc_id
 
@@ -132,7 +151,7 @@ class EnterpriseETL:
                 metadatas.append(meta_chunk)
 
         if not texts:
-            print(f"  skip     {source} (no extractable text)")
+            self._log(f"  skip     {source} (no extractable text)")
             self.stats["failed"] += 1
             return doc_id
 
@@ -146,7 +165,7 @@ class EnterpriseETL:
 
         kb_engine.add_documents(texts, metadatas)
         self.stats["chunks"] += len(texts)
-        print(f"  {action:<8} {source} ({len(texts)} chunks)")
+        self._log(f"  {action:<8} {source} ({len(texts)} chunks)")
         return doc_id
 
     def prune(self, keep: Set[str]) -> int:

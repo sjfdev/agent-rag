@@ -9,11 +9,13 @@
 
 ## Developer Commands
 All commands assume the conda env `agent-rag` is active (`conda activate agent-rag`).
-- **API Server**: `uvicorn main:app --host 0.0.0.0 --port 8000` (test UI at `http://localhost:8000/ui/`, `GET /info` exposes backend/model)
+- **API Server**: `uvicorn main:app --host 0.0.0.0 --port 8000` (chat UI `/ui/`, ingestion console `/admin`, `GET /info` exposes backend/model)
+- **Admin Console**: `/admin` — upload/list/delete files and trigger incremental or full ingestion. APIs live under `/admin/api`; loopback-only unless `ADMIN_TOKEN` is set (then send `X-Admin-Token`). Ingestion runs in a background thread with a job log.
 - **Data Ingestion**: `python run_ingestion.py` (Must be run before API to populate the vector store).
 - **LLM Check**: `python scripts/check_llm.py` (probes `/models` + one chat completion before starting the API).
 - **Offline Retrieval Check**: `python scripts/verify_retrieval.py` (no LLM needed; asserts dept isolation).
 - **Loader Check**: `python scripts/check_loaders.py` (extracts every supported format in /tmp, no vector store needed).
+- **Admin Check**: `python scripts/check_admin.py` (upload→ingest→delete smoke test; server must be running).
 - **Latency Benchmark**: `python scripts/bench_retrieval.py` (embedding vs FAISS vs Milvus vs LLM). `/chat` responses include `timings` (`retrieval_ms`, `llm_ms`, `llm_calls`, `overhead_ms`, `total_ms`).
 - **Verification**: `python test_agent.py` (requires the API server + a working LLM endpoint).
 
@@ -26,7 +28,7 @@ All commands assume the conda env `agent-rag` is active (`conda activate agent-r
 - **Embeddings**: `EMBEDDING_BACKEND="local"` by default (sentence-transformers + `HF_ENDPOINT=https://hf-mirror.com`). Only chat generation needs `LLM_API_BASE`; ingestion and `scripts/verify_retrieval.py` work offline.
 - **Vector Backend**: `src/config.py` `VECTOR_STORE_TYPE` switches `"faiss"` (default, local) vs `"milvus"` (Docker). Same interface in `src/engine.py`.
 - **Infra**: `docker compose up -d` starts etcd + Milvus only (local storage, no MinIO). Both must be `healthy` and `curl -f localhost:9091/healthz` must pass before setting `VECTOR_STORE_TYPE=milvus`. If `milvusdb/milvus` pull fails, use `docker.1panel.live/milvusdb/milvus:v2.4.0` and `docker tag` it, or pass `MILVUS_IMAGE=...`. etcd pulls from `quay.io` directly.
-- **Data Structure**: Input files must be organized in `data/{department_name}/**/*` (PDF/DOCX/PPTX/XLSX/CSV/MD/TXT/HTML/JSON; `data/Demo` ships fixtures for every format, regenerate with `scripts/generate_demo_files.py`) for the ETL pipeline to tag them correctly. Switching FAISS/Milvus or changing chunk metadata requires `python run_ingestion.py --reset`.
+- **Data Structure**: Files live under `DATA_DIR` (default `./data`) as `data/{department_name}/**/*`; supported: PDF/DOCX/PPTX/XLSX/CSV/MD/TXT/HTML/JSON. `data/Demo` ships fixtures for every format (regenerate with `scripts/generate_demo_files.py`). Switching FAISS/Milvus or changing chunk metadata requires `python run_ingestion.py --reset`.
 
 ## Testing & Verification
 - **Permissions**: Always test with at least two different `user_dept` values to verify data isolation.

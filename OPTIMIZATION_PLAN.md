@@ -209,6 +209,7 @@ curl -f http://localhost:9091/healthz
 | 2026-10-29 | 引用来源 + 增量入库 + compose 自愈 | 元数据新增 page/doc_id/doc_hash/chunk_index；重复入库 count 不变；Milvus 重导 15 chunks |
 | 2026-10-29 | 多格式入库（9 类） | `check_loaders.py` 17/17；混合格式入库 21 chunks 后 prune 回 15；FAISS/Milvus 隔离均通过 |
 | 2026-10-29 | 内置 Demo 多格式数据 | `data/Demo` 9 文件 → 26 chunks；UI 新增 Demo 部门与预设；隔离校验通过 |
+| 2026-10-29 | 入库管理台 | `/admin` 上传/删除/增量/重建；`check_admin.py` 10/10；令牌与本机限制验证通过 |
 |  |  |  |
 
 ---
@@ -284,3 +285,15 @@ curl -f http://localhost:9091/healthz
 - [x] 内置 `data/Demo/` 9 文件多格式数据集 + `scripts/generate_demo_files.py`
 - [ ] 扫描版 PDF OCR（建议 `ocrmypdf` 预处理或接 PaddleOCR）
 - [ ] 大文件流式解析与分页入库（当前 50MB 一次性读取）
+
+### 8.8 入库管理台（2026-10-29 新增，已实现）
+
+- [x] `/admin` 单页管理台：部门切换/创建、拖拽上传、状态徽标、任务日志
+- [x] `/admin/api`：meta / files / dept / upload / file(DELETE) / ingest / jobs
+- [x] 状态判定：`indexed` / `pending` / `changed` / `unsupported`
+- [x] 后台线程入库 + 互斥锁 + 任务日志轮询，单部门不误删其它部门
+- [x] 重建索引（全量）与按 `doc_id` 的删除同步
+- [x] 安全：`ADMIN_TOKEN` 或仅回环；扩展名白名单、大小限制、路径净化
+- [x] `scripts/check_admin.py` 冒烟（10 项）
+- [ ] 上传进度条（当前只有完成态）
+- [ ] 多用户/角色与操作审计日志

@@ -17,6 +17,11 @@ class Settings(BaseSettings):
     LLM_MAX_RETRIES: int = 2
     AGENT_RECURSION_LIMIT: int = 6
 
+    # Ingestion / admin
+    DATA_DIR: str = "./data"
+    ADMIN_TOKEN: str = ""      # empty => admin API only reachable from loopback
+    MAX_UPLOAD_MB: int = 50
+
     # Vector Store Config
     VECTOR_STORE_TYPE: Literal["faiss", "milvus"] = "faiss"
     DB_PATH: str = "./db/vector_db"

@@ -57,6 +57,10 @@ class BaseVectorStore(ABC):
         """Delete every chunk belonging to a document. Returns chunks removed."""
 
     @abstractmethod
+    def count_by_doc_id(self, doc_id: str) -> int:
+        """Number of chunks stored for a document id."""
+
+    @abstractmethod
     def list_doc_ids(self) -> Set[str]:
         """All document ids currently indexed."""
 
@@ -92,6 +96,15 @@ class MilvusDriver(BaseVectorStore):
             limit=limit,
         )
 
+    def _count(self, expr: str) -> int:
+        # Milvus rejects count(*) when a pagination limit is present.
+        res = self.vector_db.client.query(
+            collection_name=self.collection,
+            filter=expr,
+            output_fields=["count(*)"],
+        )
+        return int(res[0]["count(*)"]) if res else 0
+
     def add_documents(self, texts: List[str], metadatas: List[Dict[str, Any]]):
         docs = [Document(page_content=t, metadata=m) for t, m in zip(texts, metadatas)]
         self.vector_db.add_documents(docs)
@@ -103,8 +116,7 @@ class MilvusDriver(BaseVectorStore):
 
     def is_empty(self) -> bool:
         try:
-            res = self._query("", ["count(*)"], limit=1)
-            return int(res[0]["count(*)"]) == 0
+            return self._count("") == 0
         except Exception:
             return True
 
@@ -128,6 +140,14 @@ class MilvusDriver(BaseVectorStore):
             return 1
         except Exception:
             logger.warning("failed to delete doc_id=%s from milvus", doc_id, exc_info=True)
+            return 0
+
+    def count_by_doc_id(self, doc_id: str) -> int:
+        if not doc_id:
+            return 0
+        try:
+            return self._count(f'doc_id == "{doc_id}"')
+        except Exception:
             return 0
 
     def list_doc_ids(self) -> Set[str]:
@@ -212,6 +232,13 @@ class FAISSDriver(BaseVectorStore):
         self.vector_db.save_local(settings.DB_PATH)
         return len(ids)
 
+    def count_by_doc_id(self, doc_id: str) -> int:
+        if not doc_id:
+            return 0
+        return sum(
+            1 for doc in self._docs().values() if doc.metadata.get("doc_id") == doc_id
+        )
+
     def list_doc_ids(self) -> Set[str]:
         return {
             doc.metadata["doc_id"]
@@ -250,6 +277,9 @@ class KnowledgeBaseEngine:
 
     def delete_by_doc_id(self, doc_id: str) -> int:
         return self.driver.delete_by_doc_id(doc_id)
+
+    def count_by_doc_id(self, doc_id: str) -> int:
+        return self.driver.count_by_doc_id(doc_id)
 
     def list_doc_ids(self) -> Set[str]:
         return self.driver.list_doc_ids()

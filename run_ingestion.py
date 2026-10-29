@@ -34,7 +34,7 @@ def main():
     )
     args = parser.parse_args()
 
-    root = "./data"
+    root = settings.DATA_DIR
     if not os.path.isdir(root):
         print(f"Missing data directory: {root}")
         return 1
