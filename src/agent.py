@@ -44,7 +44,9 @@ llm = ChatOpenAI(
     openai_api_base=settings.LLM_API_BASE,
     openai_api_key=settings.LLM_API_KEY,
     temperature=0,
-    max_tokens=512,
+    max_tokens=settings.LLM_MAX_TOKENS,
+    timeout=settings.LLM_TIMEOUT,
+    max_retries=settings.LLM_MAX_RETRIES,
 ).bind_tools(agent_tools)
 
 
@@ -73,7 +75,7 @@ def call_model(state: AgentState):
     if not already_retrieved:
         query = _latest_user_query(messages)
         t_search = time.perf_counter()
-        docs = kb_engine.search(query, dept, k=4) if query else []
+        docs = kb_engine.search(query, dept, k=settings.RETRIEVAL_K) if query else []
         timings["retrieval_ms"] = timings.get("retrieval_ms", 0.0) + (
             time.perf_counter() - t_search
         ) * 1000

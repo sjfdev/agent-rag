@@ -6,6 +6,7 @@ from langchain_milvus import Milvus
 from langchain_community.vectorstores import FAISS
 from langchain_core.documents import Document
 from src.config import settings
+from src.validation import validate_dept
 
 
 def build_embeddings():
@@ -42,10 +43,14 @@ class BaseVectorStore(ABC):
 class MilvusDriver(BaseVectorStore):
     """Enterprise-scale driver using Milvus distributed cluster."""
     def __init__(self, embeddings):
+        self.collection = settings.MILVUS_COLLECTION
+        connection_args = {"host": settings.MILVUS_HOST, "port": settings.MILVUS_PORT}
+        if settings.MILVUS_URI:
+            connection_args = {"uri": settings.MILVUS_URI}
         self.vector_db = Milvus(
             embedding_function=embeddings,
-            connection_args={"host": "localhost", "port": "19530"},
-            collection_name="enterprise_kb",
+            connection_args=connection_args,
+            collection_name=self.collection,
             auto_id=True,
             drop_old=False
         )
@@ -55,13 +60,14 @@ class MilvusDriver(BaseVectorStore):
         self.vector_db.add_documents(docs)
 
     def search(self, query: str, user_dept: str, k: int = 5) -> List[Document]:
-        expr = f"dept == '{user_dept}'"
+        safe_dept = validate_dept(user_dept)
+        expr = f"dept == '{safe_dept}'"
         return self.vector_db.similarity_search(query, k=k, expr=expr)
 
     def is_empty(self) -> bool:
         try:
             res = self.vector_db.client.query(
-                collection_name="enterprise_kb",
+                collection_name=self.collection,
                 filter="",
                 output_fields=["count(*)"],
             )
@@ -99,9 +105,10 @@ class FAISSDriver(BaseVectorStore):
         # FAISS doesn't support server-side filtering like Milvus.
         # We implement post-retrieval filtering to maintain permission control.
         # Fetch a wider candidate pool, then filter down to the user's department.
+        safe_dept = validate_dept(user_dept)
         pool = max(k * 20, 50)
         results = self.vector_db.similarity_search(query, k=pool)
-        filtered = [doc for doc in results if doc.metadata.get("dept") == user_dept]
+        filtered = [doc for doc in results if doc.metadata.get("dept") == safe_dept]
         return filtered[:k]
 
     def is_empty(self) -> bool:

@@ -34,9 +34,9 @@ VECTOR_STORE_TYPE=milvus uvicorn main:app --port 8000   # 当前 .env 是 faiss�
 ## 1. P0 安全与稳定性（优先做，预计半天）
 
 ### 1.1 部门过滤表达式注入
-- [ ] 位置：`src/engine.py:58`（`MilvusDriver.search`）
-- [ ] 现状：`expr = f"dept == '{user_dept}'"`，部门名含引号可破坏过滤
-- [ ] 方案：白名单正则 + 转义
+- [x] 位置：`src/engine.py`（已抽出 `src/validation.py`）（`MilvusDriver.search`）
+- [x] 现状：`expr = f"dept == '{user_dept}'"`，部门名含引号可破坏过滤
+- [x] 方案：白名单正则 + 转义
   ```python
   DEPT_RE = re.compile(r"[A-Za-z0-9_\-\u4e00-\u9fa5]{1,64}")
   def _safe_dept(dept: str) -> str:
@@ -44,47 +44,47 @@ VECTOR_STORE_TYPE=milvus uvicorn main:app --port 8000   # 当前 .env 是 faiss�
           raise ValueError("invalid department")
       return dept.replace("\\", "\\\\").replace("'", "\\'")
   ```
-- [ ] 同时在 `main.py` 入口做一次校验，非法部门返回 400 而不是 500
-- [ ] 验收：`scripts/verify_retrieval.py` 追加用例 `dept="Tech' or dept != '"` 应报错/返回空，不得泄漏
+- [x] 同时在 `main.py` 入口做一次校验，非法部门返回 400 而不是 500
+- [x] 验收（已手工验证 4 种注入串均被拦截）：`scripts/verify_retrieval.py` 追加用例 `dept="Tech' or dept != '"` 应报错/返回空，不得泄漏
 
 ### 1.2 切换部门/用户时清空对话历史
-- [ ] 位置：`static/index.html`（`deptSel` / `uidInput`）
-- [ ] 现状：切换部门后 `history` 仍保留上一部门回答，会回灌进上下文造成跨部门泄漏
-- [ ] 方案：`dept`、`uid` 的 `change` 事件里 `history = []; chat.innerHTML = "";` 并提示「已切换，新对话开始」
-- [ ] 验收：UI 上 Tech 问薪资拿不到 → 切 Finance 问预算，回答不应包含 Tech 上下文；Network 里 `history` 为空数组
+- [x] 位置：`static/index.html`（`deptSel` / `uidInput`）
+- [x] 现状：切换部门后 `history` 仍保留上一部门回答，会回灌进上下文造成跨部门泄漏
+- [x] 方案：`dept`、`uid` 的 `change` 事件里 `history = []; chat.innerHTML = "";` 并提示「已切换，新对话开始」
+- [x] 验收：UI 上 Tech 问薪资拿不到 → 切 Finance 问预算，回答不应包含 Tech 上下文；Network 里 `history` 为空数组
 
 ### 1.3 错误信息不外泄
-- [ ] 位置：`main.py:73-92`
-- [ ] 现状：`raise HTTPException(500, detail=str(e))` 暴露内部异常/路径
-- [ ] 方案：`logging.exception(...)` 记录完整堆栈，返回 `{"detail": "internal error", "request_id": ...}`
-- [ ] 顺带引入 `logging` 配置（替换 `print`），格式含 request_id / dept / 耗时
-- [ ] 验收：故意让 LLM 端点不可用，响应体不含堆栈与 URL
+- [x] 位置：`main.py`
+- [x] 现状：`raise HTTPException(500, detail=str(e))` 暴露内部异常/路径
+- [x] 方案：`logging.exception(...)` 记录完整堆栈，返回 `{"detail": "internal error", "request_id": ...}`
+- [x] 顺带引入 `logging` 配置（替换 `print`），格式含 request_id / dept / 耗时
+- [x] 验收：故意让 LLM 端点不可用，响应体不含堆栈与 URL
 
 ### 1.4 LangGraph 循环上限
-- [ ] 位置：`src/agent.py`（`app.invoke` 调用处，`main.py:70`）
-- [ ] 方案：`agent_app.invoke(inputs, config={"recursion_limit": 6})`
-- [ ] 验收：构造一个反复调工具的问题，最多 6 步后返回而不是无限循环
+- [x] 位置：`src/agent.py`（`app.invoke` 调用处，`main.py`）
+- [x] 方案：`agent_app.invoke(inputs, config={"recursion_limit": settings.AGENT_RECURSION_LIMIT})`
+- [x] 验收：构造一个反复调工具的问题，最多 6 步后返回而不是无限循环
 
 ### 1.5 LLM 超时与重试
-- [ ] 位置：`src/agent.py:ChatOpenAI(...)`
-- [ ] 方案：`timeout=30, max_retries=2`（超时值可用 settings 覆盖）
-- [ ] 验收：把 `LLM_API_BASE` 指向不可达地址，`/chat` 在 ~30s 内返回 503/500，不挂死
+- [x] 位置：`src/agent.py:ChatOpenAI(...)`
+- [x] 方案：`timeout=settings.LLM_TIMEOUT, max_retries=settings.LLM_MAX_RETRIES`
+- [x] 验收：把 `LLM_API_BASE` 指向不可达地址，`/chat` 在 ~30s 内返回 503/500，不挂死
 
 ### 1.6 测试断言化
-- [ ] 位置：`test_agent.py`
-- [ ] 现状：只 `print`，失败也退 0，无法进 CI
-- [ ] 方案：改为 `assert` + `sys.exit(1)`，或用 pytest 参数化 7 个 case
-- [ ] 断言点：
+- [x] 位置：`test_agent.py`
+- [x] 现状：只 `print`，失败也退 0，无法进 CI
+- [x] 方案：改为 `check()` + `sys.exit(1)`（7 个 case，含非法部门 400）
+- [x] 断言点：
   - `Tech` 问薪资 → 回答含 "not available"/不含具体金额
   - `Finance` 问预算 → 含 `48,000,000`
   - 工单场景 → 含 `TICK-`
   - 每条响应 `timings.total_ms > 0`、`llm_calls >= 1`
-- [ ] 验收：`python test_agent.py` 全绿退出码 0；人为改错断言退出码 1
+- [x] 验收：`python test_agent.py` 全绿退出码 0；人为改错断言退出码 1
 
 ### 1.7 `history` 参数校验
-- [ ] 位置：`main.py:38`
-- [ ] 方案：`Field(default_factory=list)`；校验 `role in {"user","assistant"}`、`content` 非空、history 条数上限（如 20）
-- [ ] 验收：传 `role="tool"` 或缺字段返回 422/400
+- [x] 位置：`main.py`（`HistoryItem` + `Field`）
+- [x] 方案：`Field(default_factory=list)`；校验 `role in {"user","assistant"}`、`content` 非空、history 条数上限（如 20）
+- [x] 验收：传 `role="tool"` 或缺字段返回 422/400
 
 ---
 
@@ -140,6 +140,7 @@ VECTOR_STORE_TYPE=milvus uvicorn main:app --port 8000   # 当前 .env 是 faiss�
 
 ## 3. P2 体验与规模化（有余力再做）
 
+- [ ] 离线启动开关：模型已缓存时设置 `HF_HUB_OFFLINE=1`，避免每次启动的远端元数据探测
 - [ ] 流式输出（SSE）降低首字延迟；`/chat/stream`
 - [ ] 相似问题缓存（内存 LRU / Redis），命中直接返回
 - [ ] `user_depts: list[str]` 支持多部门，Milvus 用 `dept in [...]`
@@ -201,4 +202,6 @@ curl -f http://localhost:9091/healthz
 | 日期 | 完成项 | 备注 |
 |---|---|---|
 | 2026-10-29 | 基线可用：FAISS/Milvus 双后端、部门隔离、云端 LLM、UI、timings、文档 | 见 `AGENT_GUIDE.md` |
+| 2026-10-29 | P0 全部完成（1.1–1.7） | 回归：verify_retrieval OK、test_agent 7/7 PASS、注入串全部拦截、LLM 不可用返回通用 500 |
+| 2026-10-29 | 新发现：每次进程启动会有 ~10s HF HEAD 超时 | 已在 `src/__init__.py` 设 `HF_HUB_ETAG_TIMEOUT=3`；P2 可考虑 `HF_HUB_OFFLINE=1` 开关 |
 |  |  |  |

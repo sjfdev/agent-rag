@@ -285,6 +285,22 @@ input.addEventListener("keydown", e => {
   }
 });
 
+// Switching department or user must not carry the previous context over:
+// answers from another department would otherwise leak into this conversation.
+function startNewSession(reason) {
+  history = [];
+  chat.innerHTML = "";
+  addMsg("bot", reason);
+  input.focus();
+}
+
+deptSel.addEventListener("change", () => {
+  startNewSession(`已切换到 ${deptSel.value} 部门，开始新对话。`);
+});
+uidInput.addEventListener("change", () => {
+  startNewSession(`已切换用户 ${uidInput.value || "u1"}，开始新对话。`);
+});
+
 resetBtn.onclick = () => {
   history = [];
   chat.innerHTML = "";

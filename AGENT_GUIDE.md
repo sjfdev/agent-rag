@@ -269,6 +269,18 @@ uvicorn main:app --host 0.0.0.0 --port 8000
 
 时间单位均为**毫秒**，`*_calls` 为次数。
 
+错误响应：
+
+| 状态码 | 含义 | 示例 |
+|---|---|---|
+| 400 | 部门名非法（含引号/空格等） | `{"detail":"invalid department name"}` |
+| 422 | 参数校验失败（缺字段、history 超过 20 条、role 非 user/assistant、文本过长） | FastAPI 标准校验结构 |
+| 500 | 内部错误，不回传堆栈 | `{"detail":{"error":"internal error","request_id":"85c68605"}}` |
+
+服务端日志会打印完整堆栈与 `request_id`，响应头也带 `X-Request-ID`，便于对账。
+
+约束：`user_id` ≤64、`user_dept` ≤64（仅字母/数字/下划线/中划线/中文）、`message` 1–4000 字符、`history` ≤20 条。
+
 ```bash
 curl -s http://localhost:8000/chat \
   -H 'Content-Type: application/json' \
@@ -322,8 +334,16 @@ VECTOR_STORE_TYPE=milvus python run_ingestion.py
 | `LLM_API_BASE` | `http://localhost:11434/v1` | OpenAI 兼容端点（Ollama/vLLM/GLM/DeepSeek/OpenAI） |
 | `LLM_API_KEY` | `ollama` | API Key |
 | `LLM_MODEL` | `qwen2.5:latest` | 模型名，必须与端点一致 |
+| `LLM_TIMEOUT` | `30` | 单次 LLM 请求超时（秒） |
+| `LLM_MAX_TOKENS` | `512` | 生成上限，调小可提速 |
+| `LLM_MAX_RETRIES` | `2` | LLM 失败重试次数 |
+| `AGENT_RECURSION_LIMIT` | `6` | LangGraph 最大步数，防止工具循环 |
 | `VECTOR_STORE_TYPE` | `faiss` | `faiss` 或 `milvus` |
 | `DB_PATH` | `./db/vector_db` | FAISS 索引目录 |
+| `RETRIEVAL_K` | `4` | 注入提示词的片段数 |
+| `MILVUS_HOST` / `MILVUS_PORT` | `localhost` / `19530` | Milvus 连接地址 |
+| `MILVUS_COLLECTION` | `enterprise_kb` | 集合名 |
+| `MILVUS_URI` | 空 | 非空时优先于 host/port（如 `http://host:19530`） |
 | `EMBEDDING_BACKEND` | `local` | `local` 或 `openai` |
 | `LOCAL_EMBEDDING_MODEL` | `BAAI/bge-small-zh-v1.5` | 本地 embedding（512 维） |
 | `EMBEDDING_MODEL` | `text-embedding-3-small` | `EMBEDDING_BACKEND=openai` 时使用 |
@@ -359,6 +379,9 @@ pip install "transformers==4.49.0" "sentence-transformers==3.4.1" "huggingface-h
 ```bash
 HF_ENDPOINT=https://hf-mirror.com python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('BAAI/bge-small-zh-v1.5')"
 ```
+
+### Q3.1 启动时卡在 huggingface 元数据请求（每次 ~10s）
+即使模型已缓存，`huggingface_hub` 仍会做 HEAD 校验。已在 `src/__init__.py` 将 `HF_HUB_ETAG_TIMEOUT` 设为 3s；如需彻底跳过，在 `.env` 加 `HF_HUB_OFFLINE=1`（模型必须已下载完成）。
 
 ### Q4. `ModuleNotFoundError: No module named 'src'`
 在 `scripts/` 下直接运行时，Python 找不到项目根目录。脚本已内置 `sys.path` 注入；自己写脚本时注意同样处理，或从根目录以模块方式运行。

@@ -2,7 +2,7 @@
 
 ## Core Architecture
 - **RAG Pipeline**: LangGraph $\rightarrow$ Milvus $\rightarrow$ Cross-Encoder Reranker.
-- **Permission Model**: Department-based isolation implemented via Milvus `expr` metadata filtering (`dept == 'dept_name'`). The department is injected into tools from `AgentState` (`InjectedState`), never supplied by the LLM.
+- **Permission Model**: Department-based isolation implemented via Milvus `expr` metadata filtering (`dept == 'dept_name'`). Department names are validated/escaped in `src/validation.py` before being embedded in the expression; the API returns 400 for invalid values. The department is injected into tools from `AgentState` (`InjectedState`), never supplied by the LLM.
 - **State Management**: Handled by LangGraph `AgentState`, tracking `user_id` and `user_dept` per session.
 
 ## Developer Commands
@@ -17,6 +17,7 @@ All commands assume the conda env `agent-rag` is active (`conda activate agent-r
 ## Critical Gotchas & Setup
 - **Python**: MUST be 3.11. System Python is 3.13/3.14 and has no `torch` wheels. Use conda env `agent-rag` (`~/miniconda3/envs/agent-rag/bin/python`).
 - **Install Order**: `pydantic`/`typing-extensions` $\rightarrow$ `torch` $\rightarrow$ `langchain*` $\rightarrow$ app deps. Pin `numpy<2`, `pandas<2.3`, `transformers==4.49.0`, `sentence-transformers==3.4.1`, `huggingface-hub==0.36.0` (torch 2.2.2 breaks with NumPy 2.x ABI; transformers 5.x needs torch>=2.6).
+- **Startup**: HF metadata lookups can stall ~10s per launch; `src/__init__.py` caps them with `HF_HUB_ETAG_TIMEOUT=3`. Set `HF_HUB_OFFLINE=1` once the model is cached.
 - **LLM Config**: `.env` (gitignored, see `.env.example`) overrides defaults. Current default is free GLM-4-Flash (`https://open.bigmodel.cn/api/paas/v4/`). Local Ollama (`qwen2.5:latest`) works but CPU inference is ~3 tok/s, so cloud is preferred for tests.
 - **Retrieval Flow**: `call_model` does deterministic first-stage retrieval (`kb_engine.search(query, state["user_dept"])`) and injects excerpts as a system message; the LLM only formats the answer or triggers `create_support_ticket`.
 - **Embeddings**: `EMBEDDING_BACKEND="local"` by default (sentence-transformers + `HF_ENDPOINT=https://hf-mirror.com`). Only chat generation needs `LLM_API_BASE`; ingestion and `scripts/verify_retrieval.py` work offline.
