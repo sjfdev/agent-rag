@@ -177,6 +177,23 @@ def _job_log(job_id: str, line: str) -> None:
             del job["log"][: len(job["log"]) - _MAX_LOG_LINES]
 
 
+def job_snapshot() -> Optional[Dict[str, Any]]:
+    """Copy of the newest ingestion job, used by /health."""
+    with _jobs_lock:
+        if not _jobs:
+            return None
+        newest = max(_jobs.values(), key=lambda job: job["created"])
+        return {
+            "id": newest.get("id"),
+            "dept": newest.get("dept"),
+            "reset": newest.get("reset"),
+            "status": newest.get("status"),
+            "started": newest.get("started"),
+            "finished": newest.get("finished"),
+            "error": newest.get("error"),
+        }
+
+
 def _prune_jobs() -> None:
     with _jobs_lock:
         if len(_jobs) <= _MAX_JOBS:

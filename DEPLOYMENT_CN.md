@@ -168,6 +168,26 @@ uvicorn main:app --host 0.0.0.0 --port 8000
 ### 4.1.1 可视化测试台
 启动 API 后打开 `http://localhost:8000/ui/`，可选择部门、连续多轮提问，并查看每条回答的耗时（总计/检索/LLM）。
 
+### 4.1.2 健康检查与探针
+```bash
+curl -s http://localhost:8000/health            # 轻量探针（不调用 LLM）
+curl -s 'http://localhost:8000/health?probe=1'  # 额外探测 LLM，结果缓存 15s
+python scripts/check_health.py --probe          # 冒烟测试
+```
+- `status=ok` → HTTP 200，可接收流量
+- `status=degraded` → HTTP 200（入库中 / 重建中 / LLM 探测失败），可继续提供已有能力
+- `status=down` → HTTP 503（索引为空或向量库不可达），负载均衡应摘除
+
+K8s 示例：
+```yaml
+livenessProbe:
+  httpGet: { path: /health, port: 8000 }
+  initialDelaySeconds: 20
+readinessProbe:
+  httpGet: { path: /health, port: 8000 }
+  periodSeconds: 10
+```
+
 ### 4.2 功能验证
 先做**离线检索验证**（不需要 LLM，检查入库与部门隔离）：
 ```bash
@@ -183,7 +203,8 @@ python test_agent.py
 ---
 
 ## 📈 5. 生产环境优化建议
-- **重排序 (Reranking)**: 确保 `BGE-Reranker` 模型已预先下载到本地，避免启动时下载缓慢。
+- **重排序 (Reranking)**: 默认关闭；开启前先把模型缓存到本地（`RERANK_MODEL`）。CPU 上 BGE-base 约 +1.2s/次，MiniLM 约 +200ms，按数据量选择。
+- **健康检查**: 用 `GET /health` 做存活/就绪探针；`/health?probe=1` 会真的调用一次 LLM，建议只在内网监控使用（结果缓存 15s）。
 - **性能扩展**: 对于高并发场景，建议使用 `gunicorn` 配合 `uvicorn` 工作进程：
   `gunicorn -w 4 -k uvicorn.workers.UvicornWorker main:app`
 - **数据备份**: 定期备份 `docker-compose.yml` 中映射的 Milvus 数据卷。

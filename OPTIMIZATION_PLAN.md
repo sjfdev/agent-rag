@@ -212,6 +212,7 @@ curl -f http://localhost:9091/healthz
 | 2026-10-29 | 入库管理台 | `/admin` 上传/删除/增量/重建；`check_admin.py` 10/10；令牌与本机限制验证通过 |
 | 2026-10-29 | 复审：下一步聚焦检索质量与零停机 | 见 8.9；reranker 仍为死代码，多轮检索只用最后一句 |
 | 2026-10-29 | 检索质量批次 | 评测集+eval、多轮改写、snippet、可选重排、reset 维护 503；test_agent 13/13 |
+| 2026-10-29 | 健康检查 | `/health` + `?probe=1`（15s 缓存）+ `check_health.py`；空库 503、重建期间 degraded 实测通过 |
 |  |  |  |
 
 ---
@@ -315,7 +316,8 @@ curl -f http://localhost:9091/healthz
 
 #### P2 稳定与运维
 
-- [ ] **`/health` + 指标**：向量库/LLM 连通性、索引是否为空、入库任务状态；Prometheus（QPS、P95、检索/LLM 耗时、错误率）
+- [x] **`/health`**：向量库块数、入库任务、重建状态；`?probe=1` 带 LLM 探测（15s 缓存）；空库/不可达返回 503，`check_health.py` 10 项冒烟
+- [ ] **指标（Prometheus）**：QPS、P95、检索/LLM 耗时、错误率；需引入 prometheus_client 与 `/metrics`
 - [ ] **缓存**：`dept + 规范化问题` 精确 LRU（命中 <10ms），embedding 结果缓存
 - [ ] **限流与降级**：按 user_id/IP 限流；LLM 失败时返回检索摘要或换备用模型
 - [ ] **管理台增强**：操作审计（谁/何时/删了什么）、任务持久化、上传总量上限、上传进度条
@@ -336,6 +338,6 @@ curl -f http://localhost:9091/healthz
 1. 多轮 query 改写
 2. sources 增加 snippet
 3. 文件清单哈希缓存
-4. `/health`
+4. ~~`/health`~~（已完成）
 5. FAQ 缓存
 6. 上传总量上限

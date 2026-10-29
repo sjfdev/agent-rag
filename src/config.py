@@ -31,6 +31,9 @@ class Settings(BaseSettings):
     RERANK_ENABLED: bool = False
     RERANK_MODEL: str = "BAAI/bge-reranker-base"
     RERANK_CANDIDATES: int = 12
+    # /health reports "down" when fewer chunks than this are indexed, which
+    # makes a load balancer stop routing to an empty instance.
+    HEALTH_MIN_CHUNKS: int = 1
     MILVUS_HOST: str = "localhost"
     MILVUS_PORT: str = "19530"
     MILVUS_COLLECTION: str = "enterprise_kb"

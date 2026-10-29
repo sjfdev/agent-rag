@@ -49,6 +49,10 @@ class BaseVectorStore(ABC):
         pass
 
     @abstractmethod
+    def count(self) -> int:
+        """Total number of indexed chunks (0 when the store is missing)."""
+
+    @abstractmethod
     def get_doc_hash(self, doc_id: str) -> Optional[str]:
         """Return the stored content hash for a document id, or None if absent."""
 
@@ -116,9 +120,12 @@ class MilvusDriver(BaseVectorStore):
 
     def is_empty(self) -> bool:
         try:
-            return self._count("") == 0
+            return self.count() == 0
         except Exception:
             return True
+
+    def count(self) -> int:
+        return self._count("")
 
     def get_doc_hash(self, doc_id: str) -> Optional[str]:
         try:
@@ -210,7 +217,15 @@ class FAISSDriver(BaseVectorStore):
         return filtered[:k]
 
     def is_empty(self) -> bool:
-        return self.vector_db is None or self.vector_db.index.ntotal == 0
+        return self.count() == 0
+
+    def count(self) -> int:
+        if self.vector_db is None:
+            return 0
+        try:
+            return int(self.vector_db.index.ntotal)
+        except Exception:
+            return 0
 
     def get_doc_hash(self, doc_id: str) -> Optional[str]:
         for doc in self._docs().values():
@@ -278,6 +293,9 @@ class KnowledgeBaseEngine:
 
     def is_empty(self) -> bool:
         return self.driver.is_empty()
+
+    def count(self) -> int:
+        return self.driver.count()
 
     def get_doc_hash(self, doc_id: str) -> Optional[str]:
         return self.driver.get_doc_hash(doc_id)

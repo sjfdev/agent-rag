@@ -16,7 +16,14 @@ from src.agent import app as agent_app
 from src.config import settings
 from src.runtime import in_maintenance
 from src.engine import kb_engine
+from src.health import router as health_router
 from src.validation import InvalidDepartment, validate_dept
+
+# Vector-store connection failures (Milvus down, FAISS index unreadable).
+try:
+    from pymilvus.exceptions import MilvusException
+except Exception:  # pragma: no cover
+    MilvusException = ()
 
 try:  # openai is a hard dependency of langchain-openai
     from openai import APIConnectionError, APITimeoutError
@@ -30,6 +37,14 @@ def _is_upstream_error(exc: Exception) -> bool:
         return True
     names = {cls.__name__ for cls in type(exc).__mro__}
     return bool(names & {"ConnectError", "ReadTimeout", "ConnectTimeout", "APITimeoutError"})
+
+
+def _is_store_error(exc: Exception) -> bool:
+    """The vector store is unreachable (as opposed to a bad request or a bug)."""
+    if MilvusException and isinstance(exc, MilvusException):
+        return True
+    names = {cls.__name__ for cls in type(exc).__mro__}
+    return bool(names & {"ConnectionError", "ConnectionRefusedError", "MilvusException"})
 
 logging.basicConfig(
     level=logging.INFO,
@@ -50,6 +65,7 @@ def root():
 
 
 app.include_router(admin_router)
+app.include_router(health_router)
 
 
 @app.get("/admin", include_in_schema=False)
@@ -127,7 +143,10 @@ def _sse(payload: Dict[str, Any]) -> str:
 async def startup_event():
     # Data is loaded by `python run_ingestion.py`; just warn if the store is empty.
     if kb_engine.is_empty():
-        logger.warning("vector store is empty; run `python run_ingestion.py` first")
+        logger.warning(
+            "vector store is empty; run `python run_ingestion.py` first "
+            "(GET /health will report down)"
+        )
 
 
 @app.post("/chat", response_model=ChatResponse)
@@ -172,18 +191,23 @@ def chat(request: ChatRequest, response: Response):
         )
     except Exception as e:
         upstream = _is_upstream_error(e)
+        store_down = _is_store_error(e)
         logger.exception(
-            "chat failed request_id=%s dept=%s upstream=%s",
+            "chat failed request_id=%s dept=%s upstream=%s store_down=%s",
             request_id,
             inputs["user_dept"],
             upstream,
+            store_down,
         )
+        if store_down:
+            code, message = "vector_store_unavailable", "vector store unavailable"
+        elif upstream:
+            code, message = "upstream_unavailable", "llm upstream unavailable"
+        else:
+            code, message = "internal_error", "internal error"
         raise HTTPException(
-            status_code=503 if upstream else 500,
-            detail={
-                "error": "llm upstream unavailable" if upstream else "internal error",
-                "request_id": request_id,
-            },
+            status_code=503 if (upstream or store_down) else 500,
+            detail={"error": code, "message": message, "request_id": request_id},
             headers={"X-Request-ID": request_id},
         )
 
@@ -248,17 +272,25 @@ def chat_stream(request: ChatRequest):
             )
         except Exception as e:
             upstream = _is_upstream_error(e)
+            store_down = _is_store_error(e)
             logger.exception(
-                "chat stream failed request_id=%s dept=%s upstream=%s",
+                "chat stream failed request_id=%s dept=%s upstream=%s store_down=%s",
                 request_id,
                 inputs["user_dept"],
                 upstream,
+                store_down,
             )
+            if store_down:
+                code, message = "vector_store_unavailable", "vector store unavailable"
+            elif upstream:
+                code, message = "upstream_unavailable", "llm upstream unavailable"
+            else:
+                code, message = "internal_error", "internal error"
             yield _sse(
                 {
                     "type": "error",
-                    "code": "upstream_unavailable" if upstream else "internal_error",
-                    "message": "llm upstream unavailable" if upstream else "internal error",
+                    "code": code,
+                    "message": message,
                     "request_id": request_id,
                 }
             )

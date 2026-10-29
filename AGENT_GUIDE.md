@@ -98,6 +98,7 @@ agent-rag/
 │   ├── check_llm.py         # 探测 LLM 端点
 │   ├── verify_retrieval.py  # 离线验证入库 + 部门隔离
 │   ├── eval_retrieval.py    # 离线评测 hit@k / MRR / 泄漏
+│   ├── check_health.py      # /health 冒烟测试
 │   └── bench_retrieval.py   # 延迟基准（embedding/FAISS/Milvus/LLM）
 └── src/
     ├── config.py            # 所有开关（pydantic-settings）
@@ -358,6 +359,26 @@ uvicorn main:app --host 0.0.0.0 --port 8000
 
 时间单位均为**毫秒**，`*_calls` 为次数。`sources` 为本次回答实际使用的去重片段（文档 + 页码 + `snippet` 原文摘录），UI 中折叠为「来源」面板，可展开查看摘录；改用工具建单时仍保留首次检索到的来源。
 
+健康检查：
+
+```bash
+curl -s http://localhost:8000/health            # 轻量，适合负载均衡探针
+curl -s 'http://localhost:8000/health?probe=1'  # 额外调用一次 LLM（结果缓存 15s）
+python scripts/check_health.py --probe          # 冒烟测试
+```
+
+返回 `status` 为 `ok` / `degraded` / `down`，并附带各分项：
+
+| 字段 | 含义 |
+|---|---|
+| `vector_store.chunks` | 当前索引块数；低于 `HEALTH_MIN_CHUNKS` 时整体 `down`（HTTP 503） |
+| `ingestion.active` / `latest` | 是否有入库任务在跑；有任务时整体 `degraded` |
+| `maintenance` | 全量 rebuild 期间为 `true`，此时 `/chat` 返回 503 |
+| `llm.probe` | 仅在 `?probe=1` 时为 `ok`/`failed`，含 `latency_ms` |
+| `rerank_enabled` | 当前是否启用二阶段重排 |
+
+`down` 才会返回 503，`degraded` 仍为 200，便于负载均衡只摘除空库/故障实例。
+
 错误响应：
 
 | 状态码 | 含义 | 示例 |
@@ -366,6 +387,7 @@ uvicorn main:app --host 0.0.0.0 --port 8000
 | 422 | 参数校验失败（缺字段、history 超过 20 条、role 非 user/assistant、文本过长） | FastAPI 标准校验结构 |
 | 503 | LLM 上游不可用（网络/DNS/超时） | `{"detail":{"error":"llm upstream unavailable","request_id":"..."}}` |
 | 503 | 正在全量重建索引 | `{"detail":{"error":"index rebuilding","request_id":"..."}}` |
+| 503 | 向量库不可达 | `{"detail":{"error":"vector_store_unavailable","request_id":"..."}}` |
 | 500 | 内部错误，不回传堆栈 | `{"detail":{"error":"internal error","request_id":"85c68605"}}` |
 
 服务端日志会打印完整堆栈与 `request_id`，响应头也带 `X-Request-ID`，便于对账。
@@ -388,7 +410,7 @@ data: {"type":"token","content":"2026 operating budget is ..."}
 data: {"type":"done","sources":[{"source":"Finance/confidential_budget_2026.pdf","dept":"Finance","page":1}],"timings":{"retrieval_ms":20.1,"llm_ms":1287.2,"llm_calls":1,"total_ms":1311.3,"overhead_ms":4.0}}
 ```
 
-出错时返回 `{"type":"error","code":"internal_error|upstream_unavailable|maintenance","message":"...","request_id":"..."}`。实测热态首 token ≈0.68s，整段 ≈1.1–1.3s。
+出错时返回 `{"type":"error","code":"internal_error|upstream_unavailable|vector_store_unavailable|maintenance","message":"...","request_id":"..."}`。实测热态首 token ≈0.68s，整段 ≈1.1–1.3s。
 
 非流式接口：
 
@@ -411,6 +433,7 @@ curl -s http://localhost:8000/chat \
 python scripts/check_llm.py          # 探测 /models + 一次 chat completion
 python scripts/verify_retrieval.py   # 无需 LLM，检查入库与隔离
 python scripts/eval_retrieval.py     # 无需 LLM，hit@k / MRR / 跨部门泄漏
+python scripts/check_health.py       # /health 冒烟（加 --probe 会调一次 LLM）
 python scripts/check_loaders.py      # 9 种格式解析（不写向量库）
 python scripts/check_admin.py        # 管理台上传→入库→删除冒烟
 python scripts/bench_retrieval.py    # embedding / FAISS / Milvus / LLM 延迟
@@ -483,6 +506,7 @@ python run_ingestion.py --no-prune # 不清理已删除文件
 | `RERANK_ENABLED` | `false` | 开启 CrossEncoder 二阶段重排 |
 | `RERANK_MODEL` | `BAAI/bge-reranker-base` | 重排模型（中文推荐；英文可用 `cross-encoder/ms-marco-MiniLM-L-6-v2`） |
 | `RERANK_CANDIDATES` | `12` | 送入重排的候选数 |
+| `HEALTH_MIN_CHUNKS` | `1` | 低于该块数时 `/health` 判定为 down |
 | `MILVUS_HOST` / `MILVUS_PORT` | `localhost` / `19530` | Milvus 连接地址 |
 | `MILVUS_COLLECTION` | `enterprise_kb` | 集合名 |
 | `MILVUS_URI` | 空 | 非空时优先于 host/port（如 `http://host:19530`） |
