@@ -91,7 +91,10 @@ def main():
     listed = api("GET", f"/admin/api/files?dept={dept}")
     check("file gone from listing", not listed["files"])
 
+    # Files are gone, but vectors are only removed by a full prune. Remove the
+    # (now empty) department folder and prune so the smoke test leaves no trace.
     shutil.rmtree(data_dir / dept, ignore_errors=True)
+    api("POST", "/admin/api/ingest", json={})
 
     print()
     if failures:
