@@ -210,6 +210,7 @@ curl -f http://localhost:9091/healthz
 | 2026-10-29 | 多格式入库（9 类） | `check_loaders.py` 17/17；混合格式入库 21 chunks 后 prune 回 15；FAISS/Milvus 隔离均通过 |
 | 2026-10-29 | 内置 Demo 多格式数据 | `data/Demo` 9 文件 → 26 chunks；UI 新增 Demo 部门与预设；隔离校验通过 |
 | 2026-10-29 | 入库管理台 | `/admin` 上传/删除/增量/重建；`check_admin.py` 10/10；令牌与本机限制验证通过 |
+| 2026-10-29 | 复审：下一步聚焦检索质量与零停机 | 见 8.9；reranker 仍为死代码，多轮检索只用最后一句 |
 |  |  |  |
 
 ---
@@ -297,3 +298,39 @@ curl -f http://localhost:9091/healthz
 - [x] `scripts/check_admin.py` 冒烟（10 项）
 - [ ] 上传进度条（当前只有完成态）
 - [ ] 多用户/角色与操作审计日志
+
+### 8.9 复审（管理台完成后，2026-10-29）
+
+#### P1 质量与正确性
+
+- [ ] **检索质量闭环**：`eval/cases.jsonl`（Recall@k、拒答准确率、P95 延迟）→ 混合检索（BM25 + 向量，Milvus 2.4 hybrid / 本地 rank-bm25）→ 接入 `src/reranker.py`（目前是死代码，CrossEncoder 在 CPU 上约 +100–300ms）
+- [ ] **多轮检索改写**：`src/agent.py:60` 只取最后一条 HumanMessage，遇到「那它呢」这类追问会检索失败；用历史拼独立 query（规则或 LLM 改写）
+- [ ] **零停机重建**：`reset` 会先 drop 集合，期间 `/chat` 报 500；Milvus 用 alias 切换、FAISS 写临时目录后原子替换；变更文件改为「先写新、再删旧」避免崩溃丢文档
+- [ ] **引用增强**：`sources` 增加 score/snippet，UI 可展开原文；同页多 chunk 合并
+
+#### P2 稳定与运维
+
+- [ ] **`/health` + 指标**：向量库/LLM 连通性、索引是否为空、入库任务状态；Prometheus（QPS、P95、检索/LLM 耗时、错误率）
+- [ ] **缓存**：`dept + 规范化问题` 精确 LRU（命中 <10ms），embedding 结果缓存
+- [ ] **限流与降级**：按 user_id/IP 限流；LLM 失败时返回检索摘要或换备用模型
+- [ ] **管理台增强**：操作审计（谁/何时/删了什么）、任务持久化、上传总量上限、上传进度条
+- [ ] **单 worker 约束**：jobs/锁都在进程内，`--workers>1` 会状态分裂；多副本需 Redis/RQ 等外部队列
+
+#### P3 工程与体验
+
+- [ ] **pytest + CI**：`validate_dept`、expr 转义、loaders、ETL 增量、admin 路由；LLM 用 stub 保证离线可跑
+- [ ] **惰性引擎 + ChatService**：消除 `/chat` 与 `/chat/stream` 重复分支
+- [ ] **文件清单性能**：`_iter_files` 每次 meta 都重算 sha1，按 `(path, mtime, size)` 缓存
+- [ ] **前端**：Markdown 渲染、复制回答、停止生成、localStorage 会话、移动端
+- [ ] **权限**：多部门 `user_depts`、文档级 ACL、`/chat` 鉴权与 CORS
+- [ ] **规模**：批量 embedding、任务队列、Milvus 分区/索引参数、备份恢复
+- [ ] **解析增强**：OCR、PDF 表格结构化、XLSX 按行切块避免行被截断
+
+#### 快速收益（1–3 小时/项）
+
+1. 多轮 query 改写
+2. sources 增加 snippet
+3. 文件清单哈希缓存
+4. `/health`
+5. FAQ 缓存
+6. 上传总量上限
