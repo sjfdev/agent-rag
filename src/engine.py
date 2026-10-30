@@ -91,7 +91,7 @@ class BaseVectorStore(ABC):
         pass
 
     @abstractmethod
-    def search(self, query: str, user_dept: str, k: int = 5) -> List[Document]:
+    def search(self, query: str, user_dept, k: int = 5) -> List[Document]:
         pass
 
     @abstractmethod
@@ -115,7 +115,7 @@ class BaseVectorStore(ABC):
         """Departments that currently have at least one indexed chunk."""
 
     def hybrid_search(
-        self, query: str, user_dept: str, k: int, candidates: int
+        self, query: str, user_dept, k: int, candidates: int
     ) -> Optional[List[Document]]:
         """Server-side hybrid search, or None when the driver has no support."""
         return None
@@ -202,6 +202,27 @@ class MilvusCapabilities:
             # A fresh collection will be created with a sparse field.
             return True
         return self.sparse_field and self.bm25_index
+
+
+def _allowed_depts(depts) -> set:
+    """Validated set of departments for local (post-retrieval) filtering."""
+    values = [depts] if isinstance(depts, str) else list(depts)
+    safe = {validate_dept(dept) for dept in values}
+    if not safe:
+        raise ValueError("no departments supplied")
+    return safe
+
+
+def dept_filter(depts) -> str:
+    """Milvus expression for one department or a list of departments."""
+    if isinstance(depts, str):
+        return f"dept == '{validate_dept(depts)}'"
+    safe = [validate_dept(dept) for dept in depts]
+    if not safe:
+        raise ValueError("no departments supplied")
+    if len(safe) == 1:
+        return f"dept == '{safe[0]}'"
+    return "dept in [" + ", ".join(f"'{dept}'" for dept in safe) + "]"
 
 
 def _inspect_milvus(collection: str, sparse_field: str) -> MilvusCapabilities:
@@ -346,12 +367,11 @@ class MilvusDriver(BaseVectorStore):
         )
 
     def hybrid_search(
-        self, query: str, user_dept: str, k: int, candidates: int
+        self, query: str, user_dept, k: int, candidates: int
     ) -> Optional[List[Document]]:
         if not self.sparse_enabled:
             return None
-        safe_dept = validate_dept(user_dept)
-        expr = f"dept == '{safe_dept}'"
+        expr = dept_filter(user_dept)
         try:
             from pymilvus import AnnSearchRequest, RRFRanker
 
@@ -418,9 +438,8 @@ class MilvusDriver(BaseVectorStore):
             # The first insert may have just created the collection/BM25 index.
             self.refresh_capabilities()
 
-    def search(self, query: str, user_dept: str, k: int = 5) -> List[Document]:
-        safe_dept = validate_dept(user_dept)
-        expr = f"dept == '{safe_dept}'"
+    def search(self, query: str, user_dept, k: int = 5) -> List[Document]:
+        expr = dept_filter(user_dept)
         # A collection with a sparse field cannot be queried through
         # similarity_search(): Milvus refuses to return raw sparse data.
         if self.sparse_enabled or settings.HYBRID_SPARSE_FIELD in self.vector_db.fields:
@@ -475,8 +494,7 @@ class MilvusDriver(BaseVectorStore):
     ]
 
     def fetch_documents(self, dept: str) -> List[Document]:
-        safe_dept = validate_dept(dept)
-        expr = f"dept == '{safe_dept}'"
+        expr = dept_filter(dept)
         docs: List[Document] = []
         try:
             iterator = self.vector_db.client.query_iterator(
@@ -813,17 +831,17 @@ class FAISSDriver(BaseVectorStore):
         os.makedirs(settings.DB_PATH, exist_ok=True)
         self.vector_db.save_local(settings.DB_PATH)
 
-    def search(self, query: str, user_dept: str, k: int = 5) -> List[Document]:
+    def search(self, query: str, user_dept, k: int = 5) -> List[Document]:
         if self.vector_db is None:
             return []
 
         # FAISS doesn't support server-side filtering like Milvus.
         # We implement post-retrieval filtering to maintain permission control.
-        # Fetch a wider candidate pool, then filter down to the user's department.
-        safe_dept = validate_dept(user_dept)
+        # Fetch a wider candidate pool, then filter down to the allowed depts.
+        allowed = _allowed_depts(user_dept)
         pool = max(k * 20, 50)
         results = self.vector_db.similarity_search(query, k=pool)
-        filtered = [doc for doc in results if doc.metadata.get("dept") == safe_dept]
+        filtered = [doc for doc in results if doc.metadata.get("dept") in allowed]
         return filtered[:k]
 
     def is_empty(self) -> bool:
@@ -847,11 +865,11 @@ class FAISSDriver(BaseVectorStore):
             return 0
 
     def fetch_documents(self, dept: str) -> List[Document]:
-        safe_dept = validate_dept(dept)
+        allowed = _allowed_depts(dept)
         return [
             doc
             for doc in self._docs().values()
-            if doc.metadata.get("dept") == safe_dept
+            if doc.metadata.get("dept") in allowed
         ]
 
     def list_depts(self) -> Set[str]:
@@ -1087,17 +1105,31 @@ class KnowledgeBaseEngine:
                 logger.warning("lexical warmup failed for dept=%s", dept, exc_info=True)
         return warmed
 
-    def lexical_search(self, query: str, user_dept: str, k: int) -> List[Document]:
-        """BM25 over the department's chunks, built on demand and cached."""
+    def lexical_search(self, query: str, user_dept, k: int) -> List[Document]:
+        """BM25 over the allowed department(s), built on demand and cached.
+
+        BM25 is per-department; for multi-department users the per-department
+        results are merged by score is not comparable, so ranks are fused.
+        """
+        from src.lexical import rrf_fuse
+
         if not query.strip() or k <= 0:
             return []
-        index = self._lexical.get(
-            user_dept,
-            self._version,
-            self.driver.fetch_documents,
-            max_docs=settings.HYBRID_MAX_DOCS,
-        )
-        return index.search(query, k)
+        depts = [user_dept] if isinstance(user_dept, str) else list(user_dept)
+        if not depts:
+            return []
+        per_dept = []
+        for dept in depts:
+            index = self._lexical.get(
+                dept,
+                self._version,
+                self.driver.fetch_documents,
+                max_docs=settings.HYBRID_MAX_DOCS,
+            )
+            per_dept.append(index.search(query, k))
+        if len(per_dept) == 1:
+            return per_dept[0][:k]
+        return rrf_fuse(per_dept, k)
 
     def _observe(self, engine: str) -> None:
         try:
@@ -1114,7 +1146,7 @@ class KnowledgeBaseEngine:
 
         return rerank_documents(query, docs[: max(k, settings.RERANK_CANDIDATES)], k)
 
-    def search(self, query: str, user_dept: str, k: int = 5) -> List[Document]:
+    def search(self, query: str, user_dept, k: int = 5) -> List[Document]:
         from src.lexical import rrf_fuse
 
         if not query.strip():
@@ -1146,7 +1178,7 @@ class KnowledgeBaseEngine:
             query, self._local_hybrid(query, user_dept, candidates, rrf_fuse), k
         )
 
-    def _local_hybrid(self, query: str, user_dept: str, candidates: int, fuse):
+    def _local_hybrid(self, query: str, user_dept, candidates: int, fuse):
         vector_docs = self.driver.search(query, user_dept, candidates)
         lexical_docs = self.lexical_search(query, user_dept, candidates)
         return fuse([vector_docs, lexical_docs], candidates)

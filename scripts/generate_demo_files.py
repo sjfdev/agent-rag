@@ -117,8 +117,8 @@ def write_docx(root: Path):
         ("Run regression suite", "QA", "yes"),
         ("Verify rollback plan", "Ops", "yes"),
     ]
-    for row, values in zip(table.rows, rows):
-        for cell, value in zip(row.cells, values):
+    for row, values in zip(table.rows, rows, strict=False):
+        for cell, value in zip(row.cells, values, strict=False):
             cell.text = value
 
     doc.core_properties.title = "Demo Release Checklist"

@@ -1,0 +1,5 @@
+{
+  "_comment": "Copy to config/acl.json and set ACL_ENABLED=true. Documents without an entry are visible to everyone in their department.",
+  "Finance/confidential_budget_2026.pdf": ["group:exec", "u_finance"],
+  "HR/employee_handbook.pdf": ["group:hr"]
+}

@@ -84,12 +84,21 @@ def main():
     check("file indexed", item.get("status") == "indexed", str(item))
     check("chunk count visible", item.get("chunks") == 1, str(item))
 
+    audit = api("GET", "/admin/api/audit?limit=20")
+    actions = [record["action"] for record in audit["records"]]
+    check("audit records upload", "file.upload" in actions, str(actions))
+    check("audit records ingest", "ingest.start" in actions, str(actions))
+
     deleted = api("DELETE", f"/admin/api/file?dept={dept}&source={source}")
     check("delete file", deleted.get("deleted") == source)
     check("chunks removed", deleted.get("chunks_removed") == 1)
 
     listed = api("GET", f"/admin/api/files?dept={dept}")
     check("file gone from listing", not listed["files"])
+
+    audit = api("GET", "/admin/api/audit?limit=20")
+    actions = [record["action"] for record in audit["records"]]
+    check("audit records delete", "file.delete" in actions, str(actions))
 
     # Files are gone, but vectors are only removed by a full prune. Remove the
     # (now empty) department folder and prune so the smoke test leaves no trace.

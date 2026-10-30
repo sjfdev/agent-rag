@@ -74,6 +74,8 @@
   .msg { font-size: 12px; color: var(--muted); margin-top: 8px; min-height: 18px; }
   .msg.error { color: var(--bad); }
   .msg.ok { color: var(--ok); }
+  .bar { height: 6px; background: #1c2434; border-radius: 3px; overflow: hidden; margin-top: 8px; }
+  .bar .fill { height: 100%; width: 0%; background: var(--accent); transition: width .15s linear; }
   #jobCard pre {
     margin: 0; max-height: 260px; overflow: auto; background: #0b0e13; border: 1px solid #232833;
     border-radius: 8px; padding: 10px; font-size: 12px; color: #c7d0df; white-space: pre-wrap;
@@ -124,6 +126,7 @@
       <button id="upload" class="primary">上传到当前部门</button>
     </div>
     <div class="msg" id="uploadMsg"></div>
+    <div class="bar" id="uploadBar" hidden><div class="fill" id="uploadFill"></div></div>
   </section>
 
   <section class="card">
@@ -222,6 +225,9 @@ async function loadMeta() {
   $("store").textContent = meta.vector_store;
   $("model").textContent = meta.llm_model;
   $("maxMb").textContent = meta.max_upload_mb + " MB";
+  if (meta.max_upload_total_mb) {
+    $("maxMb").textContent += "（单次合计 " + meta.max_upload_total_mb + " MB）";
+  }
   $("formats").textContent = "支持：" + meta.formats.join(" ");
 
   const previous = currentDept;
@@ -327,10 +333,44 @@ async function loadFiles() {
   }
 }
 
+function renderAudit(records) {
+  const body = $("auditBody");
+  if (!body) return;
+  body.innerHTML = "";
+  for (const record of (records || []).slice().reverse()) {
+    const tr = document.createElement("tr");
+    const cells = [
+      (record.ts || "").replace("T", " ").replace("+00:00", "Z"),
+      record.action || "",
+      record.actor || "",
+      [record.dept, record.source].filter(Boolean).join(" / "),
+      record.ok === false ? "失败" : "成功",
+    ];
+    for (const value of cells) {
+      const td = document.createElement("td");
+      td.textContent = value;
+      tr.appendChild(td);
+    }
+    if (record.ok === false) tr.style.color = "var(--bad)";
+    body.appendChild(tr);
+  }
+}
+
+async function loadAudit() {
+  try {
+    const data = await api("/admin/api/audit?limit=20");
+    renderAudit(data.records);
+  } catch (error) {
+    // Audit is informational; never block the rest of the console.
+    console.warn("audit load failed", error);
+  }
+}
+
 async function refreshAll() {
   try {
     await loadMeta();
     await loadFiles();
+    await loadAudit();
   } catch (error) {
     setMsg($("fileMsg"), "加载失败：" + error.message, "error");
   }
@@ -372,8 +412,18 @@ async function upload() {
 
   $("upload").disabled = true;
   setMsg($("uploadMsg"), "上传中…", "");
+  const bar = $("uploadBar");
+  const fill = $("uploadFill");
+  bar.hidden = false;
+  fill.style.width = "0%";
   try {
-    const data = await api("/admin/api/upload", { method: "POST", body: form });
+    const data = await api("/admin/api/upload", {
+      method: "POST",
+      body: form,
+      onProgress: (loaded, total) => {
+        if (total) fill.style.width = Math.min(100, Math.round((loaded / total) * 100)) + "%";
+      },
+    });
     const saved = data.saved.map((s) => s.source + (s.overwritten ? "（覆盖）" : "")).join("，");
     let message = "已上传：" + saved + "。点击「增量入库」后生效。";
     if (data.errors && data.errors.length) {
@@ -387,6 +437,7 @@ async function upload() {
     setMsg($("uploadMsg"), "上传失败：" + error.message, "error");
   } finally {
     $("upload").disabled = false;
+    setTimeout(() => { bar.hidden = true; fill.style.width = "0%"; }, 600);
   }
 }
 

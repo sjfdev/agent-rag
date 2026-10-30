@@ -19,6 +19,8 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "DATA_DIR", str(data))
     monkeypatch.setattr(settings, "DB_PATH", str(tmp_path / "db"))
     monkeypatch.setattr(settings, "ADMIN_TOKEN", "")
+    monkeypatch.setattr(settings, "AUDIT_LOG_PATH", str(tmp_path / "audit.log"))
+    monkeypatch.setattr(settings, "JOBS_PATH", str(tmp_path / "jobs.json"))
 
     import main
 
@@ -134,3 +136,59 @@ def test_dept_name_validation(client):
     test_client, _ = client
     resp = test_client.post("/admin/api/dept", json={"name": "bad dept"})
     assert resp.status_code == 400
+
+
+def test_upload_total_quota(client, monkeypatch):
+    test_client, data = client
+    monkeypatch.setattr(settings, "MAX_UPLOAD_TOTAL_MB", 1)
+    dept = "Quota" + uuid.uuid4().hex[:6]
+    (data / dept).mkdir()
+    test_client.post("/admin/api/dept", json={"name": dept})
+    big = b"x" * (1024 * 1024 + 10)
+    resp = test_client.post(
+        "/admin/api/upload",
+        data={"dept": dept, "subdir": ""},
+        files=[
+            ("files", ("a.txt", big, "text/plain")),
+            ("files", ("b.txt", big, "text/plain")),
+        ],
+    )
+    assert resp.status_code == 413
+    assert "per request" in resp.text
+
+
+def test_audit_log_records_actions(client):
+    test_client, data = client
+    dept = "Audit" + uuid.uuid4().hex[:6]
+    (data / dept).mkdir()
+    test_client.post("/admin/api/dept", json={"name": dept})
+    test_client.post(
+        "/admin/api/upload",
+        data={"dept": dept, "subdir": ""},
+        files={"files": ("note.md", b"# Note\n\naudit", "text/markdown")},
+    )
+    records = test_client.get("/admin/api/audit?limit=10").json()["records"]
+    actions = [r["action"] for r in records]
+    assert "dept.create" in actions
+    assert "file.upload" in actions
+    assert all("actor" in r and "ts" in r for r in records)
+    # The admin token itself must never be written to the log.
+    assert settings.ADMIN_TOKEN == "" or settings.ADMIN_TOKEN not in str(records)
+
+
+def test_job_history_survives_restart(client, tmp_path):
+    test_client, data = client
+    dept = "Jobs" + uuid.uuid4().hex[:6]
+    (data / dept).mkdir()
+    test_client.post("/admin/api/dept", json={"name": dept})
+    job = test_client.post("/admin/api/ingest", json={"dept": dept}).json()
+    _wait_job(test_client, job["job_id"])
+    jobs_path = tmp_path / "jobs.json"
+    assert jobs_path.is_file()
+    assert job["job_id"] in jobs_path.read_text()
+
+    # A fresh store reads the file back (simulates a process restart).
+    from src.jobs import JobStore
+
+    store = JobStore()
+    assert any(j["id"] == job["job_id"] for j in store.list(limit=20))

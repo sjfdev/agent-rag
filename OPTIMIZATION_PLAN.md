@@ -462,16 +462,18 @@ curl -f http://localhost:9091/healthz
 - [x] 回归：`pytest -q` **97 passed**；`test_agent.py` 20 项全过；两后端评测 18/18；`check_hybrid` 69/69；`check_hybrid_milvus` 19/19
 
 #### 9.3.3 管理台增强
-- [ ] 上传总量上限（如单次 ≤200MB）、上传进度条
-- [ ] 操作审计：记录谁/何时/删了什么（写入 `logs/admin_audit.log`）
-- [ ] 任务持久化：重启后仍能看到最近任务（SQLite 或 JSON 文件）
-- [ ] 验收：`check_admin.py` 增加对应断言
+- [x] 上传总量上限（`MAX_UPLOAD_TOTAL_MB`，默认 200MB），超限返回 413；管理台显示单文件与合计上限
+- [x] 上传进度条（XMLHttpRequest `upload.onprogress`，fetch 不支持上传进度）
+- [x] 操作审计 `src/audit.py`：创建部门/上传/删除/启动入库逐条写入 `logs/admin_audit.log`（JSON Lines），令牌只记录 sha1 前 8 位；`GET /admin/api/audit` 可查，管理台新增「操作审计」卡片
+- [x] 任务持久化 `src/jobs.py`：任务与日志镜像到 `logs/ingest_jobs.json`（临时文件 + `os.replace` 原子写），重启后恢复；启动时把中断的 queued/running 任务标记为失败
+- [x] 验收：`check_admin.py` 新增 3 项审计断言（全部通过）；`tests/test_admin.py` 新增配额/审计/重启恢复 3 项
 
 #### 9.3.4 安全与权限
-- [ ] `/chat` 增加可选 API Key 或反向代理鉴权开关
-- [ ] 多部门 `user_depts: list[str]`（Milvus `dept in [...]`，FAISS 多值过滤）
-- [ ] 文档级 ACL（元数据 `acl` 字段 + 检索过滤）
-- [ ] 验收：新增越权测试用例，两部门交叉提问均不泄漏
+- [x] `/chat` 可选 API Key：`CHAT_API_KEY` 非空时要求 `X-API-Key` 或 `Authorization: Bearer`；`/chat/stream` 同样生效，`/health`、`/info`、`/metrics` 不受影响
+- [x] 多部门：请求可传 `user_depts: list[str]`（与 `user_dept` 合并去重）；Milvus 用 `dept in [...]`，FAISS 本地多值过滤；进程内 BM25 逐部门检索后用 RRF 融合
+- [x] 文档级 ACL：`src/acl.py` + `ACL_ENABLED` / `ACL_FILE`；规则按 source（可省略部门前缀）映射到用户或 `group:xxx`；未配置规则的文档保持部门内公开；文件 mtime 变化自动重载；检索后统一过滤，两种后端一致
+- [x] 缓存安全：ACL 开启时缓存键包含用户组，避免高权限答案被低权限用户命中
+- [x] 验收：`tests/test_acl.py`（9 项）、`tests/test_auth.py`（5 项）全部通过；`verify_retrieval.py` 增加 Tech+HR 多部门用例（两后端 OK）
 
 ### 9.4 建议排期
 

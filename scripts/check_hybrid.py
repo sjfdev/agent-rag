@@ -8,11 +8,15 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from langchain_core.documents import Document
-
 import os
 import tempfile
 
+from langchain_core.documents import Document
+
+from src.agent import decide_followup
+from src.cache import AnswerCache, normalize_question
+from src.config import settings
+from src.embedding_cache import CachedEmbeddings
 from src.engine import (
     MilvusCapabilities,
     MilvusDriver,
@@ -21,10 +25,6 @@ from src.engine import (
 )
 from src.hashing import clear_hash_cache, file_sha1, hash_cache_info
 from src.hybrid import parse_version, resolve_hybrid_mode, version_at_least
-from src.agent import decide_followup
-from src.cache import AnswerCache, normalize_question
-from src.embedding_cache import CachedEmbeddings
-from src.config import settings
 from src.lexical import LexicalCache, LexicalIndex, rrf_fuse, tokenize
 
 PASS, FAIL = [], []

@@ -4,7 +4,7 @@ import threading
 import time
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import (
     FileResponse,
     JSONResponse,
@@ -14,6 +14,7 @@ from fastapi.responses import (
 from fastapi.staticfiles import StaticFiles
 
 from src import chat_service, metrics
+from src.admin_api import _job_store
 from src.admin_api import router as admin_router
 from src.config import settings
 from src.engine import kb_engine
@@ -72,6 +73,17 @@ def info():
 
 @app.on_event("startup")
 async def startup_event():
+    # Jobs that were mid-flight when the process died are marked failed so the
+    # console does not show a permanently "running" task after a restart.
+    try:
+        from src.jobs import recover_interrupted_jobs
+
+        recovered = recover_interrupted_jobs(_job_store)
+        if recovered:
+            logger.warning("marked %d interrupted ingestion job(s) as failed", recovered)
+    except Exception:
+        logger.warning("could not recover interrupted jobs", exc_info=True)
+
     # Data is loaded by `python run_ingestion.py`; just warn if the store is empty.
     if kb_engine.is_empty():
         logger.warning(
@@ -113,8 +125,26 @@ def prometheus_metrics(request: Request):
     )
 
 
+def require_chat_key(http_request: Request) -> None:
+    """Optional API key for the chat endpoints (open when unset)."""
+    expected = settings.CHAT_API_KEY
+    if not expected:
+        return
+    provided = (
+        http_request.headers.get("x-api-key")
+        or http_request.headers.get("authorization", "").removeprefix("Bearer ").strip()
+    )
+    if not secrets.compare_digest(provided, expected):
+        raise HTTPException(status_code=401, detail="invalid api key")
+
+
 @app.post("/chat", response_model=ChatResponse)
-def chat(request: ChatRequest, response: Response, http_request: Request):
+def chat(
+    request: ChatRequest,
+    response: Response,
+    http_request: Request,
+    _: None = Depends(require_chat_key),
+):
     # Sync def: FastAPI runs it in a threadpool so LLM calls don't block the loop.
     try:
         result = chat_service.run(request, http_request.headers, endpoint="chat")
@@ -135,7 +165,11 @@ def chat(request: ChatRequest, response: Response, http_request: Request):
 
 
 @app.post("/chat/stream")
-def chat_stream(request: ChatRequest, http_request: Request):
+def chat_stream(
+    request: ChatRequest,
+    http_request: Request,
+    _: None = Depends(require_chat_key),
+):
     """Same as /chat but streams tokens as Server-Sent Events.
 
     Events: {"type":"token","content":...} ... {"type":"done","sources":[...],"timings":{...}}

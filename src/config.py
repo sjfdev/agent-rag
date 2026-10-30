@@ -22,6 +22,11 @@ class Settings(BaseSettings):
     DATA_DIR: str = "./data"
     ADMIN_TOKEN: str = ""      # empty => admin API only reachable from loopback
     MAX_UPLOAD_MB: int = 50
+    # Total size allowed in a single upload request (0 = no limit).
+    MAX_UPLOAD_TOTAL_MB: int = 200
+    # Admin audit trail and ingestion job history (JSON lines / JSON).
+    AUDIT_LOG_PATH: str = "./logs/admin_audit.log"
+    JOBS_PATH: str = "./logs/ingest_jobs.json"
 
     # Vector Store Config
     VECTOR_STORE_TYPE: Literal["faiss", "milvus"] = "faiss"
@@ -60,6 +65,11 @@ class Settings(BaseSettings):
     EMBEDDING_CACHE_MAX_ENTRIES: int = 2048
     # Optional bearer token for GET /metrics (empty = open, rely on the network).
     METRICS_TOKEN: str = ""
+    # Optional API key for /chat; when set, callers must send X-API-Key.
+    CHAT_API_KEY: str = ""
+    # Document-level ACL (JSON file). Disabled by default.
+    ACL_ENABLED: bool = False
+    ACL_FILE: str = "./config/acl.json"
     MILVUS_HOST: str = "localhost"
     MILVUS_PORT: str = "19530"
     MILVUS_COLLECTION: str = "enterprise_kb"

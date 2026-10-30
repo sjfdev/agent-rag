@@ -1,6 +1,6 @@
 """Pydantic models shared by the API layer and the chat service."""
 
-from typing import Any, Dict, List, Literal
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -12,9 +12,21 @@ class HistoryItem(BaseModel):
 
 class ChatRequest(BaseModel):
     user_id: str = Field(min_length=1, max_length=64)
-    user_dept: str = Field(min_length=1, max_length=64)
+    # Single-department callers keep using `user_dept`; users who span several
+    # departments can send `user_depts` instead (or both, which is merged).
+    user_dept: Optional[str] = Field(default=None, max_length=64)
+    user_depts: List[str] = Field(default_factory=list, max_length=20)
+    # Optional group membership for the document-level ACL.
+    user_groups: List[str] = Field(default_factory=list, max_length=50)
     message: str = Field(min_length=1, max_length=4000)
     history: List[HistoryItem] = Field(default_factory=list, max_length=20)
+
+    def departments(self) -> List[str]:
+        """All requested departments, de-duplicated, in request order."""
+        values = list(self.user_depts or [])
+        if self.user_dept:
+            values.insert(0, self.user_dept)
+        return list(dict.fromkeys(values))
 
 
 class ChatResponse(BaseModel):

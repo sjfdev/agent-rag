@@ -26,7 +26,8 @@
 | 15 | 零停机重建 + 安全替换 + 多轮相似度护栏 | `2701aba` | 完成 |
 | 16 | FAQ 答案缓存 + 查询向量缓存 | `69190c1` | 完成 |
 | 17 | pytest 测试套件 + ruff + GitHub Actions | `776e6c7` | 完成 |
-| 18 | ChatService 抽取 + 惰性引擎 | 本轮 | 完成 |
+| 18 | ChatService 抽取 + 惰性引擎 | `981e5d7` | 完成 |
+| 19 | 管理台审计/任务持久化/上传配额 + 鉴权/多部门/文档 ACL | 本轮 | 完成 |
 
 当前运行态：`vector_store=milvus`、`hybrid.engine=milvus`、Milvus `v2.5.4`、26 chunks / 4 部门。
 
@@ -305,6 +306,36 @@
 
 ---
 
+## 5.11 管理台加固与权限（本轮，9.3.3 / 9.3.4）
+
+### 管理台
+
+| 能力 | 实现 |
+|---|---|
+| 上传总量上限 | `MAX_UPLOAD_TOTAL_MB`（默认 200）；按 `Content-Length` 之和预检，超限 413 |
+| 上传进度条 | `api()` 在传 `onProgress` 时改用 XHR（fetch 无上传进度事件），管理台显示百分比 |
+| 操作审计 | `src/audit.py`：`dept.create` / `file.upload` / `file.delete` / `ingest.start`，JSON Lines；令牌只记 `sha1` 前 8 位；`GET /admin/api/audit`；控制台新增审计卡片 |
+| 任务持久化 | `src/jobs.py`：任务 + 日志镜像到 `logs/ingest_jobs.json`，临时文件 + `os.replace` 原子写；重启自动恢复，中断任务标记为失败 |
+
+实测：重启后 `restored 2 ingestion job(s)`；上传 2MB（上限 1MB）返回 `413 upload is 2.0MB; at most 1MB per request`；审计记录含 `dept.create` / `file.upload` / `file.delete` / `ingest.start`，不含令牌明文。
+
+### 权限
+
+| 能力 | 实现 |
+|---|---|
+| `/chat` 可选 API Key | `CHAT_API_KEY`；接受 `X-API-Key` 或 `Authorization: Bearer`；缺失/错误 401；流式同样生效 |
+| 多部门 | `user_depts: list[str]`（与 `user_dept` 合并去重）；Milvus `dept in [...]`；FAISS 多值后过滤；BM25 逐部门检索后 RRF 融合 |
+| 文档级 ACL | `src/acl.py` + `ACL_ENABLED` / `ACL_FILE`；按 source 映射到用户或 `group:xxx`；无规则的文档在部门内公开；mtime 变化自动重载；检索后统一过滤 |
+| 缓存隔离 | ACL 开启时缓存键追加用户组，防止高权限答案被复用 |
+
+实测：
+
+- `user_depts=["Tech","Finance"]` 提问预算 → 命中 Finance 文档；单部门请求行为不变
+- `CHAT_API_KEY` 设置后：无 key 401、错误 key 401、`X-API-Key`/Bearer 200、`/health` 仍 200
+- ACL 规则 `Finance/confidential_budget_2026.pdf -> group:exec`：无组时只返回报销/差旅政策并明确拒答；带 `user_groups=["exec"]` 可看到预算文件
+
+---
+
 ## 6. Milvus 升级（2.4.0 → 2.5.4）
 
 - 升级前备份数据卷：`volumes/milvus` + `volumes/etcd` → `milvus-2.4-<时间戳>.tgz`
@@ -349,7 +380,7 @@
 | 检查 | 结果 |
 |---|---|
 | `python test_agent.py` | 20/20 通过（需服务 + LLM，含缓存断言） |
-| `pytest -q`（离线，含 CI） | 97/97，约 8s |
+| `pytest -q`（离线，含 CI） | 127/127，约 11s |
 | `ruff check src tests main.py run_ingestion.py` | 全绿 |
 | `python scripts/check_hybrid.py` | 69/69 |
 | `python scripts/check_hybrid_milvus.py` | 19/19（2.5+），低版本 SKIP |

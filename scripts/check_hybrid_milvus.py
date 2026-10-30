@@ -7,7 +7,6 @@ before and after the test.
     VECTOR_STORE_TYPE=milvus python scripts/check_hybrid_milvus.py
 """
 
-import json
 import sys
 import uuid
 from pathlib import Path
@@ -40,8 +39,8 @@ def main() -> int:
         print("SKIP  server is older than 2.5; server-side sparse BM25 unavailable")
         return 0
 
-    from pymilvus import DataType, MilvusClient
     from langchain_core.documents import Document
+    from pymilvus import MilvusClient
 
     from src.engine import MilvusDriver
 

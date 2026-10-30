@@ -25,7 +25,7 @@ from src.cache import answer_cache
 from src.config import settings
 from src.runtime import in_maintenance
 from src.schemas import ChatRequest, ChatResponse
-from src.validation import InvalidDepartment, validate_dept
+from src.validation import InvalidDepartment, validate_depts
 
 logger = logging.getLogger("agent-rag.chat")
 
@@ -115,10 +115,12 @@ def prepare(request: ChatRequest, endpoint: str) -> Prepared:
         )
 
     try:
-        safe_dept = validate_dept(request.user_dept)
+        safe_depts = validate_depts(request.departments())
     except InvalidDepartment:
         logger.warning(
-            "rejected invalid dept request_id=%s dept=%r", request_id, request.user_dept
+            "rejected invalid dept request_id=%s depts=%r",
+            request_id,
+            request.departments(),
         )
         metrics.observe_request(
             endpoint=endpoint,
@@ -144,7 +146,10 @@ def prepare(request: ChatRequest, endpoint: str) -> Prepared:
         inputs={
             "messages": messages,
             "user_id": request.user_id,
-            "user_dept": safe_dept,
+            # Primary department keeps single-dept behaviour and citations.
+            "user_dept": safe_depts[0],
+            "user_depts": safe_depts,
+            "user_groups": list(request.user_groups or []),
         },
     )
 
@@ -202,7 +207,7 @@ def cache_lookup(
     """Only single-turn questions are cached: follow-ups depend on history."""
     if not _cache_enabled() or request.history or cache_bypassed(headers):
         return None
-    payload = answer_cache.get(request.user_dept, request.message)
+    payload = answer_cache.get(_cache_dept(request), request.message)
     metrics.observe_cache("answer", "hit" if payload is not None else "miss")
     return payload
 
@@ -222,7 +227,7 @@ def cache_store(
     if not messages:
         return
     answer_cache.put(
-        request.user_dept,
+        _cache_dept(request),
         request.message,
         {
             "response": messages[-1].content,
@@ -234,6 +239,20 @@ def cache_store(
 
 def _cache_enabled() -> bool:
     return settings.FAQ_CACHE_ENABLED and answer_cache.max_entries > 0
+
+
+def _cache_dept(request: ChatRequest) -> str:
+    """Cache key scope: departments plus ACL groups.
+
+    Groups must be part of the key, otherwise an answer built with elevated
+    access could be replayed for a caller without it.
+    """
+    depts = request.departments()
+    scope = "|".join(depts) if depts else "unknown"
+    groups = sorted(str(group) for group in (request.user_groups or []))
+    if settings.ACL_ENABLED and groups:
+        scope += "::" + ",".join(groups)
+    return scope
 
 
 # ---------------------------------------------------------------------------
@@ -274,7 +293,7 @@ def run(request: ChatRequest, headers: Any, endpoint: str = "chat") -> ChatRespo
     logger.info(
         "chat ok request_id=%s dept=%s total_ms=%s llm_ms=%s llm_calls=%s",
         prepared.request_id,
-        prepared.inputs["user_dept"],
+        ",".join(prepared.inputs.get("user_depts") or []) or "?",
         timings["total_ms"],
         timings.get("llm_ms"),
         timings.get("llm_calls"),
@@ -297,7 +316,7 @@ def _record_failure(prepared: Prepared, exc: Exception) -> None:
     logger.exception(
         "chat failed request_id=%s dept=%s upstream=%s store_down=%s",
         prepared.request_id,
-        prepared.inputs["user_dept"],
+        ",".join(prepared.inputs.get("user_depts") or []) or "?",
         is_upstream_error(exc),
         is_store_error(exc),
     )
@@ -378,7 +397,7 @@ def _stream(
         logger.info(
             "chat stream ok request_id=%s dept=%s total_ms=%s llm_ms=%s llm_calls=%s",
             request_id,
-            prepared.inputs["user_dept"],
+            ",".join(prepared.inputs.get("user_depts") or []) or "?",
             timings["total_ms"],
             timings.get("llm_ms"),
             timings.get("llm_calls"),

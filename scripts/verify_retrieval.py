@@ -24,7 +24,7 @@ CASES = [
 
 def main():
     leaked = False
-    for dept, query, marker in CASES:
+    for dept, query, _marker in CASES:
         results = kb_engine.search(query, dept, k=3)
         print(f"\n[{dept}] {query}")
         if not results:
@@ -43,6 +43,14 @@ def main():
     if any("budget" in (d.metadata.get("source") or "").lower() for d in tech_budget):
         leaked = True
         print("\nFAILED: Tech user can see Finance budget document")
+
+    # Multi-department users see exactly their departments, nothing else.
+    multi = kb_engine.search("policy", ["Tech", "HR"], k=10)
+    multi_depts = {d.metadata.get("dept") for d in multi}
+    print(f"\n[Tech+HR] multi-department -> {sorted(multi_depts)}")
+    if not multi_depts <= {"Tech", "HR"}:
+        leaked = True
+        print("FAILED: multi-department search leaked another department")
 
     print("\nRESULT:", "FAILED - permission leak detected" if leaked else "OK - isolation holds")
 

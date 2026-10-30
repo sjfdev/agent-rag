@@ -17,3 +17,12 @@ def validate_dept(dept: str) -> str:
     if not isinstance(dept, str) or not _DEPT_RE.fullmatch(dept):
         raise InvalidDepartment("invalid department name")
     return dept.replace("\\", "\\\\").replace("'", "\\'")
+
+
+def validate_depts(depts) -> list:
+    """Validate and escape several department names (multi-department users)."""
+    if not isinstance(depts, (list, tuple)) or not depts:
+        raise InvalidDepartment("at least one department is required")
+    escaped = [validate_dept(dept) for dept in depts]
+    # Preserve order but drop duplicates after escaping.
+    return list(dict.fromkeys(escaped))

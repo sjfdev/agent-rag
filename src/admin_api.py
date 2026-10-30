@@ -18,10 +18,12 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from pydantic import BaseModel, Field
 
+from src import audit
 from src.config import settings
 from src.engine import kb_engine
 from src.etl import EnterpriseETL, doc_id_for
 from src.hashing import clear_hash_cache, file_sha1
+from src.jobs import JobStore
 from src.loaders import LEGACY_EXTENSIONS, SUPPORTED_EXTENSIONS
 from src.metrics import observe_ingest_job
 from src.runtime import begin_maintenance, end_maintenance
@@ -164,51 +166,36 @@ class IngestRequest(BaseModel):
     reset: bool = False
 
 
-_jobs: Dict[str, Dict[str, Any]] = {}
-_jobs_lock = threading.Lock()
+_job_store = JobStore(max_jobs=_MAX_JOBS, max_log_lines=_MAX_LOG_LINES)
 _ingest_lock = threading.Lock()
 
 
 def _job_update(job_id: str, **fields: Any) -> None:
-    with _jobs_lock:
-        job = _jobs.get(job_id)
-        if job:
-            job.update(fields)
+    _job_store.update(job_id, **fields)
 
 
 def _job_log(job_id: str, line: str) -> None:
-    with _jobs_lock:
-        job = _jobs.get(job_id)
-        if not job:
-            return
-        job["log"].append(line)
-        if len(job["log"]) > _MAX_LOG_LINES:
-            del job["log"][: len(job["log"]) - _MAX_LOG_LINES]
+    _job_store.append_log(job_id, line)
 
 
 def job_snapshot() -> Optional[Dict[str, Any]]:
     """Copy of the newest ingestion job, used by /health."""
-    with _jobs_lock:
-        if not _jobs:
-            return None
-        newest = max(_jobs.values(), key=lambda job: job["created"])
-        return {
-            "id": newest.get("id"),
-            "dept": newest.get("dept"),
-            "reset": newest.get("reset"),
-            "status": newest.get("status"),
-            "started": newest.get("started"),
-            "finished": newest.get("finished"),
-            "error": newest.get("error"),
-        }
+    newest = _job_store.newest()
+    if not newest:
+        return None
+    return {
+        "id": newest.get("id"),
+        "dept": newest.get("dept"),
+        "reset": newest.get("reset"),
+        "status": newest.get("status"),
+        "started": newest.get("started"),
+        "finished": newest.get("finished"),
+        "error": newest.get("error"),
+    }
 
 
-def _prune_jobs() -> None:
-    with _jobs_lock:
-        if len(_jobs) <= _MAX_JOBS:
-            return
-        for job_id in sorted(_jobs, key=lambda k: _jobs[k]["created"])[:-_MAX_JOBS]:
-            _jobs.pop(job_id, None)
+def _actor(request: Request) -> str:
+    return audit.actor_label(bool(settings.ADMIN_TOKEN), request.client.host if request.client else "")
 
 
 def _run_job(job_id: str, dept: Optional[str], reset: bool) -> None:
@@ -304,6 +291,7 @@ def admin_meta():
         "llm_model": settings.LLM_MODEL,
         "data_dir": str(_data_root().resolve()),
         "max_upload_mb": settings.MAX_UPLOAD_MB,
+        "max_upload_total_mb": settings.MAX_UPLOAD_TOTAL_MB,
         "formats": sorted(SUPPORTED_EXTENSIONS),
         "legacy_formats": sorted(LEGACY_EXTENSIONS),
         "depts": [{"name": d, "files": per_dept.get(d, 0)} for d in _list_depts()],
@@ -326,11 +314,14 @@ def list_files(dept: Optional[str] = None):
 
 
 @router.post("/dept")
-def create_dept(req: DeptRequest):
+def create_dept(req: DeptRequest, request: Request):
     name = validate_dept(req.name)
     path = _resolve_under_data(_data_root() / name)
     existed = path.is_dir()
     path.mkdir(parents=True, exist_ok=True)
+    audit.log_event(
+        "dept.create", _actor(request), dept=name, detail={"created": not existed}
+    )
     return {"name": name, "created": not existed}
 
 
@@ -361,6 +352,7 @@ def _save_upload(upload: UploadFile, dest: Path) -> int:
 
 @router.post("/upload")
 def upload_files(
+    request: Request,
     dept: str = Form(...),
     subdir: str = Form(""),
     files: List[UploadFile] = File(...),
@@ -373,6 +365,20 @@ def upload_files(
     if len(files) > _MAX_FILES_PER_UPLOAD:
         raise HTTPException(
             status_code=400, detail=f"at most {_MAX_FILES_PER_UPLOAD} files per upload"
+        )
+    total_limit = settings.MAX_UPLOAD_TOTAL_MB * 1024 * 1024
+    declared = 0
+    for upload in files:
+        upload.file.seek(0, 2)
+        declared += upload.file.tell()
+        upload.file.seek(0)
+    if total_limit and declared > total_limit:
+        raise HTTPException(
+            status_code=413,
+            detail=(
+                f"upload is {declared / 1024 / 1024:.1f}MB; at most "
+                f"{settings.MAX_UPLOAD_TOTAL_MB}MB per request"
+            ),
         )
 
     folder = _data_root() / dept
@@ -424,13 +430,30 @@ def upload_files(
     # Overwrites reuse (path, mtime, size) keys rarely, but clearing keeps the
     # cache honest when a file is replaced within the same mtime granularity.
     clear_hash_cache()
+    for item in saved:
+        audit.log_event(
+            "file.upload",
+            _actor(request),
+            dept=dept,
+            source=item["source"],
+            detail={"size": item["size"], "overwritten": item["overwritten"]},
+        )
+    for error in errors:
+        audit.log_event(
+            "file.upload",
+            _actor(request),
+            dept=dept,
+            source=str(error.get("name")),
+            ok=False,
+            detail={"error": error.get("error")},
+        )
     if not saved and errors:
         raise HTTPException(status_code=400, detail={"errors": errors})
     return {"saved": saved, "errors": errors}
 
 
 @router.delete("/file")
-def delete_file(dept: str, source: str):
+def delete_file(dept: str, source: str, request: Request):
     dept = validate_dept(dept)
     if dept not in _list_depts():
         raise HTTPException(status_code=404, detail="department not found")
@@ -452,11 +475,18 @@ def delete_file(dept: str, source: str):
 
     clear_hash_cache()
     removed = kb_engine.delete_by_doc_id(doc_id_for(dept, source_rel))
+    audit.log_event(
+        "file.delete",
+        _actor(request),
+        dept=dept,
+        source=source_rel,
+        detail={"chunks_removed": removed},
+    )
     return {"deleted": source, "chunks_removed": removed}
 
 
 @router.post("/ingest")
-def start_ingest(req: IngestRequest):
+def start_ingest(req: IngestRequest, request: Request):
     if req.dept:
         dept = validate_dept(req.dept)
         if dept not in _list_depts():
@@ -471,8 +501,8 @@ def start_ingest(req: IngestRequest):
         raise HTTPException(status_code=409, detail="an ingestion job is already running")
 
     job_id = uuid.uuid4().hex[:8]
-    with _jobs_lock:
-        _jobs[job_id] = {
+    _job_store.create(
+        {
             "id": job_id,
             "status": "queued",
             "created": time.time(),
@@ -484,7 +514,13 @@ def start_ingest(req: IngestRequest):
             "stats": None,
             "error": None,
         }
-    _prune_jobs()
+    )
+    audit.log_event(
+        "ingest.start",
+        _actor(request),
+        dept=dept,
+        detail={"job_id": job_id, "reset": req.reset},
+    )
     try:
         threading.Thread(
             target=_run_job, args=(job_id, dept, req.reset), daemon=True
@@ -497,24 +533,28 @@ def start_ingest(req: IngestRequest):
 
 @router.get("/jobs/{job_id}")
 def job_status(job_id: str):
-    with _jobs_lock:
-        job = _jobs.get(job_id)
-        if not job:
-            raise HTTPException(status_code=404, detail="job not found")
-        return dict(job)
+    job = _job_store.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="job not found")
+    return job
 
 
 @router.get("/jobs")
 def list_jobs():
-    with _jobs_lock:
-        jobs = [
-            {
-                "id": job["id"],
-                "status": job["status"],
-                "dept": job["dept"],
-                "created": job["created"],
-                "finished": job["finished"],
-            }
-            for job in sorted(_jobs.values(), key=lambda j: j["created"], reverse=True)
-        ]
-    return {"jobs": jobs[:10]}
+    jobs = [
+        {
+            "id": job["id"],
+            "status": job["status"],
+            "dept": job.get("dept"),
+            "created": job.get("created"),
+            "finished": job.get("finished"),
+        }
+        for job in _job_store.list(limit=10)
+    ]
+    return {"jobs": jobs}
+
+
+@router.get("/audit")
+def list_audit(limit: int = 50):
+    limit = max(1, min(limit, 500))
+    return {"records": audit.tail(limit)}

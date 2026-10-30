@@ -98,6 +98,7 @@ agent-rag/
 ├── db/vector_db/            # FAISS 索引与元数据
 ├── volumes/                 # Milvus/etcd 数据卷
 ├── eval/cases.jsonl         # 检索评测集（命中 + 泄漏用例）
+├── config/acl.example.json  # 文档级 ACL 规则示例
 ├── tests/                   # pytest 离线测试（83 项）
 ├── .github/workflows/ci.yml # ruff + pytest（CI）
 ├── WORKLOG.md               # 本轮迭代记录与验证矩阵
@@ -127,6 +128,9 @@ agent-rag/
     ├── health.py            # /health 探针
     ├── metrics.py           # Prometheus 指标
     ├── runtime.py           # 维护模式标志
+    ├── audit.py             # 管理操作审计（JSON Lines）
+    ├── jobs.py              # 入库任务注册表 + 持久化
+    ├── acl.py               # 可选文档级 ACL
     └── admin_api.py         # /admin 管理 API
 ```
 
@@ -453,6 +457,21 @@ curl -s http://localhost:8000/metrics | grep '^agent_rag_'
 
 约束：`user_id` ≤64、`user_dept` ≤64（仅字母/数字/下划线/中划线/中文）、`message` 1–4000 字符、`history` ≤20 条。
 
+多部门与 ACL：
+
+```json
+{
+  "user_id": "u1",
+  "user_depts": ["Tech", "Finance"],
+  "user_groups": ["exec"],
+  "message": "2026 年预算区间是多少？"
+}
+```
+
+- `user_dept` 与 `user_depts` 可同时提供，会合并去重；`user_depts` 最多 20 个
+- `user_groups` 仅用于文档级 ACL（`ACL_ENABLED=true` 时生效）
+- 设置 `CHAT_API_KEY` 后需带 `X-API-Key: <key>` 或 `Authorization: Bearer <key>`
+
 流式接口（推荐给前端）：
 
 ```bash
@@ -512,7 +531,7 @@ python scripts/check_loaders.py      # 9 种格式解析（不写向量库）
 python scripts/check_admin.py        # 管理台上传→入库→删除冒烟
 python scripts/bench_retrieval.py    # embedding / FAISS / Milvus / LLM 延迟
 python scripts/generate_demo_files.py  # 重建 data/Demo 多格式样例
-pytest -q                            # 离线测试（97 项，~8s，无需服务/LLM）
+pytest -q                            # 离线测试（127 项，~11s，无需服务/LLM）
 ruff check src tests main.py run_ingestion.py   # 代码检查
 python test_agent.py                 # 端到端 18 项断言（需服务已启动）
 ```
@@ -596,6 +615,12 @@ python run_ingestion.py --no-prune # 不清理已删除文件
 | `HYBRID_ANALYZER` | `{"type":"chinese"}` | 服务端 BM25 分析器（升级 2.5 后生效） |
 | `HYBRID_CANDIDATES` | `20` | 融合前每路取多少候选 |
 | `HYBRID_MAX_DOCS` | `20000` | 单部门 BM25 语料上限（0 为不限） |
+| `MAX_UPLOAD_TOTAL_MB` | `200` | 单次上传合计上限（0 不限制） |
+| `AUDIT_LOG_PATH` | `./logs/admin_audit.log` | 管理操作审计（JSON Lines） |
+| `JOBS_PATH` | `./logs/ingest_jobs.json` | 入库任务历史（重启恢复） |
+| `CHAT_API_KEY` | 空 | 非空时 `/chat` 需要 `X-API-Key` 或 Bearer |
+| `ACL_ENABLED` | `false` | 是否启用文档级 ACL |
+| `ACL_FILE` | `./config/acl.json` | ACL 规则文件（见 `config/acl.example.json`） |
 | `FAQ_CACHE_ENABLED` | `true` | 是否启用 FAQ 答案缓存 |
 | `FAQ_CACHE_MAX_ENTRIES` | `512` | 答案缓存容量（LRU） |
 | `FAQ_CACHE_TTL` | `86400` | 答案缓存有效期（秒） |
@@ -811,13 +836,13 @@ python scripts/bench_retrieval.py
 ## 10. 已知限制与后续方向
 
 - 服务端不存储会话，多轮依赖客户端回传 `history`
-- 无文档权限的细粒度控制（目前仅到部门级）
-- 对话接口无鉴权，`user_id`/`user_dept` 由调用方提供（管理台另有 `ADMIN_TOKEN`）
-- 入库为同步 CPU/IO 操作；全量 reset 期间 `/chat` 返回 503 `index rebuilding`，增量入库期间索引保持可读
+- 文档级 ACL 为**可选**（`ACL_ENABLED`），规则为静态 JSON，不区分读/写/下载；未配置规则的文档默认为部门内公开
+- `/chat` 鉴权为**可选**静态 API Key（`CHAT_API_KEY`）；`user_id`/`user_dept` 仍由调用方提供，若需真正身份体系需接入网关/OIDC
+- 入库为同步 CPU/IO 操作；全量 reset 期间查询不受影响（影子索引），只有提交切换的瞬间会有毫秒级维护窗口
 - 多轮检索为启发式改写（代词/短句拼接上轮问题），复杂指代仍可能失败；更稳的方案是 LLM 改写（会多一次调用）
 - 进程内 BM25（FAISS 模式或 Milvus < 2.5）是**单进程**索引：多 worker 各自构建，重启需预热；超大数据量请升级 Milvus 2.5 并用 `HYBRID_ENGINE=milvus`
 - `/metrics` 为单进程指标，多 worker 需在 Prometheus 侧聚合
-- 可扩展：OCR、会话持久化、文档级 ACL、FAQ/embedding 缓存、召回率监控
+- 可扩展：OCR、会话持久化、跨进程缓存（Redis）、召回率监控
 
 ---
 
