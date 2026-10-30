@@ -28,7 +28,8 @@
 | 17 | pytest 测试套件 + ruff + GitHub Actions | `776e6c7` | 完成 |
 | 18 | ChatService 抽取 + 惰性引擎 | `981e5d7` | 完成 |
 | 19 | 管理台审计/任务持久化/上传配额 + 鉴权/多部门/文档 ACL | `63067f0` | 完成 |
-| 20 | 测试覆盖率提升（73% → 92%） | 本轮 | 完成 |
+| 20 | 测试覆盖率提升（73% → 92%） | `7fcc6a2` | 完成 |
+| 21 | Makefile / doctor / 限流 / 请求超时 | 本轮 | 完成 |
 
 当前运行态：`vector_store=milvus`、`hybrid.engine=milvus`、Milvus `v2.5.4`、26 chunks / 4 部门。
 
@@ -372,6 +373,37 @@
 
 ---
 
+## 5.13 工程基建与稳定性（本轮）
+
+### Makefile
+
+`make help` 列出全部目标，Python 解释器优先使用 conda 环境：
+
+| 目标 | 作用 |
+|---|---|
+| `make install` | 安装运行 + 测试依赖 |
+| `make data` / `make ingest` | 生成 Demo 数据 / 增量入库 |
+| `make run` | 启动 API |
+| `make test` / `make cov` / `make lint` / `make check` | 测试、覆盖率、ruff、两者一起 |
+| `make milvus-up/down/logs` | 启停 Milvus 并等待健康检查 |
+| `make reset-faiss` / `make reset-milvus` | 影子索引全量重建 |
+| `make doctor` / `make eval` / `make clean` | 体检 / 检索评测 / 清理 |
+
+### doctor
+
+`scripts/doctor.py`（`--no-llm` 跳过网络）逐项检查：Python 3.11、12 个关键包、NumPy ABI、向量库与 embedding 后端、模型缓存、数据目录、索引块数与混合引擎、Milvus 端口与版本、Docker、可选 LLM 探针。本机输出 `RESULT: OK`，缺数据目录时返回非零。
+
+### 限流与超时
+
+- `src/ratelimit.py`：滑动窗口，键优先取 `X-Forwarded-For` / `X-Real-IP`，否则 `user_id`；默认关闭（`RATE_LIMIT_PER_MINUTE=0`）
+- 超限返回 `429 {"detail":{"error":"rate_limited",...}}` + `Retry-After`
+- `CHAT_TIMEOUT`（默认 120s）：非流式用线程池 `result(timeout)`；流式逐帧检查，超时产生 `timeout` 错误事件
+- 异常分类抽到 `src/errors.py`，新增 504 `timeout`
+
+实测（`RATE_LIMIT_PER_MINUTE=3`）：前 3 次 200，第 4 次 429，响应头带 `retry-after: 56`。
+
+---
+
 ## 6. Milvus 升级（2.4.0 → 2.5.4）
 
 - 升级前备份数据卷：`volumes/milvus` + `volumes/etcd` → `milvus-2.4-<时间戳>.tgz`
@@ -416,7 +448,7 @@
 | 检查 | 结果 |
 |---|---|
 | `python test_agent.py` | 20/20 通过（需服务 + LLM，含缓存断言） |
-| `pytest -q`（离线，含 CI） | 246/246，约 20s；覆盖率 92% |
+| `pytest -q`（离线，含 CI） | 265/265，约 25s；覆盖率 92% |
 | `ruff check src tests main.py run_ingestion.py` | 全绿 |
 | `python scripts/check_hybrid.py` | 69/69 |
 | `python scripts/check_hybrid_milvus.py` | 19/19（2.5+），低版本 SKIP |

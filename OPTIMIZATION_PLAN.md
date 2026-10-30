@@ -96,11 +96,11 @@ VECTOR_STORE_TYPE=milvus uvicorn main:app --port 8000   # .env 仍写 faiss，�
 ## 2. P1 架构与可维护性（约 1 天）
 
 ### 2.1 引擎惰性初始化
-- [ ] 位置：`src/engine.py:130` `kb_engine = KnowledgeBaseEngine()`
-- [ ] 问题：import 即加载 embedding（~2s），`check_llm.py` 等脚本被拖慢；模型缺失时 import 直接失败
-- [ ] 方案：`get_engine()` 惰性单例 + 显式 `reset_engine()`（测试用）
-- [ ] 注意：同步替换所有 `kb_engine.xxx` 调用点（`main.py`、`src/agent.py`、`src/etl.py`、脚本）
-- [ ] 验收：`python -c "import src.engine"` 不再加载模型；`python scripts/check_llm.py` 启动更快
+- [x] 位置：`src/engine.py` `_LazyEngine` + `get_engine()` / `reset_engine()`
+- [x] 问题：import 即加载 embedding；模型缺失时 import 直接失败
+- [x] 方案：惰性代理（方法访问返回包装，`__dunder__` 抛 `AttributeError`）+ 显式获取/重建
+- [x] FAISS/Milvus/OpenAI embeddings 改为函数内导入
+- [x] 验收：`import src.engine` 12–14s → **0.72s**，且不加载模型
 
 ### 2.2 配置强类型与外置
 - [x] 位置：`src/config.py`
@@ -134,11 +134,11 @@ VECTOR_STORE_TYPE=milvus uvicorn main:app --port 8000   # .env 仍写 faiss，�
 
 ### 2.6 工程基建
 - [x] 生成 `requirements.txt`（精确 pin，含安装顺序注释）
-- [ ] 可选 `pyproject.toml` + `uv`/`pip-tools` 锁文件
-- [ ] `Makefile`：`install / data / ingest / run / test / milvus-up / milvus-down / reset-faiss / reset-milvus / doctor`
-- [ ] `scripts/doctor.py`：Python 版本、numpy/torch、依赖、Docker/Milvus、LLM、索引状态一键体检
-- [ ] `.gitignore` 补 `volumes/`、`.venv/`、`*.log`
-- [ ] 验收：新机器按 `make install && make ingest && make run` 可跑通
+- [ ] 可选 `pyproject.toml` + `uv`/`pip-tools` 锁文件（暂不需要）
+- [x] `Makefile`：`install / data / ingest / run / test / lint / cov / milvus-up / milvus-down / milvus-logs / reset-faiss / reset-milvus / doctor / check / eval / clean`
+- [x] `scripts/doctor.py`：Python 版本、numpy ABI、12 个关键包、embedding 缓存、数据目录、索引、Milvus 端口/版本、Docker、LLM 探针；`--no-llm` 跳过网络
+- [x] `.gitignore` 补 `volumes/`、`logs/`、覆盖率与缓存目录
+- [x] 验收：`make help`、`make lint`、`make doctor` 均已实测；`scripts/doctor.py --no-llm` 输出 `RESULT: OK`
 
 ---
 
@@ -146,34 +146,34 @@ VECTOR_STORE_TYPE=milvus uvicorn main:app --port 8000   # .env 仍写 faiss，�
 
 - [x] 离线启动开关：模型已缓存时设置 `HF_HUB_OFFLINE=1`，避免每次启动的远端元数据探测
 - [x] 流式输出（SSE）降低首字延迟；`/chat/stream`（已实现，UI 逐字渲染）
-- [ ] 相似问题缓存（内存 LRU / Redis），命中直接返回
-- [ ] `user_depts: list[str]` 支持多部门，Milvus 用 `dept in [...]`
-- [ ] `/health` 返回向量库与 LLM 连通性
-- [ ] 文档级 ACL（在 `dept` 之上加 `acl` 字段/可见用户组）
-- [ ] 评测集 `eval/cases.jsonl`（问题、期望文档、期望部门、是否应拒答）+ 召回率/拒答率脚本
-- [ ] CI：lint（ruff）+ 类型（mypy，可选）+ 离线检索测试 + 端到端冒烟
+- [x] 相似问题缓存：`src/cache.py`（LRU+TTL，键 `dept + 规范化问题`），另有查询向量缓存
+- [x] `user_depts: list[str]` 支持多部门（Milvus `dept in [...]`，FAISS 后过滤，BM25 逐部门 RRF）
+- [x] `/health` 返回向量库 / 入库任务 / 重建 / LLM 探测 / 缓存 / 混合引擎
+- [x] 文档级 ACL：`src/acl.py`（`ACL_ENABLED` / `ACL_FILE`，用户与 `group:xxx`）
+- [x] 评测集 `eval/cases.jsonl` + `scripts/eval_retrieval.py`（hit@k / MRR / 泄漏）
+- [x] CI：`.github/workflows/ci.yml`（ruff + pytest + 覆盖率）
 - [ ] 多 worker 说明：`uvicorn --workers N` 下 FAISS 写冲突、embedding 内存翻倍
-- [ ] 管理接口：`POST /admin/reindex`、`DELETE /admin/docs/{doc_id}`（需鉴权）
+- [x] 管理接口：`/admin/api` 上传/删除/入库/重建/任务/审计
 
 ---
 
 ## 4. 安装说明待补（`DEPLOYMENT.md` / `DEPLOYMENT_CN.md`）
 
-- [ ] 用 `requirements.txt` 替换三处重复 pip 命令，避免版本漂移
+- [x] 用 `requirements.txt` 替换三处重复 pip 命令，避免版本漂移
 - [ ] 增加离线/内网安装：`pip download` 打包、`HF_HOME` 预置模型目录
-- [ ] 增加「Milvus 重置」完整流程：`docker compose down` → 清理 `./volumes` → `up -d`（schema 变更后必须重建）
-- [ ] 明确 `.env` 与文档默认值不一致时的优先级（环境变量 > `.env` > 代码默认）
+- [x] 增加「Milvus 重置」完整流程：`docker compose down` → 清理 `./volumes` → `up -d`（schema 变更后必须重建）
+- [x] 明确 `.env` 与文档默认值不一致时的优先级（环境变量 > `.env` > 代码默认）
 - [ ] `.env.example` 补 `DOCKER_VOLUME_DIRECTORY`、`MILVUS_*`、`RETRIEVAL_K`
 - [ ] 增加 `scripts/doctor.py` 的使用说明与输出示例
 
 ## 5. 使用说明待补（`AGENT_GUIDE.md`）
 
-- [ ] API 错误码表（400/422/500/503）与请求限制（message 长度、history 条数）
+- [x] API 错误码表（400/422/500/503）与请求限制（message 长度、history 条数）
 - [ ] 客户端示例：Python `requests`、前端 `fetch`、curl（已有基础示例，补错误处理）
 - [ ] 运维手册：新增部门、新增工具、重建索引、切换后端、回滚
-- [ ] 「切换后端必须重新入库」用醒目警告块强调（已有，但可提到快速开始处）
+- [x] 「切换后端必须重新入库」已用警告块强调
 - [ ] UI 增强：显示命中文档来源/页码、导出对话、部门配色
-- [ ] 补充评测方法与基线指标（召回率、拒答率、P50/P95 延迟）
+- [x] 补充评测方法与基线指标（hit@k、MRR、泄漏、P50/P95）
 
 ---
 
@@ -267,9 +267,10 @@ curl -f http://localhost:9091/healthz
 
 - [x] **compose 加 `restart: unless-stopped` + 资源限制**：昨天 `milvus-standalone` 因 etcd lease 丢失退出后没有自动重启
 - [x] **`/health`**：向量库与 LLM 连通性、索引是否为空、入库/重建状态；`?probe=1` 带 LLM 探测
-- [ ] **流式取消与并发上限**：客户端断开后同步 LLM 调用仍在跑；线程池 40 并发会争抢 embedding CPU
+- [x] **请求超时**：`CHAT_TIMEOUT` 限制整体耗时（非流式用线程池 `result(timeout)`，流式逐帧检查），超时返回 504 `timeout`
+- [ ] **客户端断开即取消**：客户端断开后同步 LLM 调用仍会跑完；彻底取消需要异步客户端或协作式取消
   - 可加 `asyncio.to_thread` + 取消检查，或限制 `--limit-concurrency`
-- [ ] **速率限制**：按 `user_id` / IP 限流，避免云端配额被打满
+- [x] **速率限制**：`RATE_LIMIT_PER_MINUTE`（默认 0 关闭），滑动窗口，超限 429
 
 ### 8.3 架构与代码质量
 
@@ -346,6 +347,9 @@ curl -f http://localhost:9091/healthz
 - [ ] **引用去重/score**：同页多 chunk 合并、展示相关性分数
 
 #### P2 稳定与运维
+
+- [x] **限流与超时**：`src/ratelimit.py` 滑动窗口（按转发 IP 或 user_id，默认关闭），超限 429 + `Retry-After`；`CHAT_TIMEOUT` 为 `/chat` 与 `/chat/stream` 增加整体截止时间，超时映射 504 `timeout`
+- [ ] **降级回答**：LLM 失败时返回检索摘要或备用模型（目前只返回 503/504）
 
 - [x] **`/health`**：向量库块数、入库任务、重建状态；`?probe=1` 带 LLM 探测（15s 缓存）；空库/不可达返回 503，`check_health.py` 10 项冒烟
 - [x] **指标（Prometheus）**：`/metrics` 覆盖请求/错误、端到端与检索/LLM 耗时、首 token、索引块数、入库任务、重建状态；可选 `METRICS_TOKEN`
@@ -449,7 +453,7 @@ curl -f http://localhost:9091/healthz
 - [x] GitHub Actions `.github/workflows/ci.yml`：ruff → pytest(含覆盖率) → 上传 coverage
 - [x] 同时修掉一个真实缺陷：admin 路由抛 `InvalidDepartment` 现在由全局处理器映射为 400（此前是 500）
 - [x] 验收（本机）：`pytest -q` **246 passed**；`ruff check` 全绿；覆盖率 **92%**（engine 86%，reranker/metrics/runtime/tools 100%）
-- [ ] CI 首次在 GitHub 上跑通（需要 push 后观察 Actions 结果；本地已验证同样的命令全绿）
+- [ ] CI 首次在 GitHub 上跑通（需要推送后在仓库 Actions 页面观察；本机没有 `gh`，本地已验证同样的命令全绿）
 
 #### 9.3.2 `ChatService` 抽取 + 惰性引擎
 - [x] 新增 `src/chat_service.py`：`prepare / run / open_stream` 统一校验、维护检查、答案缓存、异常分类、指标与日志；`/chat` 与 `/chat/stream` 各剩约 15 行

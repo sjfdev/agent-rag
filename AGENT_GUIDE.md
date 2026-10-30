@@ -99,7 +99,8 @@ agent-rag/
 ├── volumes/                 # Milvus/etcd 数据卷
 ├── eval/cases.jsonl         # 检索评测集（命中 + 泄漏用例）
 ├── config/acl.example.json  # 文档级 ACL 规则示例
-├── tests/                   # pytest 离线测试（246 项，覆盖率 92%）
+├── tests/                   # pytest 离线测试（265 项，覆盖率 92%）
+├── Makefile                 # 常用命令（make help）
 ├── .github/workflows/ci.yml # ruff + pytest（CI）
 ├── WORKLOG.md               # 本轮迭代记录与验证矩阵
 ├── scripts/
@@ -310,6 +311,18 @@ python run_ingestion.py                 # 增量入库
 - 文件删除 → 自动清理其 chunk（`--no-prune` 可关闭）
 - 切换 FAISS/Milvus 或元数据结构变化后，用 `--reset` 重建
 
+### 4.5.0 常用命令（Makefile）
+
+```bash
+make help        # 列出所有目标
+make install     # 安装依赖
+make ingest      # 增量入库
+make run         # 启动 API
+make test        # 离线测试
+make doctor      # 环境体检（--no-llm 可跳过网络）
+make milvus-up   # 启动 Milvus 并等待健康
+```
+
 ### 4.5.1 运行测试
 
 ```bash
@@ -451,6 +464,8 @@ curl -s http://localhost:8000/metrics | grep '^agent_rag_'
 | 503 | LLM 上游不可用（网络/DNS/超时） | `{"detail":{"error":"llm upstream unavailable","request_id":"..."}}` |
 | 503 | 重建提交的切换瞬间 | `{"detail":{"error":"index rebuilding","request_id":"..."}}` |
 | 503 | 向量库不可达 | `{"detail":{"error":"vector_store_unavailable","request_id":"..."}}` |
+| 429 | 触发限流（`RATE_LIMIT_PER_MINUTE`） | `{"detail":{"error":"rate_limited","request_id":"..."}}` + `Retry-After` |
+| 504 | 超过 `CHAT_TIMEOUT` | `{"detail":{"error":"timeout","request_id":"..."}}` |
 | 500 | 内部错误，不回传堆栈 | `{"detail":{"error":"internal error","request_id":"85c68605"}}` |
 
 服务端日志会打印完整堆栈与 `request_id`，响应头也带 `X-Request-ID`，便于对账。
@@ -531,7 +546,7 @@ python scripts/check_loaders.py      # 9 种格式解析（不写向量库）
 python scripts/check_admin.py        # 管理台上传→入库→删除冒烟
 python scripts/bench_retrieval.py    # embedding / FAISS / Milvus / LLM 延迟
 python scripts/generate_demo_files.py  # 重建 data/Demo 多格式样例
-pytest -q                            # 离线测试（246 项，~20s，覆盖率 92%，无需服务/LLM）
+pytest -q                            # 离线测试（265 项，~25s，覆盖率 92%，无需服务/LLM）
 ruff check src tests main.py run_ingestion.py   # 代码检查
 python test_agent.py                 # 端到端 18 项断言（需服务已启动）
 ```
@@ -619,6 +634,8 @@ python run_ingestion.py --no-prune # 不清理已删除文件
 | `AUDIT_LOG_PATH` | `./logs/admin_audit.log` | 管理操作审计（JSON Lines） |
 | `JOBS_PATH` | `./logs/ingest_jobs.json` | 入库任务历史（重启恢复） |
 | `CHAT_API_KEY` | 空 | 非空时 `/chat` 需要 `X-API-Key` 或 Bearer |
+| `RATE_LIMIT_PER_MINUTE` | `0` | 每调用方每分钟请求上限（0 关闭），超限 429 |
+| `CHAT_TIMEOUT` | `120` | 单次问答整体时限（秒），超时 504 `timeout` |
 | `ACL_ENABLED` | `false` | 是否启用文档级 ACL |
 | `ACL_FILE` | `./config/acl.json` | ACL 规则文件（见 `config/acl.example.json`） |
 | `FAQ_CACHE_ENABLED` | `true` | 是否启用 FAQ 答案缓存 |

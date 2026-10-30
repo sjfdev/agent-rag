@@ -11,8 +11,11 @@ yields already-encoded SSE frames.
 
 import json
 import logging
+import threading
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeout
 from dataclasses import dataclass
 from typing import Any, Dict, Iterator, Optional
 
@@ -23,53 +26,50 @@ from src import metrics
 from src.agent import app as agent_app
 from src.cache import answer_cache
 from src.config import settings
+from src.errors import classify_error, is_store_error, is_upstream_error
+from src.ratelimit import RateLimiter
 from src.runtime import in_maintenance
 from src.schemas import ChatRequest, ChatResponse
 from src.validation import InvalidDepartment, validate_depts
 
 logger = logging.getLogger("agent-rag.chat")
 
-# Vector-store connection failures (Milvus down, FAISS index unreadable).
-try:
-    from pymilvus.exceptions import MilvusException
-except Exception:  # pragma: no cover
-    MilvusException = ()
+__all__ = [
+    "ChatFailure",
+    "Prepared",
+    "cache_bypassed",
+    "cache_lookup",
+    "cache_store",
+    "classify_error",
+    "is_store_error",
+    "is_upstream_error",
+    "open_stream",
+    "prepare",
+    "ratelimiter",
+    "run",
+]
 
-try:  # openai is a hard dependency of langchain-openai
-    from openai import APIConnectionError, APITimeoutError
-except Exception:  # pragma: no cover
-    APIConnectionError = APITimeoutError = ()
-
-
-# ---------------------------------------------------------------------------
-# error classification
-# ---------------------------------------------------------------------------
-
-def is_upstream_error(exc: Exception) -> bool:
-    """Network/DNS/timeout failures while talking to the LLM provider."""
-    if APIConnectionError and isinstance(exc, (APIConnectionError, APITimeoutError)):
-        return True
-    names = {cls.__name__ for cls in type(exc).__mro__}
-    return bool(
-        names & {"ConnectError", "ReadTimeout", "ConnectTimeout", "APITimeoutError"}
-    )
+_executor = ThreadPoolExecutor(max_workers=8, thread_name_prefix="chat-deadline")
 
 
-def is_store_error(exc: Exception) -> bool:
-    """The vector store is unreachable (as opposed to a bad request or a bug)."""
-    if MilvusException and isinstance(exc, MilvusException):
-        return True
-    names = {cls.__name__ for cls in type(exc).__mro__}
-    return bool(names & {"ConnectionError", "ConnectionRefusedError", "MilvusException"})
+class ChatTimeout(Exception):
+    """The request exceeded CHAT_TIMEOUT before the agent finished."""
 
 
-def classify_error(exc: Exception) -> tuple:
-    """Map an exception to (http_status, code, message)."""
-    if is_store_error(exc):
-        return 503, "vector_store_unavailable", "vector store unavailable"
-    if is_upstream_error(exc):
-        return 503, "upstream_unavailable", "llm upstream unavailable"
-    return 500, "internal_error", "internal error"
+# Per-caller limit; recreated if the configured value changes (tests).
+_limiter_lock = threading.Lock()
+_limiter: Optional[RateLimiter] = None
+_limiter_config = None
+
+
+def ratelimiter() -> RateLimiter:
+    global _limiter, _limiter_config
+    config = (settings.RATE_LIMIT_PER_MINUTE, 60.0)
+    with _limiter_lock:
+        if _limiter is None or _limiter_config != config:
+            _limiter = RateLimiter(limit=config[0], window=config[1])
+            _limiter_config = config
+        return _limiter
 
 
 class ChatFailure(Exception):
@@ -93,14 +93,51 @@ class Prepared:
     inputs: Dict[str, Any]
 
 
-def prepare(request: ChatRequest, endpoint: str) -> Prepared:
+def _client_key(request: ChatRequest, headers: Any) -> str:
+    """Rate-limit identity: real client IP when known, else the user id.
+
+    Behind a proxy the forwarded address is the only value an abusive caller
+    cannot rotate cheaply, so prefer it. Without one (direct or tests) the user
+    id keeps limits per caller instead of lumping everyone together.
+    """
+    lowered = {str(k).lower(): str(v) for k, v in (headers or {}).items()}
+    forwarded = lowered.get("x-forwarded-for", "").split(",")[0].strip()
+    client_ip = forwarded or lowered.get("x-real-ip", "").strip()
+    if client_ip:
+        return f"ip:{client_ip}"
+    return f"user:{request.user_id or 'unknown'}"
+
+
+def prepare(
+    request: ChatRequest, endpoint: str, headers: Any = None
+) -> Prepared:
     """Validate the payload and build graph inputs.
 
-    Raises HTTPException for maintenance (503) and invalid departments (400),
-    recording the rejection metric exactly once.
+    Raises HTTPException for maintenance (503), rate limiting (429) and invalid
+    departments (400), recording the rejection metric exactly once.
     """
     request_id = uuid.uuid4().hex[:8]
     started = time.perf_counter()
+
+    allowed, retry_after = ratelimiter().allow(_client_key(request, headers))
+    if not allowed:
+        metrics.observe_request(
+            endpoint=endpoint,
+            status="rejected",
+            elapsed_seconds=time.perf_counter() - started,
+        )
+        raise HTTPException(
+            status_code=429,
+            detail={
+                "error": "rate_limited",
+                "message": "too many requests",
+                "request_id": request_id,
+            },
+            headers={
+                "X-Request-ID": request_id,
+                "Retry-After": str(int(max(retry_after, 1))),
+            },
+        )
 
     if in_maintenance():
         metrics.observe_request(
@@ -260,7 +297,7 @@ def _cache_dept(request: ChatRequest) -> str:
 # ---------------------------------------------------------------------------
 
 def run(request: ChatRequest, headers: Any, endpoint: str = "chat") -> ChatResponse:
-    prepared = prepare(request, endpoint)
+    prepared = prepare(request, endpoint, headers)
     started = prepared.started
 
     cached = cache_lookup(request, headers)
@@ -280,10 +317,10 @@ def run(request: ChatRequest, headers: Any, endpoint: str = "chat") -> ChatRespo
         )
 
     try:
-        final_state = agent_app.invoke(
-            prepared.inputs,
-            config={"recursion_limit": settings.AGENT_RECURSION_LIMIT},
-        )
+        final_state = _invoke_with_deadline(prepared.inputs)
+    except (FutureTimeout, ChatTimeout) as exc:
+        _record_failure(prepared, exc)
+        raise ChatFailure(prepared.request_id, exc) from exc
     except Exception as exc:
         _record_failure(prepared, exc)
         raise ChatFailure(prepared.request_id, exc) from exc
@@ -310,6 +347,29 @@ def run(request: ChatRequest, headers: Any, endpoint: str = "chat") -> ChatRespo
         timings=timings,
         request_id=prepared.request_id,
     )
+
+
+def _invoke_with_deadline(inputs: Dict[str, Any]) -> Dict[str, Any]:
+    """Run the graph with an overall deadline.
+
+    The worker thread cannot be killed, but the caller stops waiting and the
+    request fails fast instead of hanging for minutes.
+    """
+    budget = max(int(settings.CHAT_TIMEOUT or 0), 0)
+    if budget <= 0:
+        return agent_app.invoke(
+            inputs, config={"recursion_limit": settings.AGENT_RECURSION_LIMIT}
+        )
+    future = _executor.submit(
+        agent_app.invoke,
+        inputs,
+        config={"recursion_limit": settings.AGENT_RECURSION_LIMIT},
+    )
+    try:
+        return future.result(timeout=budget)
+    except FutureTimeout:
+        future.cancel()
+        raise ChatTimeout(f"agent exceeded {budget}s")
 
 
 def _record_failure(prepared: Prepared, exc: Exception) -> None:
@@ -339,7 +399,7 @@ def open_stream(
     Preparing eagerly means validation and maintenance faults surface as HTTP
     errors before a 200 stream is opened.
     """
-    prepared = prepare(request, endpoint)
+    prepared = prepare(request, endpoint, headers)
     return prepared.request_id, _stream(prepared, request, headers)
 
 
@@ -381,6 +441,10 @@ def _stream(
                 chunk, meta = payload
                 if meta.get("langgraph_node") != "agent":
                     continue
+                if settings.CHAT_TIMEOUT and (
+                    time.perf_counter() - started > settings.CHAT_TIMEOUT
+                ):
+                    raise ChatTimeout(f"agent exceeded {settings.CHAT_TIMEOUT}s")
                 text = getattr(chunk, "content", "")
                 if text:
                     if first_token_at is None:

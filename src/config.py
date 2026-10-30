@@ -67,6 +67,12 @@ class Settings(BaseSettings):
     METRICS_TOKEN: str = ""
     # Optional API key for /chat; when set, callers must send X-API-Key.
     CHAT_API_KEY: str = ""
+    # Per-caller rate limit for /chat and /chat/stream (0 disables).
+    # Requests are counted per user_id (or client IP when absent) in a sliding
+    # window; with several workers each process enforces its own limit.
+    RATE_LIMIT_PER_MINUTE: int = 0
+    # How long the LLM may take before the request is abandoned (seconds).
+    CHAT_TIMEOUT: int = 120
     # Document-level ACL (JSON file). Disabled by default.
     ACL_ENABLED: bool = False
     ACL_FILE: str = "./config/acl.json"

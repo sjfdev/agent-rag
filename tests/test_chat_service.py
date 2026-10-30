@@ -43,7 +43,8 @@ def test_prepare_rejects_during_maintenance(monkeypatch):
     "exc, status, code",
     [
         (ConnectionRefusedError("nope"), 503, "vector_store_unavailable"),
-        (TimeoutError("slow"), 500, "internal_error"),
+        # Timeouts are now their own class (504) rather than a generic 500.
+        (TimeoutError("slow"), 504, "timeout"),
         (RuntimeError("bug"), 500, "internal_error"),
     ],
 )
