@@ -58,19 +58,61 @@ llm = ChatOpenAI(
 ).bind_tools(agent_tools)
 
 
-_FOLLOWUP_WORDS = {
-    "it", "its", "itself", "they", "them", "their", "this", "that", "these",
-    "those", "he", "she", "him", "her", "above", "former", "latter", "same",
+# Personal pronouns almost always refer to something in the previous turn.
+_PERSONAL_PRONOUNS = {
+    "it", "its", "they", "them", "their", "he", "him", "she", "her",
 }
-_ZH_FOLLOWUP = ("它", "这个", "那个", "他们", "上述", "该", "此", "这些", "那些")
+_ZH_PERSONAL = ("它", "他们", "她们", "它们")
+# Demonstratives can introduce a *new* topic ("那 Kubernetes 呢？"), so they only
+# count as a follow-up when the two questions are also semantically close.
+_DEMONSTRATIVES = {
+    "this", "that", "these", "those", "above", "former", "latter", "same",
+}
+_ZH_DEMONSTRATIVES = ("这个", "那个", "这些", "那些", "上述", "该", "此", "这", "那")
+
+# Cosine thresholds on the embedding of (previous, current).
+_DEMONSTRATIVE_MIN_SIM = 0.45
+_GENERIC_MIN_SIM = 0.55
+
+
+def decide_followup(previous: str, current: str, similarity: float) -> bool:
+    """Decide whether `current` needs `previous` as retrieval context.
+
+    Pure function so it can be tested without loading an embedding model.
+    """
+    words = set(re.findall(r"[a-z']+", current.lower()))
+    if words & _PERSONAL_PRONOUNS or any(m in current for m in _ZH_PERSONAL):
+        return True
+    if words & _DEMONSTRATIVES or any(m in current for m in _ZH_DEMONSTRATIVES):
+        return similarity >= _DEMONSTRATIVE_MIN_SIM
+    return similarity >= _GENERIC_MIN_SIM
+
+
+def _similarity(previous: str, current: str) -> float:
+    """Cosine similarity between two questions; 0.0 if embeddings are unavailable."""
+    try:
+        import math
+
+        from src.engine import kb_engine
+
+        a = kb_engine.embeddings.embed_query(previous)
+        b = kb_engine.embeddings.embed_query(current)
+        dot = sum(x * y for x, y in zip(a, b))
+        na = math.sqrt(sum(x * x for x in a))
+        nb = math.sqrt(sum(y * y for y in b))
+        if not na or not nb:
+            return 0.0
+        return dot / (na * nb)
+    except Exception:
+        return 0.0
 
 
 def _retrieval_query(messages: List[BaseMessage]) -> str:
-    """Build the search query, carrying context when the user asks a follow-up.
+    """Build the search query, carrying context for genuine follow-ups.
 
-    A follow-up is detected by pronouns / demonstratives or a very short
-    message. Concatenating the previous question keeps retrieval cheap (no
-    extra LLM call) while resolving references like "who approves it?".
+    A follow-up is detected by pronouns and a semantic-similarity guard, so a
+    topic switch such as "那 Kubernetes 呢？" does not inherit the previous
+    question. Concatenating avoids an extra LLM call.
     """
     user_messages = [m for m in messages if isinstance(m, HumanMessage)]
     if not user_messages:
@@ -80,11 +122,9 @@ def _retrieval_query(messages: List[BaseMessage]) -> str:
         return current
 
     previous = str(user_messages[-2].content).strip()
-    words = set(re.findall(r"[a-z']+", current.lower()))
-    is_followup = bool(words & _FOLLOWUP_WORDS) or len(current) <= 16 or any(
-        marker in current for marker in _ZH_FOLLOWUP
-    )
-    if previous and is_followup:
+    if not previous:
+        return current
+    if decide_followup(previous, current, _similarity(previous, current)):
         return f"{previous} {current}"
     return current
 

@@ -94,7 +94,12 @@ def main():
     # Files are gone, but vectors are only removed by a full prune. Remove the
     # (now empty) department folder and prune so the smoke test leaves no trace.
     shutil.rmtree(data_dir / dept, ignore_errors=True)
-    api("POST", "/admin/api/ingest", json={})
+    job = api("POST", "/admin/api/ingest", json={})
+    deadline = time.time() + TIMEOUT
+    while time.time() < deadline:
+        if api("GET", f"/admin/api/jobs/{job['job_id']}")["status"] in {"done", "error"}:
+            break
+        time.sleep(1)
 
     print()
     if failures:

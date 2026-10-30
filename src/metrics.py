@@ -103,7 +103,7 @@ def _refresh_index_gauge() -> None:
     try:
         from src.engine import kb_engine
 
-        _INDEX_CHUNKS.set(kb_engine.count())
+        _INDEX_CHUNKS.set(kb_engine.live_count())
         _index_state["ok"] = 1.0
     except Exception:
         _index_state["ok"] = 0.0

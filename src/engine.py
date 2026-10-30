@@ -56,7 +56,11 @@ class BaseVectorStore(ABC):
 
     @abstractmethod
     def count(self) -> int:
-        """Total number of indexed chunks (0 when the store is missing)."""
+        """Chunks in the active write target (shadow during a rebuild)."""
+
+    def count_live(self) -> int:
+        """Chunks in the collection that queries are currently served from."""
+        return self.count()
 
     @abstractmethod
     def fetch_documents(self, dept: str) -> List[Document]:
@@ -91,6 +95,23 @@ class BaseVectorStore(ABC):
     @abstractmethod
     def doc_summary(self) -> Dict[str, Dict[str, Any]]:
         """Map doc_id -> {doc_hash, chunks} without loading chunk text."""
+
+    def delete_stale_versions(self, doc_id: str, keep_hash: str) -> int:
+        """Delete chunks of `doc_id` whose doc_hash != keep_hash.
+
+        Used by the safe-replace flow: write the new version first, then remove
+        the old one, so a crash never leaves the document missing.
+        """
+        return 0
+
+    def begin_rebuild(self) -> None:
+        """Start writing into a shadow index; reads keep serving the live one."""
+
+    def commit_rebuild(self) -> None:
+        """Swap the shadow index in and drop the old one."""
+
+    def abort_rebuild(self) -> None:
+        """Discard the shadow index and keep serving the live one."""
 
     @abstractmethod
     def count_by_doc_id(self, doc_id: str) -> int:
@@ -211,6 +232,17 @@ class MilvusDriver(BaseVectorStore):
             vector_field=vector_field,
             builtin_function=builtin_function,
         )
+
+    @property
+    def _write_db(self):
+        """Store writes go to: the shadow collection during a rebuild."""
+        return getattr(self, "_rebuild_target", None) or self.vector_db
+
+    @property
+    def _write_collection(self) -> str:
+        if getattr(self, "_rebuild_target", None) is not None:
+            return self.shadow_collection
+        return self.collection
 
     def _decide_sparse(self) -> bool:
         """Resolve HYBRID_ENGINE for this Milvus server; may raise on misconfig."""
@@ -335,8 +367,8 @@ class MilvusDriver(BaseVectorStore):
 
     def add_documents(self, texts: List[str], metadatas: List[Dict[str, Any]]):
         docs = [Document(page_content=t, metadata=m) for t, m in zip(texts, metadatas)]
-        self.vector_db.add_documents(docs)
-        if self.sparse_enabled:
+        self._write_db.add_documents(docs)
+        if self.sparse_enabled and getattr(self, "_rebuild_target", None) is None:
             # The first insert may have just created the collection/BM25 index.
             self.refresh_capabilities()
 
@@ -370,7 +402,26 @@ class MilvusDriver(BaseVectorStore):
             return True
 
     def count(self) -> int:
+        if getattr(self, "_rebuild_target", None) is not None:
+            return self._count_in(self.shadow_collection, "")
         return self._count("", allow_missing=True)
+
+    def count_live(self) -> int:
+        return self._count("", allow_missing=True)
+
+    def _count_in(self, collection: str, expr: str) -> int:
+        client = self.vector_db.client
+        try:
+            if not client.has_collection(collection):
+                return 0
+            res = client.query(
+                collection_name=collection,
+                filter=expr,
+                output_fields=["count(*)"],
+            )
+            return int(res[0]["count(*)"]) if res else 0
+        except Exception:
+            return 0
 
     _FETCH_FIELDS = [
         "text", "source", "dept", "doc_id", "doc_hash", "kind",
@@ -408,9 +459,25 @@ class MilvusDriver(BaseVectorStore):
         except Exception:
             return set()
 
+    def _query_in(self, collection: str, expr: str, fields: List[str], limit: int):
+        client = self.vector_db.client
+        if not client.has_collection(collection):
+            return []
+        return client.query(
+            collection_name=collection,
+            filter=expr,
+            output_fields=fields,
+            limit=limit,
+        )
+
     def get_doc_hash(self, doc_id: str) -> Optional[str]:
+        target = (
+            self.shadow_collection
+            if getattr(self, "_rebuild_target", None) is not None
+            else self.collection
+        )
         try:
-            res = self._query(f'doc_id == "{doc_id}"', ["doc_hash"], limit=1)
+            res = self._query_in(target, f'doc_id == "{doc_id}"', ["doc_hash"], 1)
             return res[0].get("doc_hash") if res else None
         except Exception:
             # Collection (or field) does not exist yet.
@@ -435,14 +502,14 @@ class MilvusDriver(BaseVectorStore):
             expr = self._doc_expr(batch)
             try:
                 removed += self._count(expr)
-                self.vector_db.delete(expr=expr)
+                self._write_db.delete(expr=expr)
             except Exception:
                 logger.warning(
                     "failed to delete %d doc(s) from milvus", len(batch), exc_info=True
                 )
         if removed:
             try:
-                self.vector_db.client.flush(self.collection)
+                self.vector_db.client.flush(self._write_collection)
             except Exception:
                 logger.warning("flush after delete failed", exc_info=True)
         return removed
@@ -460,9 +527,17 @@ class MilvusDriver(BaseVectorStore):
 
     def doc_summary(self) -> Dict[str, Dict[str, Any]]:
         summary: Dict[str, Dict[str, Any]] = {}
+        target = (
+            self.shadow_collection
+            if getattr(self, "_rebuild_target", None) is not None
+            else self.collection
+        )
+        client = self.vector_db.client
+        if not client.has_collection(target):
+            return summary
         try:
-            iterator = self.vector_db.client.query_iterator(
-                collection_name=self.collection,
+            iterator = client.query_iterator(
+                collection_name=target,
                 batch_size=1000,
                 filter="",
                 output_fields=["doc_id", "doc_hash"],
@@ -484,12 +559,162 @@ class MilvusDriver(BaseVectorStore):
             logger.warning("failed to build doc summary from milvus", exc_info=True)
         return summary
 
+    def delete_stale_versions(self, doc_id: str, keep_hash: str) -> int:
+        if not doc_id or not keep_hash:
+            return 0
+        escaped_id = doc_id.replace("\\", "\\\\").replace('"', '\\"')
+        escaped_hash = keep_hash.replace("\\", "\\\\").replace('"', '\\"')
+        expr = (
+            f'doc_id == "{escaped_id}" and doc_hash != "{escaped_hash}"'
+        )
+        return self.delete_by_expr(expr)
+
+    def delete_by_expr(self, expr: str) -> int:
+        """Delete by an arbitrary metadata expression; returns chunks removed."""
+        try:
+            if getattr(self, "_rebuild_target", None) is not None:
+                removed = self._count_in(self.shadow_collection, expr)
+            else:
+                removed = self._count(expr)
+        except Exception:
+            removed = 0
+        try:
+            self._write_db.delete(expr=expr)
+            if removed:
+                self.vector_db.client.flush(self._write_collection)
+        except Exception:
+            logger.warning("delete by expr failed: %s", expr, exc_info=True)
+            return 0
+        return removed
+
+    @property
+    def shadow_collection(self) -> str:
+        return getattr(
+            self, "_shadow_name", f"{settings.MILVUS_COLLECTION}__rebuild"
+        )
+
+    def _open_collection(self, name: str, create: bool = False):
+        """Build a Milvus wrapper for an arbitrary collection name."""
+        from langchain_milvus.function import BM25BuiltInFunction
+
+        builtin_function = None
+        vector_field = "vector"
+        if self.sparse_enabled:
+            analyzer = None
+            try:
+                analyzer = json.loads(settings.HYBRID_ANALYZER)
+            except json.JSONDecodeError:
+                logger.warning(
+                    "invalid HYBRID_ANALYZER=%r, using default", settings.HYBRID_ANALYZER
+                )
+            builtin_function = BM25BuiltInFunction(
+                output_field_names=settings.HYBRID_SPARSE_FIELD,
+                analyzer_params=analyzer,
+            )
+            vector_field = ["vector", settings.HYBRID_SPARSE_FIELD]
+        return Milvus(
+            embedding_function=self.embeddings,
+            connection_args=_connection_args(),
+            collection_name=name,
+            auto_id=True,
+            drop_old=create,
+            vector_field=vector_field,
+            builtin_function=builtin_function,
+        )
+
+    def begin_rebuild(self) -> None:
+        """Create an empty shadow collection; the live one keeps serving reads."""
+        # Unique physical names guarantee we never drop the collection that
+        # the live alias currently points at.
+        self._shadow_name = f"{settings.MILVUS_COLLECTION}__r{int(time.time() * 1000)}"
+        self._rebuild_target = self._open_collection(self.shadow_collection)
+        logger.info("milvus rebuild started in %s", self.shadow_collection)
+
+    @property
+    def rebuild_target(self):
+        """Handle used for writes while a rebuild is running."""
+        return getattr(self, "_rebuild_target", None)
+
+    def commit_rebuild(self) -> None:
+        """Point the live collection name at the rebuilt shadow collection.
+
+        Milvus cannot have an alias with the same name as a physical collection,
+        so an existing physical `enterprise_kb` is renamed to a legacy name
+        first. The read name then resolves through the alias to the shadow.
+        """
+        client = self.vector_db.client
+        live_name = settings.MILVUS_COLLECTION
+        shadow = self.shadow_collection
+        if not client.has_collection(shadow):
+            raise RuntimeError(f"shadow collection {shadow} does not exist")
+
+        aliases = client.list_aliases().get("aliases", [])
+        if live_name in aliases:
+            previous = client.describe_alias(live_name).get("collection_name")
+        elif client.has_collection(live_name):
+            # Legacy deployment: a physical collection with the live name.
+            previous = live_name
+            legacy = f"{live_name}__old_{int(time.time())}"
+            client.rename_collection(live_name, legacy)
+            self._legacy_collection = legacy
+            previous = legacy
+            logger.info("renamed physical collection %s -> %s", live_name, legacy)
+        else:
+            previous = None
+
+        try:
+            client.create_alias(shadow, live_name)
+        except Exception:
+            client.alter_alias(shadow, live_name)
+
+        self._rebuild_target = None
+        self._shadow_name = None
+        self.collection = live_name
+        self.vector_db = self._open_collection(live_name)
+        logger.info("milvus rebuild committed: %s -> alias %s", shadow, live_name)
+
+        # Drop the previous physical collection unless it is the legacy one,
+        # which drop_legacy_collection() handles.
+        if previous and previous != shadow and previous != getattr(
+            self, "_legacy_collection", None
+        ):
+            try:
+                client.drop_collection(previous)
+                logger.info("dropped previous collection %s", previous)
+            except Exception:
+                logger.warning("could not drop previous collection %s", previous)
+
+    def drop_legacy_collection(self) -> None:
+        legacy = getattr(self, "_legacy_collection", None)
+        if not legacy:
+            return
+        try:
+            self.vector_db.client.drop_collection(legacy)
+        except Exception:
+            logger.warning("could not drop legacy collection %s", legacy, exc_info=True)
+        self._legacy_collection = None
+
+    def abort_rebuild(self) -> None:
+        client = self.vector_db.client
+        shadow = self.shadow_collection
+        self._rebuild_target = None
+        try:
+            if client.has_collection(shadow):
+                client.drop_collection(shadow)
+        except Exception:
+            logger.warning("could not drop shadow collection", exc_info=True)
+        self._shadow_name = None
+        self.collection = settings.MILVUS_COLLECTION
+        self.vector_db = self._open_collection(self.collection)
+        logger.info("milvus rebuild aborted, live collection untouched")
+
     def reset(self) -> None:
         try:
-            self.vector_db.client.drop_collection(self.collection)
-            print(f"Dropped Milvus collection {self.collection}.")
+            self.vector_db.client.drop_collection(settings.MILVUS_COLLECTION)
+            print(f"Dropped Milvus collection {settings.MILVUS_COLLECTION}.")
         except Exception:
-            logger.warning("drop collection %s failed", self.collection, exc_info=True)
+            logger.warning("drop collection failed", exc_info=True)
+        self.collection = settings.MILVUS_COLLECTION
         self.__init__(self.embeddings)
 
 
@@ -514,8 +739,21 @@ class FAISSDriver(BaseVectorStore):
             return {}
         return self.vector_db.docstore._dict
 
+    def _write_docs(self):
+        target = getattr(self, "_rebuild_target", None)
+        if target is None:
+            # During a rebuild the shadow index starts empty; reading the live
+            # hashes here would make every file look unchanged.
+            if getattr(self, "_rebuild_path", None):
+                return {}
+            return self._docs()
+        return target.docstore._dict
+
     def add_documents(self, texts: List[str], metadatas: List[Dict[str, Any]]):
         docs = [Document(page_content=t, metadata=m) for t, m in zip(texts, metadatas)]
+        if getattr(self, "_rebuild_path", None):
+            self._write_add(docs)
+            return
         if self.vector_db is None:
             self.vector_db = FAISS.from_documents(docs, self.embeddings)
         else:
@@ -540,6 +778,15 @@ class FAISSDriver(BaseVectorStore):
         return self.count() == 0
 
     def count(self) -> int:
+        target = getattr(self, "_rebuild_target", None) or self.vector_db
+        if target is None:
+            return 0
+        try:
+            return int(target.index.ntotal)
+        except Exception:
+            return 0
+
+    def count_live(self) -> int:
         if self.vector_db is None:
             return 0
         try:
@@ -563,7 +810,7 @@ class FAISSDriver(BaseVectorStore):
         }
 
     def get_doc_hash(self, doc_id: str) -> Optional[str]:
-        for doc in self._docs().values():
+        for doc in self._write_docs().values():
             if doc.metadata.get("doc_id") == doc_id:
                 return doc.metadata.get("doc_hash")
         return None
@@ -573,17 +820,21 @@ class FAISSDriver(BaseVectorStore):
 
     def delete_by_doc_ids(self, doc_ids: List[str]) -> int:
         wanted = {doc_id for doc_id in doc_ids if doc_id}
-        if not wanted or self.vector_db is None:
+        target = self._write_db
+        if not wanted or target is None:
             return 0
         ids = [
             key
-            for key, doc in self._docs().items()
+            for key, doc in target.docstore._dict.items()
             if doc.metadata.get("doc_id") in wanted
         ]
         if not ids:
             return 0
-        self.vector_db.delete(ids)
-        self.vector_db.save_local(settings.DB_PATH)
+        target.delete(ids)
+        if getattr(self, "_rebuild_path", None):
+            # Shadow index is only persisted on commit.
+            return len(ids)
+        target.save_local(settings.DB_PATH)
         return len(ids)
 
     def count_by_doc_id(self, doc_id: str) -> int:
@@ -598,7 +849,7 @@ class FAISSDriver(BaseVectorStore):
 
     def doc_summary(self) -> Dict[str, Dict[str, Any]]:
         summary: Dict[str, Dict[str, Any]] = {}
-        for doc in self._docs().values():
+        for doc in self._write_docs().values():
             doc_id = doc.metadata.get("doc_id")
             if not doc_id:
                 continue
@@ -607,6 +858,83 @@ class FAISSDriver(BaseVectorStore):
             )
             entry["chunks"] += 1
         return summary
+
+    def delete_stale_versions(self, doc_id: str, keep_hash: str) -> int:
+        target = getattr(self, "_rebuild_target", None) or self.vector_db
+        if not doc_id or not keep_hash or target is None:
+            return 0
+        ids = [
+            key
+            for key, doc in target.docstore._dict.items()
+            if doc.metadata.get("doc_id") == doc_id
+            and doc.metadata.get("doc_hash") != keep_hash
+        ]
+        if not ids:
+            return 0
+        target.delete(ids)
+        if getattr(self, "_rebuild_path", None):
+            return len(ids)
+        target.save_local(settings.DB_PATH)
+        return len(ids)
+
+    @property
+    def shadow_path(self) -> str:
+        return f"{settings.DB_PATH}__rebuild"
+
+    def begin_rebuild(self) -> None:
+        shutil.rmtree(self.shadow_path, ignore_errors=True)
+        self._rebuild_target = None  # created on first insert
+        import tempfile
+
+        self._rebuild_path = tempfile.mkdtemp(prefix="faiss-rebuild-")
+        logger.info("faiss rebuild started in %s", self._rebuild_path)
+
+    @property
+    def _write_db(self):
+        return getattr(self, "_rebuild_target", None) or self.vector_db
+
+    @property
+    def _write_collection(self) -> str:
+        return "faiss"
+
+    def _write_add(self, docs):
+        target = getattr(self, "_rebuild_target", None)
+        if target is None:
+            target = FAISS.from_documents(docs, self.embeddings)
+            self._rebuild_target = target
+        else:
+            target.add_documents(docs)
+
+    def commit_rebuild(self) -> None:
+        target = getattr(self, "_rebuild_target", None)
+        if target is None:
+            raise RuntimeError("no FAISS rebuild in progress")
+        path = getattr(self, "_rebuild_path", None)
+        if not path:
+            raise RuntimeError("no FAISS rebuild path")
+        target.save_local(path)
+        # Verify the shadow index loads before touching the live one.
+        FAISS.load_local(path, self.embeddings, allow_dangerous_deserialization=True)
+        backup = f"{settings.DB_PATH}__old"
+        shutil.rmtree(backup, ignore_errors=True)
+        if os.path.isdir(settings.DB_PATH):
+            os.replace(settings.DB_PATH, backup)
+        os.replace(path, settings.DB_PATH)
+        shutil.rmtree(backup, ignore_errors=True)
+        self._rebuild_target = None
+        self._rebuild_path = None
+        self.vector_db = FAISS.load_local(
+            settings.DB_PATH, self.embeddings, allow_dangerous_deserialization=True
+        )
+        logger.info("faiss rebuild committed at %s", settings.DB_PATH)
+
+    def abort_rebuild(self) -> None:
+        path = getattr(self, "_rebuild_path", None)
+        if path:
+            shutil.rmtree(path, ignore_errors=True)
+        self._rebuild_target = None
+        self._rebuild_path = None
+        logger.info("faiss rebuild aborted, live index untouched")
 
     def reset(self) -> None:
         shutil.rmtree(settings.DB_PATH, ignore_errors=True)
@@ -759,6 +1087,9 @@ class KnowledgeBaseEngine:
     def count(self) -> int:
         return self.driver.count()
 
+    def live_count(self) -> int:
+        return self.driver.count_live()
+
     def get_doc_hash(self, doc_id: str) -> Optional[str]:
         return self.driver.get_doc_hash(doc_id)
 
@@ -771,6 +1102,32 @@ class KnowledgeBaseEngine:
         removed = self.driver.delete_by_doc_ids(doc_ids)
         self._touch()
         return removed
+
+    def delete_stale_versions(self, doc_id: str, keep_hash: str) -> int:
+        removed = self.driver.delete_stale_versions(doc_id, keep_hash)
+        if removed:
+            self._touch()
+        return removed
+
+    @property
+    def is_rebuilding(self) -> bool:
+        return bool(getattr(self.driver, "_rebuild_target", None)) or bool(
+            getattr(self.driver, "_rebuild_path", None)
+        )
+
+    def begin_rebuild(self) -> None:
+        """Start a shadow rebuild; queries keep serving the live index."""
+        self.driver.begin_rebuild()
+
+    def commit_rebuild(self) -> None:
+        self.driver.commit_rebuild()
+        drop = getattr(self.driver, "drop_legacy_collection", None)
+        if callable(drop):
+            drop()
+        self._touch()
+
+    def abort_rebuild(self) -> None:
+        self.driver.abort_rebuild()
 
     def doc_summary(self, max_age: float = 5.0) -> Dict[str, Dict[str, Any]]:
         """doc_id -> {doc_hash, chunks}, cached for a few seconds.

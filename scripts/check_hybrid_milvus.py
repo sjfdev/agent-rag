@@ -98,27 +98,49 @@ def main() -> int:
         check("hybrid enforces dept isolation", all(
             d.metadata.get("dept") == "Tech" for d in (leaked or [])), str(leaked))
 
-        # Delete + reset paths must keep working with the new schema.
         check("delete by doc_id", driver.delete_by_doc_id("d1") >= 0)
-        check("reset rebuilds schema", True)
-        driver.reset()
-        check("reset leaves empty store", driver.count() == 0, str(driver.count()))
-        # The collection is created lazily on the next write; verify the new
-        # schema still carries the sparse field and BM25 index.
-        driver.add_documents([docs[0].page_content], [dict(docs[0].metadata)])
-        client.flush(collection)
-        fields_after = {
-            f["name"] for f in client.describe_collection(collection)["fields"]
-        }
-        check("reset rebuilds sparse field", settings.HYBRID_SPARSE_FIELD in fields_after)
-        check("reset rebuilds bm25 index", driver.capabilities.bm25_index)
-        check("reset collection is searchable", bool(
+
+        # Zero-downtime rebuild: writes go to a shadow, the live index keeps
+        # serving until commit.
+        live_before = driver.count_live()
+        driver.begin_rebuild()
+        check("rebuild keeps live data readable", driver.count_live() == live_before,
+              f"{driver.count_live()} vs {live_before}")
+        shadow_docs = [Document(page_content="Rebuilt visitor policy: DEMO-GUEST only.",
+                                metadata={"source": "demo.txt", "dept": "Demo",
+                                          "doc_id": "d1", "doc_hash": "h1b",
+                                          "kind": "txt", "page": 1, "slide": 0,
+                                          "sheet": "", "title": "", "chunk_index": 0})]
+        driver.add_documents([d.page_content for d in shadow_docs],
+                             [dict(d.metadata) for d in shadow_docs])
+        check("shadow receives writes", driver.count() == 1, str(driver.count()))
+        driver.commit_rebuild()
+        check("commit swaps in shadow", driver.count_live() == 1, str(driver.count_live()))
+        check("commit keeps alias resolvable",
+              client.has_collection(settings.MILVUS_COLLECTION))
+        check("committed collection is searchable", bool(
             driver.hybrid_search("DEMO-GUEST", "Demo", 1, 5)))
+
+        # Abort must leave the live index untouched.
+        live_now = driver.count_live()
+        driver.begin_rebuild()
+        driver.add_documents([d.page_content for d in shadow_docs],
+                             [dict(d.metadata) for d in shadow_docs])
+        driver.abort_rebuild()
+        check("abort keeps live data", driver.count_live() == live_now,
+              f"{driver.count_live()} vs {live_now}")
     finally:
         settings.MILVUS_COLLECTION = old_collection
         settings.HYBRID_ENGINE = old_engine
+        # Rebuild leaves a physical collection behind an alias; clean both.
         try:
-            client.drop_collection(collection)
+            client.drop_alias(collection)
+        except Exception:
+            pass
+        try:
+            for name in list(client.list_collections()):
+                if name == collection or name.startswith(f"{collection}__"):
+                    client.drop_collection(name)
         except Exception:
             pass
         client.close()

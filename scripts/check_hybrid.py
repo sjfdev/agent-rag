@@ -21,6 +21,7 @@ from src.engine import (
 )
 from src.hashing import clear_hash_cache, file_sha1, hash_cache_info
 from src.hybrid import parse_version, resolve_hybrid_mode, version_at_least
+from src.agent import decide_followup
 from src.config import settings
 from src.lexical import LexicalCache, LexicalIndex, rrf_fuse, tokenize
 
@@ -191,6 +192,22 @@ def main() -> int:
     check("doc expr uses in-list", expr.startswith("doc_id in [") and expr.endswith("]"), expr)
     check("doc expr escapes quotes", '\\"' in expr, expr)
     check("doc expr escapes backslash", "\\\\" in expr, expr)
+
+    # --- follow-up guard (pure, no embeddings) ---
+    check("pronoun is a follow-up", decide_followup("a?", "Who approves it?", 0.0))
+    check("zh pronoun is a follow-up", decide_followup("a?", "它呢？", 0.0))
+    check("demonstrative needs similarity",
+          not decide_followup("expense claims?", "那 Kubernetes 呢？", 0.36))
+    check("close demonstrative is a follow-up",
+          decide_followup("travel policy?", "这个适用于海外员工吗？", 0.50))
+    check("topic switch is rejected",
+          not decide_followup("annual leave?", "What is the VPN policy?", 0.52))
+    check("related topic is accepted",
+          decide_followup("expenses?", "What about travel expenses?", 0.63))
+    check("very close is accepted",
+          decide_followup("leave?", "Can I carry them over?", 0.57))
+    check("unrelated short question rejected",
+          not decide_followup("VPN?", "报销流程是什么？", 0.37))
 
     status = kb_engine.hybrid_status()
     check("status has engine", status["engine"] in {"off", "local", "milvus"}, str(status))

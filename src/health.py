@@ -82,7 +82,9 @@ def health(probe: bool = Query(False, description="also call the LLM endpoint"))
     }
     started = time.perf_counter()
     try:
-        store["chunks"] = kb_engine.count()
+        # Always report the live index (what queries actually see), even while
+        # a rebuild is writing into a shadow collection.
+        store["chunks"] = kb_engine.live_count()
     except Exception as exc:
         store.update(ok=False, error=type(exc).__name__)
         down = True

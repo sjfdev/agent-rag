@@ -24,28 +24,6 @@ def connection_args() -> Dict[str, Any]:
     return {"host": settings.MILVUS_HOST, "port": settings.MILVUS_PORT}
 
 
-def drop_milvus_collection(collection: Optional[str] = None) -> bool:
-    """Drop a Milvus collection without constructing the engine.
-
-    Used by `run_ingestion.py --reset` so a schema change (for example adding
-    the sparse BM25 field) can be applied before the driver decides whether
-    server-side hybrid search is available.
-    """
-    try:
-        from pymilvus import MilvusClient
-
-        client = MilvusClient(**connection_args())
-        name = collection or settings.MILVUS_COLLECTION
-        existed = client.has_collection(name)
-        if existed:
-            client.drop_collection(name)
-        client.close()
-        return existed
-    except Exception:
-        logger.warning("could not drop milvus collection", exc_info=True)
-        return False
-
-
 def parse_version(raw: Optional[str]) -> Optional[Tuple[int, int, int]]:
     """Parse ``v2.5.4`` / ``2.5.0`` / ``2.5`` into a comparable tuple."""
     if not raw:

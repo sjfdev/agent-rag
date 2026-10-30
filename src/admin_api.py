@@ -214,14 +214,19 @@ def _prune_jobs() -> None:
 def _run_job(job_id: str, dept: Optional[str], reset: bool) -> None:
     started = time.time()
     _job_update(job_id, status="running", started=started)
+    rebuilding = False
     try:
         if reset:
-            _job_log(job_id, "Dropping the existing index/collection...")
-            begin_maintenance()
-            kb_engine.reset()
+            # Build into a shadow index: queries keep serving the old data and
+            # the switch happens only after every document is written.
+            _job_log(job_id, "Building a shadow index (live queries stay online)...")
+            kb_engine.begin_rebuild()
+            rebuilding = True
 
         etl = EnterpriseETL(
-            data_dir=settings.DATA_DIR, on_log=lambda m: _job_log(job_id, m)
+            data_dir=settings.DATA_DIR,
+            on_log=lambda m: _job_log(job_id, m),
+            force=reset,
         )
         root = _data_root()
         departments = [dept] if dept else _list_depts()
@@ -233,10 +238,26 @@ def _run_job(job_id: str, dept: Optional[str], reset: bool) -> None:
             _job_log(job_id, f"[{name}]")
             keep |= etl.process_department_folder(name, str(root / name))
 
+        if reset and not keep:
+            raise RuntimeError(
+                "rebuild produced no documents; keeping the previous index"
+            )
+
         if not dept:
             pruned = etl.prune(keep)
             if pruned:
                 _job_log(job_id, f"Pruned {pruned} document(s) no longer present.")
+
+        if rebuilding:
+            _job_log(job_id, "Switching over to the rebuilt index...")
+            # Only the (millisecond) switch is a maintenance window now.
+            begin_maintenance()
+            try:
+                kb_engine.commit_rebuild()
+            finally:
+                end_maintenance()
+            rebuilding = False
+            _job_log(job_id, "Rebuild committed; previous index dropped.")
 
         if kb_engine.hybrid_mode == "local":
             try:
@@ -258,13 +279,17 @@ def _run_job(job_id: str, dept: Optional[str], reset: bool) -> None:
     except Exception as exc:
         logger.exception("ingestion job %s failed", job_id)
         _job_log(job_id, f"ERROR: {exc}")
+        if rebuilding:
+            try:
+                kb_engine.abort_rebuild()
+                _job_log(job_id, "Rebuild aborted; the previous index is still live.")
+            except Exception:
+                logger.exception("could not abort rebuild")
         _job_update(
             job_id, status="error", error=str(exc), finished=time.time()
         )
         observe_ingest_job("error")
     finally:
-        if reset:
-            end_maintenance()
         _ingest_lock.release()
 
 

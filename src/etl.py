@@ -32,9 +32,13 @@ class EnterpriseETL:
         self,
         data_dir: str = "./data",
         on_log: Optional[Callable[[str], None]] = None,
+        force: bool = False,
     ):
         self.data_dir = Path(data_dir)
         self.on_log = on_log
+        # A full rebuild starts from an empty shadow index: the live hashes
+        # would otherwise mark every file as unchanged and write nothing.
+        self.force = force
         self.splitter = RecursiveCharacterTextSplitter(
             chunk_size=800,
             chunk_overlap=100,
@@ -112,7 +116,7 @@ class EnterpriseETL:
             return doc_id
 
         doc_hash = file_sha1(path)
-        existing_hash = kb_engine.get_doc_hash(doc_id)
+        existing_hash = None if self.force else kb_engine.get_doc_hash(doc_id)
         if existing_hash == doc_hash:
             self.stats["skipped"] += 1
             self._log(f"  skip     {source} (unchanged)")
@@ -156,8 +160,10 @@ class EnterpriseETL:
             self.stats["failed"] += 1
             return doc_id
 
+        # Write the new chunks first, then delete older versions of this doc.
+        # A crash in between leaves the old copy searchable (duplicate results
+        # at worst) instead of losing the document entirely.
         if existing_hash is not None:
-            kb_engine.delete_by_doc_id(doc_id)
             self.stats["updated"] += 1
             action = "update"
         else:
@@ -165,12 +171,20 @@ class EnterpriseETL:
             action = "add"
 
         kb_engine.add_documents(texts, metadatas)
+        if existing_hash is not None:
+            stale = kb_engine.delete_stale_versions(doc_id, doc_hash)
+            if stale:
+                self._log(f"  replaced {source}: removed {stale} old chunk(s)")
         self.stats["chunks"] += len(texts)
         self._log(f"  {action:<8} {source} ({len(texts)} chunks)")
         return doc_id
 
     def prune(self, keep: Set[str]) -> int:
         """Delete chunks whose source file no longer exists under ./data."""
+        if kb_engine.is_rebuilding:
+            # The shadow index only contains current files; pruning live ids
+            # here would be wrong and could delete freshly written chunks.
+            return 0
         stale = sorted(kb_engine.list_doc_ids() - keep)
         if not stale:
             return 0

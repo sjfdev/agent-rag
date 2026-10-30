@@ -390,7 +390,7 @@ python scripts/check_health.py --probe          # 冒烟测试
 |---|---|
 | `vector_store.chunks` | 当前索引块数；低于 `HEALTH_MIN_CHUNKS` 时整体 `down`（HTTP 503） |
 | `ingestion.active` / `latest` | 是否有入库任务在跑；有任务时整体 `degraded` |
-| `maintenance` | 全量 rebuild 期间为 `true`，此时 `/chat` 返回 503 |
+| `maintenance` | 只在重建提交的切换瞬间为 `true`（毫秒级）；写入阶段查询不受影响 |
 | `llm.probe` | 仅在 `?probe=1` 时为 `ok`/`failed`，含 `latency_ms` |
 | `rerank_enabled` | 当前是否启用二阶段重排 |
 
@@ -427,7 +427,7 @@ curl -s http://localhost:8000/metrics | grep '^agent_rag_'
 | 400 | 部门名非法（含引号/空格等） | `{"detail":"invalid department name"}` |
 | 422 | 参数校验失败（缺字段、history 超过 20 条、role 非 user/assistant、文本过长） | FastAPI 标准校验结构 |
 | 503 | LLM 上游不可用（网络/DNS/超时） | `{"detail":{"error":"llm upstream unavailable","request_id":"..."}}` |
-| 503 | 正在全量重建索引 | `{"detail":{"error":"index rebuilding","request_id":"..."}}` |
+| 503 | 重建提交的切换瞬间 | `{"detail":{"error":"index rebuilding","request_id":"..."}}` |
 | 503 | 向量库不可达 | `{"detail":{"error":"vector_store_unavailable","request_id":"..."}}` |
 | 500 | 内部错误，不回传堆栈 | `{"detail":{"error":"internal error","request_id":"85c68605"}}` |
 
@@ -736,7 +736,8 @@ python scripts/bench_retrieval.py
 4. **切分参数**：`RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=100)`。chunk 太小召回碎片化，太大增加 prompt；按文档类型调整。
 5. **二阶段重排**：`src/reranker.py` 已接入 `kb_engine.search`，设置 `RERANK_ENABLED=true` 后先对融合后的候选做 CrossEncoder 重排再取 top-k。默认关闭。24 条中英评测（纯向量）：不重排 MRR 0.88 / p50≈16ms；MiniLM +≈205ms、MRR 0.92；`bge-reranker-base` +≈1.2s（p95 4.8s）、MRR 0.97。混合检索 + MiniLM 同样为 0.92。中文优先 BGE，英文/低延迟选 MiniLM，二者都需先缓存模型。
 6. **多轮检索改写**：`src/agent.py::_retrieval_query` 检测代词/指示词或极短问句，把上一轮问题拼进检索 query，不额外调用 LLM。实测追问 "Who approves it?" 时目标文档从第 3 位升到第 1 位。
-7. **混合检索（能力自适应）**：`HYBRID_ENGINE=auto` 默认。Milvus ≥ 2.5 且集合含 BM25 稀疏字段时，用服务端 `hybrid_search` + `RRFRanker`（一次请求完成稠密+稀疏融合）；否则自动回退到 `src/lexical.py` 的进程内 BM25（中英文分词：英文按词、中文按字 + 二元组，RRF 融合）。FAISS 永远走进程内 BM25。`local` 强制进程内，`milvus` 在能力不足时启动即报错（不会静默降级）。进程内 BM25 首次查询需加载该部门全部 chunk，启动后与入库后都会后台预热；`HYBRID_MAX_DOCS` 限制单部门语料。24 条评测 MRR 0.88 → 0.89，精确标识符（如 `DEMO-GUEST`）类查询收益最明显。
+7. **零停机重建**：全量重建写入影子索引（Milvus 临时集合 + alias 切换，FAISS 临时目录 + `os.replace`），提交前查询始终走旧索引；变更文件先写新版本再删旧版本，避免崩溃丢文档。维护标志只在提交的毫秒级切换瞬间置位。
+8. **混合检索（能力自适应）**：`HYBRID_ENGINE=auto` 默认。Milvus ≥ 2.5 且集合含 BM25 稀疏字段时，用服务端 `hybrid_search` + `RRFRanker`（一次请求完成稠密+稀疏融合）；否则自动回退到 `src/lexical.py` 的进程内 BM25（中英文分词：英文按词、中文按字 + 二元组，RRF 融合）。FAISS 永远走进程内 BM25。`local` 强制进程内，`milvus` 在能力不足时启动即报错（不会静默降级）。进程内 BM25 首次查询需加载该部门全部 chunk，启动后与入库后都会后台预热；`HYBRID_MAX_DOCS` 限制单部门语料。24 条评测 MRR 0.88 → 0.89，精确标识符（如 `DEMO-GUEST`）类查询收益最明显。
 
     从 2.4 升级到 2.5 后，旧集合没有稀疏字段：要么 `python run_ingestion.py --reset` 重建（推荐），要么先设 `HYBRID_ENGINE=local` 继续跑。可用 `GET /info` 的 `hybrid.engine` 确认当前实际走哪条路径；2.5 上运行 `python scripts/check_hybrid_milvus.py` 做端到端验证（使用临时集合，完成后删除）。
 8. **评测闭环**：`eval/cases.jsonl` + `scripts/eval_retrieval.py`，覆盖 Tech/Finance/HR/Demo 共 18 个命中用例和 6 个跨部门泄漏用例；调参、换重排模型或改混合策略后先跑它。
@@ -777,7 +778,7 @@ python scripts/bench_retrieval.py
 - 多轮检索为启发式改写（代词/短句拼接上轮问题），复杂指代仍可能失败；更稳的方案是 LLM 改写（会多一次调用）
 - 进程内 BM25（FAISS 模式或 Milvus < 2.5）是**单进程**索引：多 worker 各自构建，重启需预热；超大数据量请升级 Milvus 2.5 并用 `HYBRID_ENGINE=milvus`
 - `/metrics` 为单进程指标，多 worker 需在 Prometheus 侧聚合
-- 可扩展：OCR、会话持久化、文档级 ACL、零停机 alias 切换、召回率监控
+- 可扩展：OCR、会话持久化、文档级 ACL、FAQ/embedding 缓存、召回率监控
 
 ---
 

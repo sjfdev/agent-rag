@@ -13,7 +13,6 @@ Usage:
 
 import argparse
 import os
-import shutil
 import sys
 
 from src.config import settings
@@ -48,34 +47,35 @@ def main():
         return 1
 
     print(f"Vector store: {settings.VECTOR_STORE_TYPE}")
-    if args.reset:
-        print("Resetting index...")
-        if settings.VECTOR_STORE_TYPE == "milvus":
-            # Drop before the engine is created: the driver decides which
-            # schema to build from the collection that exists at startup.
-            from src.hybrid import drop_milvus_collection
-
-            if not drop_milvus_collection():
-                print("  (collection did not exist)")
-        else:
-            shutil.rmtree(settings.DB_PATH, ignore_errors=True)
-            print(f"  Removed FAISS index at {settings.DB_PATH}.")
-
-    # Imported after the reset so schema decisions see the fresh state.
-    from src.engine import kb_engine  # noqa: F401  (constructs the singleton)
+    from src.engine import kb_engine
     from src.etl import EnterpriseETL
 
-    etl = EnterpriseETL(data_dir=root)
+    if args.reset:
+        # Build into a shadow index so a failed rebuild leaves the current one
+        # intact. The live index keeps serving queries in the API process.
+        print("Building a shadow index...")
+        kb_engine.begin_rebuild()
+
+    etl = EnterpriseETL(data_dir=root, force=args.reset)
     keep = set()
 
     for dept in departments:
         print(f"\n[{dept}]")
         keep |= etl.process_department_folder(dept, os.path.join(root, dept))
 
+    if args.reset and not keep:
+        kb_engine.abort_rebuild()
+        print("\nRebuild produced no documents; the previous index was kept.")
+        return 1
+
     if not args.no_prune:
         pruned = etl.prune(keep)
         if pruned:
             print(f"\nPruned {pruned} document(s) no longer present under {root}.")
+
+    if args.reset:
+        print("\nSwitching over to the rebuilt index...")
+        kb_engine.commit_rebuild()
 
     s = etl.stats
     print(

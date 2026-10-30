@@ -237,6 +237,7 @@ curl -f http://localhost:9091/healthz
 | 2026-10-29 | 混合检索能力自适应 | `HYBRID_ENGINE=auto\|local\|milvus` + 版本/稀疏字段/BM25 索引探测；2.5+ 走服务端 hybrid_search+RRF，否则回退；`/info`、`/health`、`/metrics` 暴露实际引擎；42 项单测 + 2.5 端到端脚本 |
 | 2026-10-30 | Milvus 升级 2.5.4 + 服务端稀疏 BM25 | colima 配置镜像源后拉取成功；备份数据卷；`--reset` 先 drop 再建；实测 18/18、MRR 0.89、P50 24ms；详见 `WORKLOG.md` |
 | 2026-10-30 | 性能与清理：批量删除、`doc_summary()`、元数据/哈希缓存、检索分支收敛、删除死代码 | `/admin/api/meta` 451ms→6ms；`check_hybrid` 49/49；test_agent 13/13；评测 18/18 |
+| 2026-10-30 | 9.1 正确性：零停机重建（Milvus alias / FAISS 原子替换）、先写新后删旧、多轮相似度护栏 | 重建期间 0 失败请求；问答/更新/删除无重复 chunk；`check_hybrid` 57/57、`check_hybrid_milvus` 19/19；详见 `WORKLOG.md` |
 
 ---
 
@@ -337,7 +338,7 @@ curl -f http://localhost:9091/healthz
 - [x] **重排接入**：`kb_engine.search` 支持 `RERANK_ENABLED`；24 条评测中 MiniLM MRR 0.88→0.92（+205ms）、BGE-base 0.88→0.97（+1.2s），默认关闭
 - [x] **引用增强**：`sources` 增加 `snippet`，UI 折叠面板可展开原文
 - [x] **重建期间降级**：reset 置维护标志，`/chat` 立即返回 503 `index rebuilding`，完成后自动恢复（已实测）
-- [ ] **零停机 alias 切换**：Milvus 仍为 drop→rebuild；FAISS 写在原目录
+- [x] **零停机 alias 切换**：Milvus 写影子集合并切换 alias；FAISS 临时目录原子替换；见 9.1.1
 - [x] **混合检索（本地 BM25）**：`src/lexical.py` 中英文分词 + RRF 融合，默认开启；24 条评测 MRR 0.88→0.89，精确标识符类查询收益明显；后台预热、入库后预热、按部门缓存
 - [x] **能力自适应混合检索**：`HYBRID_ENGINE=auto` 探测 Milvus 版本与集合稀疏字段/BM25 索引，2.5+ 走服务端 `hybrid_search`+RRF，否则回退进程内 BM25；`milvus` 显式模式下能力不足启动即报错；`/info`、`/health`、`/metrics` 暴露实际引擎
 - [x] **升级 Milvus 到 2.5 并重建集合**：已升级 2.5.4（先备份数据卷），`run_ingestion.py --reset` 重建，实测 `hybrid.engine=milvus`、端到端 18/18
@@ -384,38 +385,33 @@ curl -f http://localhost:9091/healthz
 ### 9.1 P1 正确性（优先，预计 3–4 小时）
 
 #### 9.1.1 零停机重建（Milvus alias / FAISS 原子替换）
-- [ ] 位置：`src/admin_api.py::_run_job`、`src/engine.py::reset`、`src/hybrid.py`
-- [ ] 现状：`reset` 先 drop 集合再重建，期间 `/chat` 返回 503 `index rebuilding`（已能明确报错，但不可用）
-- [ ] 方案（Milvus）：
-  - 重建写入临时集合 `<collection>_rebuild`
-  - 完成且 `count > 0` 后，把应用读取的集合名切换到新集合（alias 或配置热切换）
-  - 成功后删除旧集合；失败则保留旧集合不动
-  - 保留维护标志作为“切换瞬间”的兜底（毫秒级）
-- [ ] 方案（FAISS）：
-  - 写入 `DB_PATH.rebuild`，校验可加载后 `os.replace` 原子替换
-- [ ] 并发：切换期间新请求要么读旧索引、要么读新索引，不允许读到“半成品”
-- [ ] 验收：
-  - 重建过程中持续 `curl /chat`，失败请求数为 0（或仅切换瞬间 <100ms）
-  - `python scripts/check_health.py` 全程不出现 `down`
-  - `python scripts/check_admin.py` 仍通过
-  - `VECTOR_STORE_TYPE=faiss` 下重建同样不阻塞查询
+- [x] 位置：`src/admin_api.py::_run_job`、`src/engine.py`、`run_ingestion.py`
+- [x] 方案（Milvus）：重建写入 `enterprise_kb__r<ts>` 影子集合；读仍走 live；提交时创建/切换 alias `enterprise_kb`，旧物理集合在提交后删除；失败则丢弃影子集合，live 不变
+- [x] 方案（FAISS）：写入临时目录 → 校验可加载 → `os.replace` 原子替换（旧目录作为备份后删除）
+- [x] 维护标志只在提交的切换瞬间置位（毫秒级），写入阶段完全不阻塞查询
+- [x] 验收（已实测）：
+  - 重建过程中持续请求 `/chat`：**0 个非 200**（Milvus 与 FAISS 各测 2 轮）
+  - `/health` 全程 `ok`，chunk 数保持 26
+  - `check_admin.py`、`test_agent.py`、两种后端隔离与评测全部通过
+  - CLI `run_ingestion.py --reset` 与 `/admin` 重建都走同一路径
 
 #### 9.1.2 变更文件「先写新、再删旧」
-- [ ] 位置：`src/etl.py::_process_file`
-- [ ] 现状：`delete_by_doc_id()` 之后才 `add_documents()`；插入失败/进程崩溃会**丢文档**
-- [ ] 方案：
-  - Milvus 无事务，改用“新 `doc_id` 版本号”写入（如 `doc_id` + `doc_hash`），成功后删除旧版本
-  - 或先写入新 chunk（临时 `doc_id` 后缀），成功后再删旧并改写 `doc_id`（Milvus 不支持原地更新，需插入 + 删除）
-  - FAISS：先在内存构建新索引，成功后 `save_local` 覆盖
-- [ ] 验收：注入一次解析/写入异常，旧版本仍可检索且 `count` 不变
-- [ ] 注意：改 `doc_id` 语义会触发一次全量重建，安排在低峰
+- [x] 位置：`src/etl.py::_process_file`、`src/engine.py::delete_stale_versions`
+- [x] 方案：先 `add_documents()` 写入新版本（`doc_hash` 变化），成功后按 `doc_id + doc_hash != new` 删除旧 chunk；不再先删后写
+- [x] Milvus 用 `delete_by_expr`（批量），FAISS 直接按 id 删除；两种后端都保持 `doc_id` 语义不变，无需重建
+- [x] `doc_summary()` / `get_doc_hash()` 在重建期间读写已分离（写影子，读线上）
+- [x] 验收（已实测）：上传 v1→v2 后 `updated=1`、chunk 数不变；删除后立即不可见
+- [x] 注意：仍有一个小窗口（写入成功、旧版本删除前）可能短暂返回新旧两份；这是刻意的取舍——宁可重复，不丢文档
 
 #### 9.1.3 多轮改写加相似度护栏
-- [ ] 位置：`src/agent.py::_retrieval_query`
-- [ ] 现状：含代词或极短句就拼上一轮问题；若用户同时换主题（“那 Kubernetes 呢？”之前问的是报销）会引入噪声
-- [ ] 方案：拼接前用 embedding 余弦相似度或关键词重叠判断，低于阈值只取当前问句
-- [ ] 验收：新增 4 条多轮评测用例（追问命中 / 换题不污染），`eval/cases.jsonl` 一起跑
-- [ ] 目标：MRR 不下降，追问类 rank 不退化
+- [x] 位置：`src/agent.py::decide_followup` / `_retrieval_query`
+- [x] 方案：代词（it/它 等）直接视为追问；指示词（this/这个/那）与一般问句都需要 embedding 余弦相似度达标（指示词 0.45、一般 0.55）
+- [x] 判定逻辑抽成纯函数 `decide_followup(previous, current, similarity)`，无需加载模型即可单测
+- [x] 验收（已实测）：
+  - 追问 “Who approves it?” 命中 `coding_standards.pdf`
+  - 换题 “What is the VPN policy?”（上一问是年假）不再继承上下文
+  - 8 条新单测覆盖代词/指示词/换题/近义，`check_hybrid.py` 57 项全过
+  - 评测 MRR 保持 0.89，无泄漏
 
 ### 9.2 P2 性能（预计 3 小时）
 

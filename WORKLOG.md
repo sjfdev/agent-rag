@@ -14,7 +14,7 @@
 | 3 | 多轮检索改写 | `e69c57c` | 完成 |
 | 4 | 引用原文 `snippet` + UI 折叠面板 | `e69c57c` | 完成 |
 | 5 | 可选 Cross-Encoder 重排 | `e69c57c`、`033ac63` | 完成（默认关闭） |
-| 6 | 全量重建期间返回 503 | `e69c57c` | 完成 |
+| 6 | 全量重建期间返回 503 | `e69c57c` | 完成（后被 9.1.1 零停机重建取代） |
 | 7 | `/health` 存活与就绪探针 | `cd75f5a` | 完成 |
 | 8 | Prometheus `/metrics` | `d602d61` | 完成 |
 | 9 | 混合检索（进程内 BM25 + RRF） | `d602d61` | 完成 |
@@ -22,7 +22,8 @@
 | 11 | 混合检索能力自适应 | `3c650d3` | 完成 |
 | 12 | Milvus 升级 2.5.4 + 服务端稀疏 BM25 | `c87bccc` | 完成并实测 |
 | 13 | 管理台冒烟测试清理残留部门 | `53e82b9` | 完成 |
-| 14 | 性能与死代码清理（批量删除、哈希缓存、元数据缓存） | 本轮 | 完成 |
+| 14 | 性能与死代码清理（批量删除、哈希缓存、元数据缓存） | `c6a90c6` | 完成 |
+| 15 | 零停机重建 + 安全替换 + 多轮相似度护栏 | 本轮 | 完成 |
 
 当前运行态：`vector_store=milvus`、`hybrid.engine=milvus`、Milvus `v2.5.4`、26 chunks / 4 部门。
 
@@ -126,7 +127,7 @@
 ### 4.3 错误码补充
 
 - 向量库不可达时 `/chat`、`/chat/stream` 返回 `503 vector_store_unavailable`（原来是 500）
-- 全量重建期间返回 `503 index rebuilding`
+- 全量重建期间返回 `503 index rebuilding`（现在只有切换瞬间可能触发，见 5.6）
 - 前端对两者都有提示与「重试」按钮
 
 ---
@@ -191,6 +192,33 @@
 
 ---
 
+## 5.6 零停机重建与安全替换（本轮）
+
+**目标**：重建/更新期间查询不中断，且崩溃不会丢文档。
+
+| 能力 | 实现 |
+|---|---|
+| Milvus 重建 | 写入 `enterprise_kb__r<毫秒时间戳>` 影子集合；读仍走 `enterprise_kb` alias；提交时 `create_alias/alter_alias` 切到影子，随后删除旧物理集合；失败调用 `abort_rebuild()` 丢弃影子 |
+| FAISS 重建 | 写入临时目录 → 校验可加载 → `os.replace` 原子替换，旧目录作备份后删除 |
+| 维护窗口 | 只在提交的 alias 切换瞬间置位（毫秒级），写入阶段不加锁 |
+| 变更文件 | 先写新 chunk（新 `doc_hash`），成功后按 `doc_id + doc_hash != new` 删除旧版本 |
+| 读取分离 | `count()` = 写入目标，`live_count()` = 线上索引；`/health` 与 `/metrics` 用后者 |
+| 旧部署兼容 | 首次重建自动把物理 `enterprise_kb` 改名为 `enterprise_kb__old_<ts>` 再建 alias |
+| CLI | `run_ingestion.py --reset` 与 `/admin` 重建走同一套 `begin/commit/abort` |
+
+实测：
+
+- 重建期间 2 个并发 `/chat` 各轮询：**Milvus 0 失败 / FAISS 0 失败**；`/health` 全程 `ok`、26 chunks
+- v1→v2 更新：`updated=1`、chunk 数不变、无重复；删除后立即不可见
+- `abort_rebuild()` 后线上数据与计数完全不变
+- `check_hybrid_milvus.py` 19/19（新增影子读写/提交/回滚断言）
+
+### 5.7 多轮改写护栏
+
+`decide_followup(previous, current, similarity)`：代词直接拼上一轮；指示词与一般问句需 embedding 余弦 ≥ 阈值（0.45 / 0.55）。换题（如上一问报销、这一问 “那 Kubernetes 呢？”）不再污染检索。8 项纯函数单测。
+
+---
+
 ## 6. Milvus 升级（2.4.0 → 2.5.4）
 
 - 升级前备份数据卷：`volumes/milvus` + `volumes/etcd` → `milvus-2.4-<时间戳>.tgz`
@@ -199,7 +227,7 @@
   - `~/.colima/default/colima.yaml` → `docker.registry-mirrors`：
     `docker.1ms.run`、`docker.xuanyuan.me`、`docker.m.daocloud.io`、`docker.1panel.live`
   - `colima restart` 后一次拉取成功
-- `run_ingestion.py --reset` 改为**先 drop 再构造引擎**，否则新 schema 无法生效
+- `run_ingestion.py --reset` 在升级时曾改为「先 drop 再构造引擎」以应用新 schema；现在重建走影子索引，不再需要先 drop（见 5.6）
 - 重建后集合字段含 `sparse`，索引 `sparse (BM25)` + `vector (L2)`
 
 升级注意：
@@ -235,8 +263,8 @@
 | 检查 | 结果 |
 |---|---|
 | `python test_agent.py` | 13/13 通过（需服务 + LLM） |
-| `python scripts/check_hybrid.py` | 49/49 |
-| `python scripts/check_hybrid_milvus.py` | 18/18（2.5+），低版本 SKIP |
+| `python scripts/check_hybrid.py` | 57/57 |
+| `python scripts/check_hybrid_milvus.py` | 19/19（2.5+），低版本 SKIP |
 | `python scripts/check_health.py [--probe]` | 10/10、12/12 |
 | `python scripts/check_admin.py` | 10/10 |
 | `python scripts/check_loaders.py` | 全部格式通过 |
@@ -245,7 +273,7 @@
 
 手工验证：
 
-- 全量重建期间 `/chat` 503，完成后自动恢复
+- ~~全量重建期间 `/chat` 503~~ → 已改为影子索引，重建期间 0 失败（见 5.6）
 - `docker stop milvus-standalone` → `/health` 503、`/chat` 503、流式返回 `vector_store_unavailable`；恢复后自动 `ok`
 - 空 FAISS 实例 → `/health` 503
 - 6 个并发跨部门请求全部 200 且来源正确
@@ -256,7 +284,6 @@
 
 ## 9. 遗留事项
 
-- **零停机重建**：目前仍是 drop → rebuild（Milvus），期间 `/chat` 返回 503；可做 alias 切换
 - **多进程指标聚合**：`/metrics` 为单进程，多 worker 需 Pushgateway 或按 instance 聚合
 - **单 worker 约束**：入库任务与锁在进程内，`--workers>1` 状态会分裂
 - **缓存与限流**：FAQ 缓存、embedding 缓存、按用户限流、LLM 降级均未做（已做：文件哈希缓存、文档摘要缓存）
