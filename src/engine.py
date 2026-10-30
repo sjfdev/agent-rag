@@ -10,10 +10,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Set
 
-from langchain_community.vectorstores import FAISS
 from langchain_core.documents import Document
-from langchain_milvus import Milvus
-from langchain_openai import OpenAIEmbeddings
 
 from src.config import settings
 from src.hybrid import connection_args as _connection_args
@@ -51,6 +48,8 @@ def _raw_embeddings():
     if settings.EMBEDDING_BACKEND == "fake":
         return FakeEmbeddings()
     if settings.EMBEDDING_BACKEND == "openai":
+        from langchain_openai import OpenAIEmbeddings
+
         return OpenAIEmbeddings(
             model=settings.EMBEDDING_MODEL,
             openai_api_base=settings.LLM_API_BASE,
@@ -267,6 +266,8 @@ class MilvusDriver(BaseVectorStore):
                 analyzer_params=analyzer,
             )
             vector_field = ["vector", settings.HYBRID_SPARSE_FIELD]
+
+        from langchain_milvus import Milvus
 
         self.vector_db = Milvus(
             embedding_function=embeddings,
@@ -657,6 +658,8 @@ class MilvusDriver(BaseVectorStore):
                 analyzer_params=analyzer,
             )
             vector_field = ["vector", settings.HYBRID_SPARSE_FIELD]
+        from langchain_milvus import Milvus
+
         return Milvus(
             embedding_function=self.embeddings,
             connection_args=_connection_args(),
@@ -767,6 +770,8 @@ class FAISSDriver(BaseVectorStore):
     """Lightweight driver using local FAISS for rapid development/deployment."""
 
     def __init__(self, embeddings):
+        from langchain_community.vectorstores import FAISS
+
         self.embeddings = embeddings
         os.makedirs(settings.DB_PATH, exist_ok=True)
         # Initialize empty FAISS index if no persisted DB exists
@@ -796,6 +801,8 @@ class FAISSDriver(BaseVectorStore):
 
     def add_documents(self, texts: List[str], metadatas: List[Dict[str, Any]]):
         docs = [Document(page_content=t, metadata=m) for t, m in zip(texts, metadatas, strict=False)]
+        from langchain_community.vectorstores import FAISS
+
         if getattr(self, "_rebuild_path", None):
             self._write_add(docs)
             return
@@ -943,6 +950,8 @@ class FAISSDriver(BaseVectorStore):
         return "faiss"
 
     def _write_add(self, docs):
+        from langchain_community.vectorstores import FAISS
+
         target = getattr(self, "_rebuild_target", None)
         if target is None:
             target = FAISS.from_documents(docs, self.embeddings)
@@ -957,6 +966,8 @@ class FAISSDriver(BaseVectorStore):
         path = getattr(self, "_rebuild_path", None)
         if not path:
             raise RuntimeError("no FAISS rebuild path")
+        from langchain_community.vectorstores import FAISS
+
         target.save_local(path)
         # Verify the shadow index loads before touching the live one.
         FAISS.load_local(path, self.embeddings, allow_dangerous_deserialization=True)
@@ -1221,5 +1232,67 @@ class KnowledgeBaseEngine:
         self._touch()
 
 
-# Singleton instance for global use
-kb_engine = KnowledgeBaseEngine()
+_ENGINE_METHODS = {
+    name
+    for name in dir(KnowledgeBaseEngine)
+    if not name.startswith("__")
+    and callable(getattr(KnowledgeBaseEngine, name, None))
+    and not isinstance(getattr(KnowledgeBaseEngine, name, None), property)
+}
+
+
+class _LazyEngine:
+    """Proxy that builds the real engine on first use.
+
+    Importing `src.engine` used to load the embedding model (~12s) and could
+    fail at import time when torch/numpy or the model were misconfigured.
+    Scripts that only read configuration or run unit tests now start instantly,
+    and the first real call pays the cost (once).
+
+    Method access returns a thin wrapper instead of building immediately: graph
+    frameworks introspect functions at import time (LangGraph resolves
+    `kb_engine.search` in `call_model`), and that must not trigger model loading.
+    """
+
+    _instance: Optional["KnowledgeBaseEngine"] = None
+    _lock = threading.Lock()
+
+    def _get(self) -> "KnowledgeBaseEngine":
+        if self._instance is None:
+            with self._lock:
+                if self._instance is None:
+                    self._instance = KnowledgeBaseEngine()
+        return self._instance
+
+    def __getattr__(self, name: str):
+        if name.startswith("__"):
+            # Frameworks probe objects (hasattr(x, "__self__"), __wrapped__, ...)
+            # during introspection; never build the engine for those.
+            raise AttributeError(name)
+        if name in _ENGINE_METHODS:
+
+            def _call(*args, **kwargs):
+                return getattr(self._get(), name)(*args, **kwargs)
+
+            _call.__name__ = name
+            return _call
+        return getattr(self._get(), name)
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        state = "built" if self._instance is not None else "lazy"
+        return f"<LazyEngine {state}>"
+
+
+# Singleton proxy for global use; constructed on first attribute access.
+kb_engine = _LazyEngine()
+
+
+def get_engine() -> KnowledgeBaseEngine:
+    """Return the process-wide engine, constructing it if needed."""
+    return kb_engine._get()
+
+
+def reset_engine() -> None:
+    """Drop the cached instance so the next call rebuilds it (tests)."""
+    with kb_engine._lock:
+        kb_engine._instance = None

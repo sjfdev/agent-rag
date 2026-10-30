@@ -119,6 +119,8 @@ agent-rag/
     ├── hybrid.py            # 版本/能力判定 + 集合 drop 辅助
     ├── etl.py               # 多格式加载、切分、打 dept 标签
     ├── agent.py             # LangGraph 状态机、检索注入、多轮改写
+    ├── chat_service.py      # /chat 与 /chat/stream 共用逻辑（校验/缓存/异常/指标）
+    ├── schemas.py           # 请求/响应模型
     ├── tools.py             # 工单工具（检索已前置，不再暴露给模型）
     ├── lexical.py           # 进程内 BM25 + RRF 融合
     ├── reranker.py          # CrossEncoder 重排（可选，默认关闭）
@@ -510,7 +512,7 @@ python scripts/check_loaders.py      # 9 种格式解析（不写向量库）
 python scripts/check_admin.py        # 管理台上传→入库→删除冒烟
 python scripts/bench_retrieval.py    # embedding / FAISS / Milvus / LLM 延迟
 python scripts/generate_demo_files.py  # 重建 data/Demo 多格式样例
-pytest -q                            # 离线单测/接口测试（83 项，~25s，无需服务/LLM）
+pytest -q                            # 离线测试（97 项，~8s，无需服务/LLM）
 ruff check src tests main.py run_ingestion.py   # 代码检查
 python test_agent.py                 # 端到端 18 项断言（需服务已启动）
 ```
@@ -603,6 +605,7 @@ python run_ingestion.py --no-prune # 不清理已删除文件
 | `MILVUS_COLLECTION` | `enterprise_kb` | 集合名 |
 | `MILVUS_URI` | 空 | 非空时优先于 host/port（如 `http://host:19530`） |
 | `EMBEDDING_BACKEND` | `local` | `local` / `openai` / `fake`（测试用确定性向量） |
+
 | `LOCAL_EMBEDDING_MODEL` | `BAAI/bge-small-zh-v1.5` | 本地 embedding（512 维） |
 | `EMBEDDING_MODEL` | `text-embedding-3-small` | `EMBEDDING_BACKEND=openai` 时使用 |
 | `HF_ENDPOINT` | `https://hf-mirror.com` | 模型下载镜像（`src/__init__.py` 设定） |
@@ -775,13 +778,14 @@ python scripts/bench_retrieval.py
 8. **混合检索（能力自适应）**：`HYBRID_ENGINE=auto` 默认。Milvus ≥ 2.5 且集合含 BM25 稀疏字段时，用服务端 `hybrid_search` + `RRFRanker`（一次请求完成稠密+稀疏融合）；否则自动回退到 `src/lexical.py` 的进程内 BM25（中英文分词：英文按词、中文按字 + 二元组，RRF 融合）。FAISS 永远走进程内 BM25。`local` 强制进程内，`milvus` 在能力不足时启动即报错（不会静默降级）。进程内 BM25 首次查询需加载该部门全部 chunk，启动后与入库后都会后台预热；`HYBRID_MAX_DOCS` 限制单部门语料。24 条评测 MRR 0.88 → 0.89，精确标识符（如 `DEMO-GUEST`）类查询收益最明显。
 
     从 2.4 升级到 2.5 后，旧集合没有稀疏字段：要么 `python run_ingestion.py --reset` 重建（推荐），要么先设 `HYBRID_ENGINE=local` 继续跑。可用 `GET /info` 的 `hybrid.engine` 确认当前实际走哪条路径；2.5 上运行 `python scripts/check_hybrid_milvus.py` 做端到端验证（使用临时集合，完成后删除）。
-8. **评测闭环**：`eval/cases.jsonl` + `scripts/eval_retrieval.py`，覆盖 Tech/Finance/HR/Demo 共 18 个命中用例和 6 个跨部门泄漏用例；调参、换重排模型或改混合策略后先跑它。
+9. **评测闭环**：`eval/cases.jsonl` + `scripts/eval_retrieval.py`，覆盖 Tech/Finance/HR/Demo 共 18 个命中用例和 6 个跨部门泄漏用例；调参、换重排模型或改混合策略后先跑它。
 
 ### 8.4 服务层
 
 1. **同步路由 + 线程池**：`/chat` 使用 `def`，FastAPI 自动放到线程池，长请求不会阻塞事件循环。
 2. **多 worker**：`uvicorn main:app --workers 2` 可提升并发吞吐，但每个 worker 会各自加载 embedding 模型（内存翻倍），Milvus 模式更合适；FAISS 多进程写同一目录需谨慎。
-3. **缓存**：相同/相似问题可加 Redis 或内存 LRU 缓存整个回答；embedding 结果也可缓存。
+3. **缓存**：已实现进程内 FAQ 答案缓存 + 查询向量缓存（见「缓存与命中」，LRU + TTL，知识库写入即清空）；多 worker/多副本需要共享时可换 Redis。
+6. **统一服务层**：`src/chat_service.py` 收敛了 `/chat` 与 `/chat/stream` 的校验、缓存、异常映射与指标；新增接口行为时改一处即可。
 4. **预热**：启动后先发一个空/短查询，避免首个真实用户承担 1–2s 冷启动。
 5. **超时与重试**：`test_agent.py` 的 `CHAT_TIMEOUT`、`check_llm.py` 的超时可按网络情况调整；对云端 429 做指数退避。
 

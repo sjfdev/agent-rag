@@ -452,9 +452,14 @@ curl -f http://localhost:9091/healthz
 - [ ] CI 首次在 GitHub 上跑通（需要 push 后观察 Actions 结果；本地已验证同样的命令全绿）
 
 #### 9.3.2 `ChatService` 抽取 + 惰性引擎
-- [ ] `/chat` 与 `/chat/stream` 的校验、维护检查、异常映射、指标记录抽到 `src/chat_service.py`
-- [ ] `kb_engine` 改惰性单例（`get_engine()`），`scripts/check_llm.py` 不再加载 embedding
-- [ ] 验收：`python -c "import src.engine"` 不加载模型（<0.5s）；`test_agent.py` 全过
+- [x] 新增 `src/chat_service.py`：`prepare / run / open_stream` 统一校验、维护检查、答案缓存、异常分类、指标与日志；`/chat` 与 `/chat/stream` 各剩约 15 行
+- [x] 新增 `src/schemas.py` 存放请求/响应模型；`ChatResponse` 增加 `request_id`，响应头 `X-Request-ID` 与 `X-Cache` 始终返回
+- [x] 新增 `ChatFailure` 携带分类后的状态码/code/request_id，路由只负责映射成 HTTP 响应
+- [x] `kb_engine` 改为惰性代理：方法访问返回轻量包装（LangGraph 在 import 时内省会触碰 `kb_engine.search`，直接构造会在 import 阶段加载模型），`get_engine()` / `reset_engine()` 显式获取与重建
+- [x] `src/engine.py` 的 FAISS/Milvus/OpenAI embeddings 改为函数内导入
+- [x] 验收：`import src.engine` **0.72s**（原 ~12–14s）、`from src.engine import kb_engine` 0.42s 且不构建；`src.agent` 4.6s、`main` 5.7s（原 ~12–13s）
+- [x] 新增 `tests/test_chat_service.py`（14 项）：准备/维护 503/错误分类/缓存/失败与流式错误帧
+- [x] 回归：`pytest -q` **97 passed**；`test_agent.py` 20 项全过；两后端评测 18/18；`check_hybrid` 69/69；`check_hybrid_milvus` 19/19
 
 #### 9.3.3 管理台增强
 - [ ] 上传总量上限（如单次 ≤200MB）、上传进度条

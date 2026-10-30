@@ -130,7 +130,7 @@ def test_cache_bypass_header(seeded):
     _chat(client, "Bypass me")
     calls = stub.calls
     resp = _chat(client, "Bypass me", headers={"Cache-Control": "no-cache"})
-    assert resp.headers.get("X-Cache") is None
+    assert resp.headers.get("X-Cache") == "miss"
     assert stub.calls > calls
 
 
@@ -143,7 +143,7 @@ def test_followup_is_not_cached(seeded):
     _chat(client, "Who approves it?", history=history)
     calls = stub.calls
     resp = _chat(client, "Who approves it?", history=history)
-    assert resp.headers.get("X-Cache") is None
+    assert resp.headers.get("X-Cache") == "miss"
     assert stub.calls > calls
 
 

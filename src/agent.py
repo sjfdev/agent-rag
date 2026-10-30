@@ -14,7 +14,7 @@ from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode
 
 from src.config import settings
-from src.engine import kb_engine
+from src.engine import get_engine
 from src.tools import agent_tools
 
 
@@ -93,10 +93,10 @@ def _similarity(previous: str, current: str) -> float:
     try:
         import math
 
-        from src.engine import kb_engine
+        engine = get_engine()
 
-        a = kb_engine.embeddings.embed_query(previous)
-        b = kb_engine.embeddings.embed_query(current)
+        a = engine.embeddings.embed_query(previous)
+        b = engine.embeddings.embed_query(current)
         dot = sum(x * y for x, y in zip(a, b, strict=False))
         na = math.sqrt(sum(x * x for x in a))
         nb = math.sqrt(sum(y * y for y in b))
@@ -147,7 +147,9 @@ def call_model(state: AgentState):
     if not already_retrieved:
         query = _retrieval_query(messages)
         t_search = time.perf_counter()
-        docs = kb_engine.search(query, dept, k=settings.RETRIEVAL_K) if query else []
+        docs = (
+            get_engine().search(query, dept, k=settings.RETRIEVAL_K) if query else []
+        )
         timings["retrieval_ms"] = timings.get("retrieval_ms", 0.0) + (
             time.perf_counter() - t_search
         ) * 1000

@@ -1,6 +1,7 @@
 # AGENTS.md
 
 ## Core Architecture
+- **Chat flow**: `src/chat_service.py` owns validation, maintenance gating, answer caching, error classification and metrics for both `/chat` and `/chat/stream`; `main.py` only adapts to HTTP. Request/response models live in `src/schemas.py`.
 - **RAG Pipeline**: LangGraph $\rightarrow$ Milvus $\rightarrow$ Cross-Encoder Reranker. Answers return `sources` (`source`+`page`) built from retrieval metadata; excerpts are wrapped in `<document>` tags and treated as untrusted data.
 - **Ingestion**: multi-format (`pdf/docx/pptx/xlsx/csv/md/txt/html/json`) via `src/loaders.py`; incremental — chunks carry `dept/source/page|slide|sheet/doc_id/doc_hash/kind/chunk_index`; unchanged files skipped by hash, changed files are written first and old versions deleted afterwards (crash-safe), removed ones pruned.
 - **Zero-downtime rebuild**: `--reset` / the admin console build into a shadow index (Milvus: temp collection + alias swap; FAISS: temp dir + `os.replace`). Queries keep hitting the live index; maintenance is only set during the millisecond alias swap. `count()` is the write target, `live_count()` is what queries see.
@@ -24,7 +25,7 @@ All commands assume the conda env `agent-rag` is active (`conda activate agent-r
 - **Loader Check**: `python scripts/check_loaders.py` (extracts every supported format in /tmp, no vector store needed).
 - **Admin Check**: `python scripts/check_admin.py` (upload→ingest→delete smoke test; server must be running).
 - **Latency Benchmark**: `python scripts/bench_retrieval.py` (embedding vs FAISS vs Milvus vs LLM). `/chat` responses include `timings` (`retrieval_ms`, `llm_ms`, `llm_calls`, `overhead_ms`, `total_ms`).
-- **Tests (offline)**: `pytest -q` runs 83 unit/API tests with fake embeddings and a stubbed LLM (no network, ~25s). `pytest --cov=src` for coverage. Lint with `ruff check src tests main.py run_ingestion.py`.
+- **Tests (offline)**: `pytest -q` runs 97 unit/API/service tests with fake embeddings and a stubbed LLM (no network, ~8s). `pytest --cov=src` for coverage. Lint with `ruff check src tests main.py run_ingestion.py`.
 - **Verification (live)**: `python test_agent.py` (requires the API server + a working LLM endpoint).
 
 ## Critical Gotchas & Setup
@@ -36,6 +37,7 @@ All commands assume the conda env `agent-rag` is active (`conda activate agent-r
 - **Retrieval Flow**: `decide_followup` concatenates the previous question only for pronouns or semantically close questions (embedding cosine thresholds), so topic switches are not polluted; `call_model` does deterministic first-stage retrieval (`kb_engine.search(query, state["user_dept"])`) and injects excerpts as a system message; the LLM only formats the answer or triggers `create_support_ticket`.
 - **Embeddings**: `EMBEDDING_BACKEND="local"` by default (sentence-transformers + `HF_ENDPOINT=https://hf-mirror.com`). Only chat generation needs `LLM_API_BASE`; ingestion and `scripts/verify_retrieval.py` work offline. `EMBEDDING_BACKEND=fake` gives deterministic vectors for tests (used by CI).
 - **Vector Backend**: `src/config.py` `VECTOR_STORE_TYPE` switches `"faiss"` (default, local) vs `"milvus"` (Docker). Same interface in `src/engine.py`.
+- **Lazy engine**: `kb_engine` is a proxy; the model loads on first use. Use `get_engine()` when you need the object, and `reset_engine()` in tests. `import src.engine` must stay fast (no model load).
 - **Infra**: `docker compose up -d` starts etcd + Milvus only (local storage, no MinIO). Both must be `healthy` and `curl -f localhost:9091/healthz` must pass before setting `VECTOR_STORE_TYPE=milvus`. Default image is `milvusdb/milvus:v2.5.4` (needed for server-side sparse BM25). If the pull fails, configure registry mirrors in **colima** (`~/.colima/default/colima.yaml` → `docker.registry-mirrors`; on this machine `docker.1ms.run` worked) and `colima restart`; or pass `MILVUS_IMAGE=...`. etcd pulls from `quay.io` directly.
 - **Data Structure**: Files live under `DATA_DIR` (default `./data`) as `data/{department_name}/**/*`; supported: PDF/DOCX/PPTX/XLSX/CSV/MD/TXT/HTML/JSON. `data/Demo` ships fixtures for every format (regenerate with `scripts/generate_demo_files.py`). Switching FAISS/Milvus or changing chunk metadata requires `python run_ingestion.py --reset`.
 

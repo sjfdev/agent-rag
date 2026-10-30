@@ -25,7 +25,8 @@
 | 14 | 性能与死代码清理（批量删除、哈希缓存、元数据缓存） | `c6a90c6` | 完成 |
 | 15 | 零停机重建 + 安全替换 + 多轮相似度护栏 | `2701aba` | 完成 |
 | 16 | FAQ 答案缓存 + 查询向量缓存 | `69190c1` | 完成 |
-| 17 | pytest 测试套件 + ruff + GitHub Actions | 本轮 | 完成 |
+| 17 | pytest 测试套件 + ruff + GitHub Actions | `776e6c7` | 完成 |
+| 18 | ChatService 抽取 + 惰性引擎 | 本轮 | 完成 |
 
 当前运行态：`vector_store=milvus`、`hybrid.engine=milvus`、Milvus `v2.5.4`、26 chunks / 4 部门。
 
@@ -265,6 +266,45 @@
 
 ---
 
+## 5.10 ChatService 与惰性引擎（本轮，9.3.2）
+
+**重复逻辑收敛**
+
+`/chat` 与 `/chat/stream` 原来各自实现一遍：request_id、维护期 503、`_prepare`、非法部门 400、答案缓存读写、异常分类（上游/向量库/内部）、指标与日志。现在统一在 `src/chat_service.py`：
+
+| 函数 | 职责 |
+|---|---|
+| `prepare(request, endpoint)` | 维护检查、部门校验、构造图输入、拒绝指标 |
+| `run(...)` | 缓存命中 → 调用图 → 计时 → 写缓存 → 指标 → `ChatResponse` |
+| `open_stream(...)` | 先 `prepare`（保证错误以 HTTP 返回），返回 `(request_id, frames)` |
+| `classify_error` / `ChatFailure` | 异常 → `(status, code, message)`，路由只做映射 |
+| `cache_lookup / cache_store / cache_bypassed` | 缓存策略集中一处 |
+
+`main.py` 从 500+ 行降到 ~160 行；请求/响应模型移到 `src/schemas.py`。
+
+**惰性引擎**
+
+原来是 `kb_engine = KnowledgeBaseEngine()`，import 即加载 embedding（~12–14s）。现在 `_LazyEngine` 代理 + `get_engine()`：
+
+| 操作 | 之前 | 现在 |
+|---|---|---|
+| `import src.engine` | ~12–14s | **0.72s** |
+| `from src.engine import kb_engine` | 立即加载模型 | 0.42s，不加载 |
+| `import src.agent` | ~12s | **4.6s** |
+| `import main` | ~13s | **5.7s** |
+
+细节：LangGraph 在 `workflow.compile()` 时会内省 `call_model` 的自由变量并触碰 `kb_engine.search`，所以代理对**方法**返回轻量包装而不是立即构造；`__dunder__` 直接 `AttributeError`，避免 `hasattr(obj, "__self__")` 触发生成。`agent.py` 改用显式 `get_engine()`。`reset_engine()` 供测试重置。
+
+**行为保持**
+
+- 响应头 `X-Request-ID`、`X-Cache` 在成功/缓存/失败/流式路径都返回
+- 维护期与非法部门仍为 503/400；流式在开流前完成校验，不会先 200 再报错
+- 新增 `tests/test_chat_service.py` 14 项覆盖上述分支
+
+实测：缓存命中 4ms；`X-Cache: hit`；强制 LLM 失败时非流式 500、流式返回 `internal_error` 事件并带 request_id。
+
+---
+
 ## 6. Milvus 升级（2.4.0 → 2.5.4）
 
 - 升级前备份数据卷：`volumes/milvus` + `volumes/etcd` → `milvus-2.4-<时间戳>.tgz`
@@ -308,8 +348,8 @@
 
 | 检查 | 结果 |
 |---|---|
-| `python test_agent.py` | 18/18 通过（需服务 + LLM，含缓存断言） |
-| `pytest -q`（离线，含 CI） | 83/83，约 25s |
+| `python test_agent.py` | 20/20 通过（需服务 + LLM，含缓存断言） |
+| `pytest -q`（离线，含 CI） | 97/97，约 8s |
 | `ruff check src tests main.py run_ingestion.py` | 全绿 |
 | `python scripts/check_hybrid.py` | 69/69 |
 | `python scripts/check_hybrid_milvus.py` | 19/19（2.5+），低版本 SKIP |
