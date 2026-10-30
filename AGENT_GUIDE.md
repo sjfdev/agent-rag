@@ -99,7 +99,7 @@ agent-rag/
 ├── volumes/                 # Milvus/etcd 数据卷
 ├── eval/cases.jsonl         # 检索评测集（命中 + 泄漏用例）
 ├── config/acl.example.json  # 文档级 ACL 规则示例
-├── tests/                   # pytest 离线测试（83 项）
+├── tests/                   # pytest 离线测试（246 项，覆盖率 92%）
 ├── .github/workflows/ci.yml # ruff + pytest（CI）
 ├── WORKLOG.md               # 本轮迭代记录与验证矩阵
 ├── scripts/
@@ -531,7 +531,7 @@ python scripts/check_loaders.py      # 9 种格式解析（不写向量库）
 python scripts/check_admin.py        # 管理台上传→入库→删除冒烟
 python scripts/bench_retrieval.py    # embedding / FAISS / Milvus / LLM 延迟
 python scripts/generate_demo_files.py  # 重建 data/Demo 多格式样例
-pytest -q                            # 离线测试（127 项，~11s，无需服务/LLM）
+pytest -q                            # 离线测试（246 项，~20s，覆盖率 92%，无需服务/LLM）
 ruff check src tests main.py run_ingestion.py   # 代码检查
 python test_agent.py                 # 端到端 18 项断言（需服务已启动）
 ```

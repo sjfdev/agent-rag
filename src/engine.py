@@ -653,9 +653,8 @@ class MilvusDriver(BaseVectorStore):
 
     @property
     def shadow_collection(self) -> str:
-        return getattr(
-            self, "_shadow_name", f"{settings.MILVUS_COLLECTION}__rebuild"
-        )
+        name = getattr(self, "_shadow_name", None)
+        return name or f"{settings.MILVUS_COLLECTION}__rebuild"
 
     def _open_collection(self, name: str, create: bool = False):
         """Build a Milvus wrapper for an arbitrary collection name."""
@@ -848,7 +847,11 @@ class FAISSDriver(BaseVectorStore):
         return self.count() == 0
 
     def count(self) -> int:
-        target = getattr(self, "_rebuild_target", None) or self.vector_db
+        # During a rebuild this is the shadow (write target), matching Milvus.
+        if getattr(self, "_rebuild_path", None):
+            target = getattr(self, "_rebuild_target", None)
+        else:
+            target = self.vector_db
         if target is None:
             return 0
         try:

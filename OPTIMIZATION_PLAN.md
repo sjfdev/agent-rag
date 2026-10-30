@@ -280,7 +280,7 @@ curl -f http://localhost:9091/healthz
 - [x] **`src/reranker.py` 取舍**：已接入为开关（`RERANK_ENABLED`，默认关闭）
 - [x] **`requirements.txt`**（精确 pin，含安装顺序注释）
 - [ ] **`Makefile` + `scripts/doctor.py`**（原 P1 2.6 剩余部分）
-- [ ] **单测框架**：`validate_dept`、expr 转义、ETL 切分、timings 结构（目前只有脚本级冒烟）
+- [x] **单测框架**：`tests/` 246 项、覆盖率 92%（engine 86%），见 9.3.1
 
 ### 8.4 体验
 
@@ -358,7 +358,7 @@ curl -f http://localhost:9091/healthz
 
 #### P3 工程与体验
 
-- [ ] **pytest + CI**：`validate_dept`、expr 转义、loaders、ETL 增量、admin 路由；LLM 用 stub 保证离线可跑
+- [x] **pytest + CI**：`validate_dept`、expr 转义、loaders、ETL 增量、admin 路由；LLM 用 stub 保证离线可跑
 - [ ] **惰性引擎 + ChatService**：消除 `/chat` 与 `/chat/stream` 重复分支
 - [x] **文件清单性能**：`src/hashing.py` 按 `(path, mtime_ns, size)` 缓存 sha1；`doc_summary()` 缓存 5s；`/admin/api/meta` 451ms → 6ms
 - [ ] **前端**：Markdown 渲染、复制回答、停止生成、localStorage 会话、移动端
@@ -443,12 +443,12 @@ curl -f http://localhost:9091/healthz
 > `.github/workflows/ci.yml` 自动 checkout 代码、装依赖、跑 lint 和测试，结果直接显示在
 > PR 页面上。作用是「防止把坏代码合进 main」——本地忘了跑测试时 CI 会拦下来。
 > 它不部署、不碰生产数据；也可以关掉，只留本地 `pytest`。
-- [x] 新建 `tests/`（validation / loaders / hybrid / etl / cache / admin / api），共 **83 个用例**，约 25 秒跑完
+- [x] 新建 `tests/`（validation / loaders / hybrid / etl / cache / admin / api / engine / health / metrics / agent / reranker / jobs / audit / acl / auth），共 **246 个用例**，约 20 秒跑完
 - [x] 离线可跑：新增 `EMBEDDING_BACKEND=fake` 确定性向量；LLM 用 `monkeypatch` 替换为 stub；向量库用临时 FAISS 目录（`conftest.py` 自动配置）
 - [x] `pytest.ini` + `ruff.toml`；`requirements-test.txt` 只列测试所需依赖（不含 torch）
 - [x] GitHub Actions `.github/workflows/ci.yml`：ruff → pytest(含覆盖率) → 上传 coverage
 - [x] 同时修掉一个真实缺陷：admin 路由抛 `InvalidDepartment` 现在由全局处理器映射为 400（此前是 500）
-- [x] 验收（本机）：`pytest -q` 83 passed；`ruff check` 全绿；覆盖率 68%（engine 51%，reranker 0% 因默认关闭）
+- [x] 验收（本机）：`pytest -q` **246 passed**；`ruff check` 全绿；覆盖率 **92%**（engine 86%，reranker/metrics/runtime/tools 100%）
 - [ ] CI 首次在 GitHub 上跑通（需要 push 后观察 Actions 结果；本地已验证同样的命令全绿）
 
 #### 9.3.2 `ChatService` 抽取 + 惰性引擎

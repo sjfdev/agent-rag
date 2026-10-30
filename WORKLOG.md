@@ -27,7 +27,8 @@
 | 16 | FAQ 答案缓存 + 查询向量缓存 | `69190c1` | 完成 |
 | 17 | pytest 测试套件 + ruff + GitHub Actions | `776e6c7` | 完成 |
 | 18 | ChatService 抽取 + 惰性引擎 | `981e5d7` | 完成 |
-| 19 | 管理台审计/任务持久化/上传配额 + 鉴权/多部门/文档 ACL | 本轮 | 完成 |
+| 19 | 管理台审计/任务持久化/上传配额 + 鉴权/多部门/文档 ACL | `63067f0` | 完成 |
+| 20 | 测试覆盖率提升（73% → 92%） | 本轮 | 完成 |
 
 当前运行态：`vector_store=milvus`、`hybrid.engine=milvus`、Milvus `v2.5.4`、26 chunks / 4 部门。
 
@@ -336,6 +337,41 @@
 
 ---
 
+## 5.12 测试覆盖率（本轮）
+
+| 模块 | 之前 | 现在 |
+|---|---|---|
+| 总计 | 73% | **92%** |
+| `engine.py` | 53% | **86%** |
+| `admin_api.py` | 77% | **90%** |
+| `agent.py` | 87% | **98%** |
+| `etl.py` | 83% | **97%** |
+| `loaders.py` | 89% | **97%** |
+| `hybrid.py` | 86% | **97%** |
+| `health.py` | 62% | **92%** |
+| `metrics.py` | 58% | **100%** |
+| `reranker.py` | 0% | **100%** |
+| `runtime.py` | 33% | **100%** |
+| `tools.py` | 67% | **100%** |
+
+新增测试文件：
+
+| 文件 | 覆盖内容 |
+|---|---|
+| `tests/test_engine_faiss.py` | 写入/检索/删除/摘要、影子重建提交与中止、缓存状态、embeddings 工厂 |
+| `tests/test_engine_milvus.py` | 用假客户端覆盖混合检索、dense 检索、计数、删除、doc_summary、alias 切换、abort/reset（无需 Milvus） |
+| `tests/test_agent_logic.py` | 引用构造、`<document>` 注入中和、ACL 过滤、工具后跳过检索、多轮改写、路由 |
+| `tests/test_health.py` | ok / down / degraded / maintenance、LLM 探测成功/失败/429/缓存 |
+| `tests/test_metrics.py` | 指标写入、混合引擎/维护 gauge、索引 gauge 刷新与节流、异常降级 |
+| `tests/test_reranker_runtime.py` | 重排排序、加载/推理失败降级、开关、维护标志、工单工具 |
+| `tests/test_etl_extra.py` | 空文件/超限/无文本/隐藏与旧格式、日志回调异常、重建期间不 prune |
+| `tests/test_admin_extra.py` | 404/400/409/413 路径、全量重建成功与失败回滚、无部门、任务列表、审计 limit |
+| `tests/test_misc_edges.py` | 连接参数、版本解析、Milvus 探测失败、编码回退、JSON/CSV/XLSX 边界、审计/任务降级 |
+
+顺带修复一个真实缺陷：`MilvusDriver.shadow_collection` 在 `abort_rebuild()` 把 `_shadow_name` 置空后返回 `None`（`getattr` 的默认值不会在键存在但为 `None` 时生效），现在回退到默认名称。
+
+---
+
 ## 6. Milvus 升级（2.4.0 → 2.5.4）
 
 - 升级前备份数据卷：`volumes/milvus` + `volumes/etcd` → `milvus-2.4-<时间戳>.tgz`
@@ -380,7 +416,7 @@
 | 检查 | 结果 |
 |---|---|
 | `python test_agent.py` | 20/20 通过（需服务 + LLM，含缓存断言） |
-| `pytest -q`（离线，含 CI） | 127/127，约 11s |
+| `pytest -q`（离线，含 CI） | 246/246，约 20s；覆盖率 92% |
 | `ruff check src tests main.py run_ingestion.py` | 全绿 |
 | `python scripts/check_hybrid.py` | 69/69 |
 | `python scripts/check_hybrid_milvus.py` | 19/19（2.5+），低版本 SKIP |
