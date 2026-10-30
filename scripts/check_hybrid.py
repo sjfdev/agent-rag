@@ -22,6 +22,8 @@ from src.engine import (
 from src.hashing import clear_hash_cache, file_sha1, hash_cache_info
 from src.hybrid import parse_version, resolve_hybrid_mode, version_at_least
 from src.agent import decide_followup
+from src.cache import AnswerCache, normalize_question
+from src.embedding_cache import CachedEmbeddings
 from src.config import settings
 from src.lexical import LexicalCache, LexicalIndex, rrf_fuse, tokenize
 
@@ -208,6 +210,50 @@ def main() -> int:
           decide_followup("leave?", "Can I carry them over?", 0.57))
     check("unrelated short question rejected",
           not decide_followup("VPN?", "报销流程是什么？", 0.37))
+
+    # --- answer cache ---
+    cache = AnswerCache(max_entries=2, ttl_seconds=60)
+    check("question normalisation",
+          normalize_question("  What is the VPN-Policy? ") == "what is the vpn policy")
+    cache.put("Tech", "What is the code review process?", {"response": "a", "sources": []})
+    hit = cache.get("Tech", "what is the code review PROCESS")
+    check("cache ignores case/punctuation", hit is not None and hit["response"] == "a")
+    check("cache is department scoped",
+          cache.get("Finance", "What is the code review process?") is None)
+    check("cache miss on new question", cache.get("Tech", "unrelated") is None)
+    cache.put("Tech", "q2", {"response": "b", "sources": []})
+    cache.put("Tech", "q3", {"response": "c", "sources": []})
+    check("cache evicts LRU", cache.get("Tech", "What is the code review process?") is None)
+    check("cache stats", cache.stats()["entries"] == 2, str(cache.stats()))
+    cache.clear()
+    check("cache clear", cache.stats()["entries"] == 0 and cache.stats()["hits"] >= 1)
+
+    # --- embedding cache ---
+    class FakeEmbeddings:
+        def __init__(self):
+            self.calls = 0
+
+        def embed_query(self, text):
+            self.calls += 1
+            return [float(len(text)), 1.0]
+
+        def embed_documents(self, texts):
+            self.calls += 1
+            return [[float(len(t)), 2.0] for t in texts]
+
+    fake = FakeEmbeddings()
+    cached = CachedEmbeddings(fake, namespace="test", max_entries=2)
+    v1 = cached.embed_query("hello")
+    v2 = cached.embed_query("hello")
+    check("embedding returns same vector", v1 == v2)
+    check("embedding cached", fake.calls == 1, str(fake.calls))
+    cached.embed_query("other")
+    cached.embed_query("third")
+    check("embedding LRU bounded", cached.stats()["entries"] == 2, str(cached.stats()))
+    cached.embed_documents(["a", "b"])
+    check("documents bypass cache", fake.calls == 4, str(fake.calls))
+    check("embedding stats expose namespace",
+          cached.stats()["namespace"] == "test", str(cached.stats()))
 
     status = kb_engine.hybrid_status()
     check("status has engine", status["engine"] in {"off", "local", "milvus"}, str(status))

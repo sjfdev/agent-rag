@@ -21,8 +21,7 @@ from src.validation import validate_dept
 logger = logging.getLogger(__name__)
 
 
-def build_embeddings():
-    """Create the embedding model based on EMBEDDING_BACKEND."""
+def _raw_embeddings():
     if settings.EMBEDDING_BACKEND == "openai":
         return OpenAIEmbeddings(
             model=settings.EMBEDDING_MODEL,
@@ -36,6 +35,24 @@ def build_embeddings():
     return HuggingFaceEmbeddings(
         model_name=settings.LOCAL_EMBEDDING_MODEL,
         encode_kwargs={"normalize_embeddings": True},
+    )
+
+
+def build_embeddings():
+    """Create the embedding model, caching query vectors in memory.
+
+    Namespaced by (backend, model) so changing the model never reuses vectors
+    produced by a different one.
+    """
+    from src.embedding_cache import CachedEmbeddings, cache_namespace
+
+    raw = _raw_embeddings()
+    if settings.EMBEDDING_CACHE_MAX_ENTRIES <= 0:
+        return raw
+    return CachedEmbeddings(
+        raw,
+        namespace=cache_namespace(),
+        max_entries=settings.EMBEDDING_CACHE_MAX_ENTRIES,
     )
 
 
@@ -970,6 +987,13 @@ class KnowledgeBaseEngine:
         with self._summary_lock:
             self._summary_version = -1
             self._summary = {}
+        # Cached answers may cite documents that just changed.
+        try:
+            from src.cache import answer_cache
+
+            answer_cache.clear()
+        except Exception:  # caching must never block writes
+            logger.warning("could not clear answer cache", exc_info=True)
 
     def add_documents(self, texts: List[str], metadatas: List[Dict[str, Any]]):
         self.driver.add_documents(texts, metadatas)
@@ -986,6 +1010,13 @@ class KnowledgeBaseEngine:
         if not settings.HYBRID_ENABLED:
             return "off"
         return getattr(self.driver, "hybrid_mode", "local")
+
+    def cache_status(self) -> Dict[str, Any]:
+        """Hit/miss counters for the process-local caches."""
+        embeddings = getattr(self.embeddings, "stats", None)
+        return {
+            "embeddings": embeddings() if callable(embeddings) else None,
+        }
 
     def hybrid_status(self) -> Dict[str, Any]:
         """Capability summary for /health and /info."""

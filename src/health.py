@@ -126,6 +126,14 @@ def health(probe: bool = Query(False, description="also call the LLM endpoint"))
     checks["maintenance"] = maintenance
     checks["time"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
     checks["rerank_enabled"] = settings.RERANK_ENABLED
+    from src.cache import answer_cache
+
+    checks["cache"] = {
+        "enabled": settings.FAQ_CACHE_ENABLED,
+        "ttl_seconds": settings.FAQ_CACHE_TTL,
+        "answer": answer_cache.stats(),
+        "embeddings": kb_engine.cache_status().get("embeddings"),
+    }
     checks["hybrid_enabled"] = settings.HYBRID_ENABLED
     hybrid = kb_engine.hybrid_status()
     checks["hybrid"] = hybrid

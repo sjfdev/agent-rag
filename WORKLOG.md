@@ -23,7 +23,8 @@
 | 12 | Milvus 升级 2.5.4 + 服务端稀疏 BM25 | `c87bccc` | 完成并实测 |
 | 13 | 管理台冒烟测试清理残留部门 | `53e82b9` | 完成 |
 | 14 | 性能与死代码清理（批量删除、哈希缓存、元数据缓存） | `c6a90c6` | 完成 |
-| 15 | 零停机重建 + 安全替换 + 多轮相似度护栏 | 本轮 | 完成 |
+| 15 | 零停机重建 + 安全替换 + 多轮相似度护栏 | `2701aba` | 完成 |
+| 16 | FAQ 答案缓存 + 查询向量缓存 | 本轮 | 完成 |
 
 当前运行态：`vector_store=milvus`、`hybrid.engine=milvus`、Milvus `v2.5.4`、26 chunks / 4 部门。
 
@@ -219,6 +220,25 @@
 
 ---
 
+## 5.8 缓存（本轮，9.2）
+
+| 缓存 | 位置 | 行为 |
+|---|---|---|
+| FAQ 答案缓存 | `src/cache.py` | 键 `dept + 规范化问题`；LRU 512 / TTL 1 天；只存单轮、`llm_calls==1`、无错误的回答；任何 KB 写入清空 |
+| 查询向量缓存 | `src/embedding_cache.py` | 包装 `Embeddings`，按 `(模型, 文本)` 缓存 `embed_query`；LRU 2048；入库 `embed_documents` 不缓存 |
+| 旁路 | `main.py` | `Cache-Control: no-cache` / `X-No-Cache: 1` 跳过缓存；命中响应带 `X-Cache: hit` 且 `timings.cached=true` |
+
+实测：
+
+- 同问题重复请求：**4044ms → 4.2ms**，响应与来源完全一致，`llm_calls=0`
+- 同查询重复检索：**1434ms → 9ms**（首次含 embedding 冷启动）；预热后 RPC 约 13ms
+- 跨部门同问题不共享（Finance 命中同一问句会重新走 LLM）
+- 工具类回答（工单）`llm_calls=2`，不写入缓存
+- 入库/删除后 `cache.answer.entries` 立即归零
+- `/health` 新增 `cache` 段，`/metrics` 新增 `agent_rag_cache_total{cache,result}` 与 `agent_rag_cache_entries{cache}`
+
+---
+
 ## 6. Milvus 升级（2.4.0 → 2.5.4）
 
 - 升级前备份数据卷：`volumes/milvus` + `volumes/etcd` → `milvus-2.4-<时间戳>.tgz`
@@ -262,10 +282,10 @@
 
 | 检查 | 结果 |
 |---|---|
-| `python test_agent.py` | 13/13 通过（需服务 + LLM） |
-| `python scripts/check_hybrid.py` | 57/57 |
+| `python test_agent.py` | 18/18 通过（需服务 + LLM，含缓存断言） |
+| `python scripts/check_hybrid.py` | 69/69 |
 | `python scripts/check_hybrid_milvus.py` | 19/19（2.5+），低版本 SKIP |
-| `python scripts/check_health.py [--probe]` | 10/10、12/12 |
+| `python scripts/check_health.py [--probe]` | 12/12、14/14 |
 | `python scripts/check_admin.py` | 10/10 |
 | `python scripts/check_loaders.py` | 全部格式通过 |
 | `python scripts/verify_retrieval.py` | FAISS / Milvus 两种后端均 OK |
@@ -286,7 +306,8 @@
 
 - **多进程指标聚合**：`/metrics` 为单进程，多 worker 需 Pushgateway 或按 instance 聚合
 - **单 worker 约束**：入库任务与锁在进程内，`--workers>1` 状态会分裂
-- **缓存与限流**：FAQ 缓存、embedding 缓存、按用户限流、LLM 降级均未做（已做：文件哈希缓存、文档摘要缓存）
+- **限流与降级**：按 user/IP 限流、LLM 失败降级未做（缓存已完成，见 5.8）
+- **缓存跨进程**：答案/向量缓存是进程内的，多 worker 各存一份，也不持久化；需要共享时换 Redis
 - **pytest + CI**：目前是脚本级冒烟，没有单测框架与流水线
 - **引用**：同页多 chunk 合并、展示相关性分数
 - **前端**：Markdown 渲染、复制回答、停止生成、localStorage 会话

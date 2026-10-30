@@ -56,6 +56,12 @@ _LLM_CALLS = Counter(
     ["endpoint"],
     registry=REGISTRY,
 )
+_CACHE = Counter(
+    "agent_rag_cache_total",
+    "Cache lookups by cache and result (hit / miss / store).",
+    ["cache", "result"],
+    registry=REGISTRY,
+)
 _INDEX_CHUNKS = Gauge(
     "agent_rag_index_chunks",
     "Number of chunks currently indexed (refreshed on scrape).",
@@ -65,6 +71,12 @@ _INGEST_JOBS = Counter(
     "agent_rag_ingest_jobs_total",
     "Ingestion jobs by final status.",
     ["status"],
+    registry=REGISTRY,
+)
+_CACHE_ENTRIES = Gauge(
+    "agent_rag_cache_entries",
+    "Entries currently held by each process-local cache.",
+    ["cache"],
     registry=REGISTRY,
 )
 _MAINTENANCE = Gauge(
@@ -138,6 +150,10 @@ def observe_request(
         _LLM_CALLS.labels(endpoint=endpoint).inc(int(calls))
 
 
+def observe_cache(cache: str, result: str) -> None:
+    _CACHE.labels(cache=cache, result=result).inc()
+
+
 def observe_retrieval(engine: str) -> None:
     _RETRIEVAL_ENGINE.labels(engine=engine).inc()
 
@@ -156,6 +172,7 @@ def set_maintenance(active: bool) -> None:
 
 def render() -> bytes:
     """Refresh gauges that depend on live state, then return the exposition text."""
+    from src.cache import answer_cache
     from src.engine import kb_engine
     from src.runtime import in_maintenance
 
@@ -163,6 +180,12 @@ def render() -> bytes:
     try:
         status = kb_engine.hybrid_status()
         set_hybrid(status["engine"], status["sparse_ready"])
+    except Exception:
+        pass
+    try:
+        _CACHE_ENTRIES.labels(cache="answer").set(answer_cache.stats()["entries"])
+        embedding_stats = kb_engine.cache_status().get("embeddings") or {}
+        _CACHE_ENTRIES.labels(cache="embedding").set(embedding_stats.get("entries", 0))
     except Exception:
         pass
     _refresh_index_gauge()

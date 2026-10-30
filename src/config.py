@@ -51,6 +51,12 @@ class Settings(BaseSettings):
     # Analyzer used by the server-side BM25 function (JSON). "chinese" handles
     # mixed Chinese/Latin text best for this corpus.
     HYBRID_ANALYZER: str = '{"type": "chinese"}'
+    # FAQ cache: identical questions per department are answered from memory.
+    FAQ_CACHE_ENABLED: bool = True
+    FAQ_CACHE_MAX_ENTRIES: int = 512
+    FAQ_CACHE_TTL: int = 86400  # seconds
+    # Embedding cache for repeated queries (retrieval + follow-up detection).
+    EMBEDDING_CACHE_MAX_ENTRIES: int = 2048
     # Optional bearer token for GET /metrics (empty = open, rely on the network).
     METRICS_TOKEN: str = ""
     MILVUS_HOST: str = "localhost"

@@ -284,6 +284,9 @@ function attachTimings(bubble, timings) {
   if (timings.retrieval_calls !== undefined) {
     parts.push(`<span class="chip">检索 ${timings.retrieval_calls} 次</span>`);
   }
+  if (timings.cached) {
+    parts.push('<span class="chip total">缓存命中</span>');
+  }
   meta.innerHTML = parts.join("");
   bubble.appendChild(meta);
 }

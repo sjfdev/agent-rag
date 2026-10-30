@@ -394,7 +394,7 @@ python scripts/check_health.py --probe          # 冒烟测试
 | `llm.probe` | 仅在 `?probe=1` 时为 `ok`/`failed`，含 `latency_ms` |
 | `rerank_enabled` | 当前是否启用二阶段重排 |
 
-`down` 才会返回 503，`degraded` 仍为 200，便于负载均衡只摘除空库/故障实例。`hybrid.engine` 表示实际生效的混合检索引擎（`off`/`local`/`milvus`）。
+`down` 才会返回 503，`degraded` 仍为 200，便于负载均衡只摘除空库/故障实例。`hybrid.engine` 表示实际生效的混合检索引擎（`off`/`local`/`milvus`），`cache` 给出答案/向量缓存的命中统计。
 
 Prometheus 指标：
 
@@ -417,6 +417,8 @@ curl -s http://localhost:8000/metrics | grep '^agent_rag_'
 | `agent_rag_hybrid_engine{engine}` | gauge | 实际混合检索引擎（off/local/milvus） |
 | `agent_rag_hybrid_sparse_ready` | gauge | 服务端稀疏 BM25 是否真正可用 |
 | `agent_rag_retrieval_engine_total{engine}` | counter | 每次检索实际路径：vector/local/milvus/fallback |
+| `agent_rag_cache_total{cache,result}` | counter | 缓存命中/未命中/写入，cache 为 answer 或 embedding |
+| `agent_rag_cache_entries{cache}` | gauge | 当前缓存的条目数（answer/embedding） |
 
 部门名**不作为标签**，避免敏感信息与高基数。
 
@@ -467,6 +469,19 @@ curl -s http://localhost:8000/chat \
 - 多轮对话会自动携带历史；「新对话（新窗口）」打开独立会话，「清空当前」只清空本标签页
 - 回答**逐字流式渲染**（首字约 0.7s 出现），结束后显示来源与总计 / 检索 / LLM / 框架开销
 - 预设包含「越权测试（薪资）」与 Demo 多格式示例；左下角「入库管理」进入 `/admin`
+
+### 5.3.1 缓存与命中
+
+同一部门内**完全相同的单轮问题**会直接返回上次的回答（答案 + 来源），不再调用 LLM：
+
+- 只缓存「一次 LLM 调用、无工具调用、无错误」的回答；多轮追问（带 `history`）不缓存
+- 键 = `部门 + 规范化问题`（忽略大小写、标点、多余空格），不同部门互不共享
+- 知识库任何写入（上传/删除/入库/重建）都会清空答案缓存；`FAQ_CACHE_TTL` 到期自动失效
+- 想强制拿最新回答：请求头 `Cache-Control: no-cache`（或 `X-No-Cache: 1`）
+- 命中时响应头带 `X-Cache: hit`，`timings` 中 `cached=true`、`llm_calls=0`
+- 查询向量（`embed_query`）也走 LRU 缓存，重复检索跳过 embedding；入库向量不缓存
+
+实测：重复问题 **4.0s → 4ms**；重复检索 **1434ms → 9ms**（首次含 embedding 冷启动）。
 
 ### 5.4 测试与诊断脚本
 
@@ -563,6 +578,10 @@ python run_ingestion.py --no-prune # 不清理已删除文件
 | `HYBRID_ANALYZER` | `{"type":"chinese"}` | 服务端 BM25 分析器（升级 2.5 后生效） |
 | `HYBRID_CANDIDATES` | `20` | 融合前每路取多少候选 |
 | `HYBRID_MAX_DOCS` | `20000` | 单部门 BM25 语料上限（0 为不限） |
+| `FAQ_CACHE_ENABLED` | `true` | 是否启用 FAQ 答案缓存 |
+| `FAQ_CACHE_MAX_ENTRIES` | `512` | 答案缓存容量（LRU） |
+| `FAQ_CACHE_TTL` | `86400` | 答案缓存有效期（秒） |
+| `EMBEDDING_CACHE_MAX_ENTRIES` | `2048` | 查询向量缓存容量（0 关闭） |
 | `METRICS_TOKEN` | 空 | 非空时 `/metrics` 需要 Bearer token |
 | `MILVUS_HOST` / `MILVUS_PORT` | `localhost` / `19530` | Milvus 连接地址 |
 | `MILVUS_COLLECTION` | `enterprise_kb` | 集合名 |

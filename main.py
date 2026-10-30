@@ -5,7 +5,7 @@ import threading
 import time
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List, Literal
+from typing import Any, Dict, List, Literal, Optional
 
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 
 from src.admin_api import router as admin_router
 from src.agent import app as agent_app
+from src.cache import answer_cache
 from src.config import settings
 from src.runtime import in_maintenance
 from src.engine import kb_engine
@@ -143,6 +144,62 @@ def _sse(payload: Dict[str, Any]) -> str:
     return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
 
+def _cache_enabled() -> bool:
+    return settings.FAQ_CACHE_ENABLED and answer_cache.max_entries > 0
+
+
+def _cache_bypassed(http_request: Request) -> bool:
+    """Clients can force a fresh answer with `Cache-Control: no-cache`."""
+    if http_request.headers.get("x-no-cache", "").lower() in {"1", "true", "yes"}:
+        return True
+    return "no-cache" in http_request.headers.get("cache-control", "").lower()
+
+
+def _cache_lookup(request: ChatRequest, http_request: Request) -> Optional[Dict[str, Any]]:
+    """Only single-turn questions are cached: follow-ups depend on history."""
+    if not _cache_enabled() or request.history or _cache_bypassed(http_request):
+        return None
+    payload = answer_cache.get(request.user_dept, request.message)
+    if payload is None:
+        metrics.observe_cache("answer", "miss")
+        return None
+    metrics.observe_cache("answer", "hit")
+    return payload
+
+
+def _cache_store(
+    request: ChatRequest,
+    http_request: Request,
+    final_state: Dict[str, Any],
+    timings: Dict[str, Any],
+) -> None:
+    """Cache only replay-safe answers (one LLM call, no tool use)."""
+    if not _cache_enabled() or request.history or _cache_bypassed(http_request):
+        return
+    if int(timings.get("llm_calls") or 0) != 1:
+        return
+    answer = final_state.get("messages") or []
+    if not answer:
+        return
+    payload = {
+        "response": answer[-1].content,
+        "sources": final_state.get("sources") or [],
+    }
+    answer_cache.put(request.user_dept, request.message, payload)
+    metrics.observe_cache("answer", "store")
+
+
+def _cached_timings(payload: Dict[str, Any], started: float) -> Dict[str, Any]:
+    return {
+        "retrieval_ms": 0.0,
+        "llm_ms": 0.0,
+        "llm_calls": 0,
+        "total_ms": round((time.perf_counter() - started) * 1000, 1),
+        "overhead_ms": round((time.perf_counter() - started) * 1000, 1),
+        "cached": True,
+    }
+
+
 @app.on_event("startup")
 async def startup_event():
     # Data is loaded by `python run_ingestion.py`; just warn if the store is empty.
@@ -187,7 +244,7 @@ def prometheus_metrics(request: Request):
 
 
 @app.post("/chat", response_model=ChatResponse)
-def chat(request: ChatRequest, response: Response):
+def chat(request: ChatRequest, response: Response, http_request: Request):
     # Sync def: FastAPI runs it in a threadpool so LLM calls don't block the loop.
     request_id = uuid.uuid4().hex[:8]
     response.headers["X-Request-ID"] = request_id
@@ -212,11 +269,28 @@ def chat(request: ChatRequest, response: Response):
         )
         raise HTTPException(status_code=400, detail="invalid department name")
 
+    cached = _cache_lookup(request, http_request)
+    if cached is not None:
+        timings = _cached_timings(cached, started)
+        metrics.observe_request(
+            endpoint="chat",
+            status="cached",
+            elapsed_seconds=time.perf_counter() - started,
+            timings=timings,
+        )
+        response.headers["X-Cache"] = "hit"
+        return ChatResponse(
+            response=cached.get("response", ""),
+            sources=cached.get("sources") or [],
+            timings=timings,
+        )
+
     try:
         final_state = agent_app.invoke(
             inputs, config={"recursion_limit": settings.AGENT_RECURSION_LIMIT}
         )
         timings = _timings(final_state, started)
+        _cache_store(request, http_request, final_state, timings)
 
         logger.info(
             "chat ok request_id=%s dept=%s total_ms=%s llm_ms=%s llm_calls=%s",
@@ -266,7 +340,7 @@ def chat(request: ChatRequest, response: Response):
 
 
 @app.post("/chat/stream")
-def chat_stream(request: ChatRequest):
+def chat_stream(request: ChatRequest, http_request: Request):
     """Same as /chat but streams tokens as Server-Sent Events.
 
     Events: {"type":"token","content":...} ... {"type":"done","sources":[...],"timings":{...}}
@@ -297,6 +371,24 @@ def chat_stream(request: ChatRequest):
     def event_stream():
         final_state: Dict[str, Any] = {}
         first_token_at = None
+        cached = _cache_lookup(request, http_request)
+        if cached is not None:
+            timings = _cached_timings(cached, started)
+            metrics.observe_request(
+                endpoint="chat_stream",
+                status="cached",
+                elapsed_seconds=time.perf_counter() - started,
+                timings=timings,
+            )
+            yield _sse({"type": "token", "content": cached.get("response", "")})
+            yield _sse(
+                {
+                    "type": "done",
+                    "sources": cached.get("sources") or [],
+                    "timings": timings,
+                }
+            )
+            return
         try:
             for mode, payload in agent_app.stream(
                 inputs,
@@ -319,6 +411,7 @@ def chat_stream(request: ChatRequest):
                     final_state = payload
 
             timings = _timings(final_state, started)
+            _cache_store(request, http_request, final_state, timings)
             logger.info(
                 "chat stream ok request_id=%s dept=%s total_ms=%s llm_ms=%s llm_calls=%s",
                 request_id,

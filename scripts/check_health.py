@@ -11,6 +11,7 @@ import requests
 
 REQUIRED = {
     "status", "vector_store", "ingestion", "llm", "maintenance", "time", "hybrid",
+    "cache",
 }
 PASS, FAIL = [], []
 
@@ -63,6 +64,15 @@ def main() -> int:
     )
     if hybrid.get("configured") == "milvus":
         check("explicit milvus is ready", bool(hybrid.get("sparse_ready")), str(hybrid))
+
+    cache = data.get("cache") or {}
+    check("cache status present", isinstance(cache.get("enabled"), bool), str(cache))
+    answer = cache.get("answer") or {}
+    check(
+        "answer cache counters",
+        all(isinstance(answer.get(k), int) for k in ("entries", "hits", "misses")),
+        str(cache),
+    )
 
     if args.probe:
         try:

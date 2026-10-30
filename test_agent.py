@@ -10,6 +10,7 @@ Exit code is non-zero when any assertion fails, so this can gate CI.
 import os
 import sys
 import time
+import uuid
 
 import requests
 
@@ -19,15 +20,23 @@ TIMEOUT = int(os.getenv("CHAT_TIMEOUT", "300"))
 failures = []
 
 
-def ask(user_id, dept, message, history=None):
+def ask(user_id, dept, message, history=None, headers=None):
+    """Send one chat request.
+
+    By default the FAQ cache is bypassed so assertions always exercise the real
+    pipeline; the cache test opts in by passing an explicit (empty) headers dict.
+    """
     payload = {
         "user_id": user_id,
         "user_dept": dept,
         "message": message,
         "history": history or [],
     }
+    send_headers = (
+        {"Cache-Control": "no-cache"} if headers is None else headers
+    )
     started = time.time()
-    resp = requests.post(URL, json=payload, timeout=TIMEOUT)
+    resp = requests.post(URL, json=payload, timeout=TIMEOUT, headers=send_headers)
     elapsed = time.time() - started
 
     if resp.status_code != 200:
@@ -133,8 +142,25 @@ def main():
     check("ticket created", "TICK-" in text, text[:120])
     check("ticket used two LLM calls", (data or {}).get("timings", {}).get("llm_calls", 0) >= 2)
 
-    # 7. Invalid input: department names are validated before reaching the store
-    print("[7] Invalid department is rejected")
+    # 7. FAQ cache: the same single-turn question is served from memory
+    print("[7] FAQ cache: repeat question")
+    # A per-run unique phrasing, so the first call is always a miss even when a
+    # previous run already cached the plain question.
+    q = f"What must happen before a change is merged into main? ({uuid.uuid4().hex[:8]})"
+    first, _ = ask("u1", "Tech", q, headers={})
+    second, _ = ask("u1", "Tech", q, headers={})
+    first_t = (first or {}).get("timings", {})
+    second_t = (second or {}).get("timings", {})
+    check("repeat answer identical", (first or {}).get("response") == (second or {}).get("response"))
+    check("repeat sources identical", (first or {}).get("sources") == (second or {}).get("sources"))
+    check("cached answer is fast", second_t.get("total_ms", 9999) < 50, str(second_t))
+    check("cached answer makes no LLM call", second_t.get("llm_calls") == 0, str(second_t))
+    check("cached answer is marked", second_t.get("cached") is True, str(second_t))
+    check("first answer was not cached", first_t.get("cached") is not True, str(first_t))
+    check("first answer used the LLM", first_t.get("llm_calls", 0) >= 1, str(first_t))
+
+    # 8. Invalid input: department names are validated before reaching the store
+    print("[8] Invalid department is rejected")
     try:
         resp = requests.post(
             URL,

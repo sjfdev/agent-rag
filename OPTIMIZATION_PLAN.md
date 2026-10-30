@@ -238,6 +238,7 @@ curl -f http://localhost:9091/healthz
 | 2026-10-30 | Milvus 升级 2.5.4 + 服务端稀疏 BM25 | colima 配置镜像源后拉取成功；备份数据卷；`--reset` 先 drop 再建；实测 18/18、MRR 0.89、P50 24ms；详见 `WORKLOG.md` |
 | 2026-10-30 | 性能与清理：批量删除、`doc_summary()`、元数据/哈希缓存、检索分支收敛、删除死代码 | `/admin/api/meta` 451ms→6ms；`check_hybrid` 49/49；test_agent 13/13；评测 18/18 |
 | 2026-10-30 | 9.1 正确性：零停机重建（Milvus alias / FAISS 原子替换）、先写新后删旧、多轮相似度护栏 | 重建期间 0 失败请求；问答/更新/删除无重复 chunk；`check_hybrid` 57/57、`check_hybrid_milvus` 19/19；详见 `WORKLOG.md` |
+| 2026-10-30 | 9.2 缓存：FAQ 答案缓存 + 查询向量缓存 | 重复问答 4044ms→4ms、重复检索 1434ms→9ms；`check_hybrid` 69/69、test_agent 18/18；见 `WORKLOG.md` 5.8 |
 
 ---
 
@@ -416,16 +417,18 @@ curl -f http://localhost:9091/healthz
 ### 9.2 P2 性能（预计 3 小时）
 
 #### 9.2.1 FAQ 精确缓存
-- [ ] 位置：新增 `src/cache.py`，接入 `main.py` 的 `/chat` 与 `/chat/stream`
-- [ ] 键：`dept + 规范化问题`（去空白/标点、小写）；值：`answer + sources + timings`
-- [ ] LRU 容量 512、TTL 1 天；**入库/删除/重建后清空**
-- [ ] 只缓存非工具调用、无错误、`llm_calls == 1` 的回答
-- [ ] 验收：重复问题第 2 次 `total_ms < 20ms`；`/metrics` 新增 `agent_rag_cache_hits_total{result}`
+- [x] 位置：`src/cache.py`，接入 `main.py` 的 `/chat` 与 `/chat/stream`
+- [x] 键：`dept + 规范化问题`（去空白/标点、小写）；值：`answer + sources`
+- [x] LRU 512、TTL 1 天；**入库/删除/重建后清空**（`_touch()` 统一处理）
+- [x] 只缓存单轮、无工具调用、无错误、`llm_calls == 1` 的回答
+- [x] 旁路：`Cache-Control: no-cache` / `X-No-Cache: 1`
+- [x] 验收（实测）：重复问题 **4044ms → 4.2ms**，`timings.cached=true`、`llm_calls=0`、`X-Cache: hit`；`/metrics` 新增 `agent_rag_cache_total{cache,result}`、`agent_rag_cache_entries{cache}`
 
 #### 9.2.2 embedding 缓存
-- [ ] 位置：`src/engine.py` 查询侧（`embed_query`）
-- [ ] 键：`embedding_model + query`；LRU 2048
-- [ ] 验收：`scripts/bench_retrieval.py` 重复查询 embedding 耗时 → ~0ms
+- [x] 位置：`src/embedding_cache.py`，由 `build_embeddings()` 统一包装（检索、多轮相似度、混合检索都走它）
+- [x] 键：`(backend:model, query)`，换模型自动失效；LRU 2048（`EMBEDDING_CACHE_MAX_ENTRIES=0` 可关闭）
+- [x] 入库 `embed_documents` 不缓存，避免占内存
+- [x] 验收（实测）：重复检索 **1434ms → 9ms**；热态 `embed_query` 0.03ms，Milvus RPC 约 13ms
 
 #### 9.2.3 FAISS 按部门索引（可选）
 - [ ] 现状：全库检索后本地过滤，`pool = max(k*20, 50)`，部门多/数据偏斜时召回不足
