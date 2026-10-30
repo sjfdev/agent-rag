@@ -29,7 +29,8 @@
 | 18 | ChatService 抽取 + 惰性引擎 | `981e5d7` | 完成 |
 | 19 | 管理台审计/任务持久化/上传配额 + 鉴权/多部门/文档 ACL | `63067f0` | 完成 |
 | 20 | 测试覆盖率提升（73% → 92%） | `7fcc6a2` | 完成 |
-| 21 | Makefile / doctor / 限流 / 请求超时 | 本轮 | 完成 |
+| 21 | Makefile / doctor / 限流 / 请求超时 | `f64aa29` | 完成 |
+| 22 | Quickstart + 计划校正 | `f8aa9c4` | 完成 |
 
 当前运行态：`vector_store=milvus`、`hybrid.engine=milvus`、Milvus `v2.5.4`、26 chunks / 4 部门。
 
@@ -483,9 +484,38 @@
 
 ---
 
+## 9. 当日收尾（2026-10-31）
+
+今天结束时的状态：
+
+- 服务：`vector_store=milvus`、26 chunks、`hybrid.engine=milvus`、`/health=ok`
+- 测试：`pytest -q` **265 passed**，覆盖率 **92%**，全离线（fake embedding + stub LLM）
+- 质量：`ruff check` 全绿；`test_agent.py` 20/20；评测 18/18、MRR 0.89、0 泄漏
+- 工具：`make help` / `make doctor` / `make test` / `make lint` 可用
+
+今天完成（按提交）：
+
+| 提交 | 内容 |
+|---|---|
+| `7fcc6a2` | 覆盖率 73% → 92%（246 项），修复 `shadow_collection` 回退缺陷 |
+| `f64aa29` | Makefile、doctor、限流（429）、请求超时（504）、`src/errors.py` |
+| `f8aa9c4` | `QUICKSTART.md`、计划校正（勾掉 35 项已实现条目） |
+
+明天（2026-11-01）的待办已写入 `OPTIMIZATION_PLAN.md` **第 10 节**：
+
+1. LLM 失败降级（检索摘要兜底）
+2. CORS
+3. 确认 CI 首跑
+4. 前端体验（会话持久化、复制、停止生成、Markdown）
+5. 引用合并与 score
+6. README / 运维手册 / 离线安装
+7. 规模化（按需）：FAISS 按部门索引、批量 embedding、Redis
+
+---
+
 ## 10. 相关文档
 
 - `AGENT_GUIDE.md`：安装、使用、接口、配置、FAQ、性能优化
-- `OPTIMIZATION_PLAN.md`：待办清单与历史进度；**下一次开发直接看第 9 节「明日待办」**
+- `OPTIMIZATION_PLAN.md`：待办清单与历史进度；**下一次开发直接看第 10 节「明日待办（2026-11-01）」**
 - `DEPLOYMENT_CN.md` / `DEPLOYMENT.md`：私有化部署步骤
 - `AGENTS.md`：协作约定与常用命令

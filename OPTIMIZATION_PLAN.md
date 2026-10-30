@@ -1,8 +1,8 @@
 # Agent 优化计划（待办清单）
 
-> 记录时间：2026-10-29；最后更新：2026-10-30
-> 用途：继续开发的唯一入口。完成一项就把 `[ ]` 改成 `[x]`，并在文末「进度记录」补一行。
-> 明日待办见第 9 节（按性价比排序，含验收命令）。
+> 记录时间：2026-10-29；最后更新：2026-10-31
+> 用途：继续开发的唯一入口。完成一项就把 `[ ]` 改成 `[x]`，并在第 7 节「进度记录」补一行。
+> **下一次开发直接看第 10 节「明日待办（2026-11-01）」**；第 9 节是上一轮已完成的历史归档。
 > 相关文档：`AGENT_GUIDE.md`（使用说明）、`DEPLOYMENT_CN.md` / `DEPLOYMENT.md`（部署）、`AGENTS.md`（协作约定）
 
 ---
@@ -239,6 +239,12 @@ curl -f http://localhost:9091/healthz
 | 2026-10-30 | 性能与清理：批量删除、`doc_summary()`、元数据/哈希缓存、检索分支收敛、删除死代码 | `/admin/api/meta` 451ms→6ms；`check_hybrid` 49/49；test_agent 13/13；评测 18/18 |
 | 2026-10-30 | 9.1 正确性：零停机重建（Milvus alias / FAISS 原子替换）、先写新后删旧、多轮相似度护栏 | 重建期间 0 失败请求；问答/更新/删除无重复 chunk；`check_hybrid` 57/57、`check_hybrid_milvus` 19/19；详见 `WORKLOG.md` |
 | 2026-10-30 | 9.2 缓存：FAQ 答案缓存 + 查询向量缓存 | 重复问答 4044ms→4ms、重复检索 1434ms→9ms；`check_hybrid` 69/69、test_agent 18/18；见 `WORKLOG.md` 5.8 |
+| 2026-10-30 | 9.3.1 pytest + ruff + GitHub Actions | 离线 83 → 127 项；新增 `EMBEDDING_BACKEND=fake`、`requirements-test.txt`、`ci.yml`；修复 admin 非法部门 500→400 |
+| 2026-10-30 | 9.3.2 ChatService + 惰性引擎 | `/chat` 与 `/chat/stream` 收敛到 `src/chat_service.py`；`import src.engine` 12–14s→0.72s；97 项测试 |
+| 2026-10-30 | 9.3.3 / 9.3.4 管理台加固与权限 | 审计、任务持久化、上传配额/进度；API Key、多部门、文档 ACL；127 项测试 |
+| 2026-10-30 | 测试覆盖率 73%→92% | 246 项；新增 engine(Milvus 假客户端)/health/metrics/reranker/agent/ETL/admin 补充测试 |
+| 2026-10-30 | 工程基建与稳定性 | Makefile、doctor、限流（429+Retry-After）、请求超时（504）；265 项测试 |
+| 2026-10-31 | Quickstart + 计划校正 | 新增 `QUICKSTART.md`；勾掉 35 项已实现条目，剩余待办收敛到第 10 节 |
 
 ---
 
@@ -381,11 +387,10 @@ curl -f http://localhost:9091/healthz
 
 ---
 
-## 9. 明日待办（2026-10-31，按性价比排序）
+## 9. 上一轮待办归档（2026-10-31，已完成）
 
-> 当前状态：Milvus 2.5.4 + 服务端稀疏 BM25 已跑通；`/health`、`/metrics`、混合检索、评测集、管理台均已完成。
-> 下面每项都写了**验收命令**，做完勾选并在第 7 节补一行。
-> 注意：本地 `.env` 仍写 `VECTOR_STORE_TYPE=faiss`，当前服务用环境变量覆盖为 `milvus`；明天动 Milvus 前先确认这一点。
+> 本节保留作为记录：9.1 正确性、9.2 缓存、9.3 工程与运维均已完成（两项例外见下方）。
+> 剩余未完成的两项已挪到第 10 节。下一次开发请看 **第 10 节**。
 
 ### 9.1 P1 正确性（优先，预计 3–4 小时）
 
@@ -447,12 +452,12 @@ curl -f http://localhost:9091/healthz
 > `.github/workflows/ci.yml` 自动 checkout 代码、装依赖、跑 lint 和测试，结果直接显示在
 > PR 页面上。作用是「防止把坏代码合进 main」——本地忘了跑测试时 CI 会拦下来。
 > 它不部署、不碰生产数据；也可以关掉，只留本地 `pytest`。
-- [x] 新建 `tests/`（validation / loaders / hybrid / etl / cache / admin / api / engine / health / metrics / agent / reranker / jobs / audit / acl / auth），共 **246 个用例**，约 20 秒跑完
+- [x] 新建 `tests/`（validation / loaders / hybrid / etl / cache / admin / api / engine / health / metrics / agent / reranker / jobs / audit / acl / auth / ratelimit / errors / doctor），共 **265 个用例**，约 25 秒跑完
 - [x] 离线可跑：新增 `EMBEDDING_BACKEND=fake` 确定性向量；LLM 用 `monkeypatch` 替换为 stub；向量库用临时 FAISS 目录（`conftest.py` 自动配置）
 - [x] `pytest.ini` + `ruff.toml`；`requirements-test.txt` 只列测试所需依赖（不含 torch）
 - [x] GitHub Actions `.github/workflows/ci.yml`：ruff → pytest(含覆盖率) → 上传 coverage
 - [x] 同时修掉一个真实缺陷：admin 路由抛 `InvalidDepartment` 现在由全局处理器映射为 400（此前是 500）
-- [x] 验收（本机）：`pytest -q` **246 passed**；`ruff check` 全绿；覆盖率 **92%**（engine 86%，reranker/metrics/runtime/tools 100%）
+- [x] 验收（本机）：`pytest -q` **265 passed**；`ruff check` 全绿；覆盖率 **92%**（engine 86%，reranker/metrics/runtime/tools 100%）
 - [ ] CI 首次在 GitHub 上跑通（需要推送后在仓库 Actions 页面观察；本机没有 `gh`，本地已验证同样的命令全绿）
 
 #### 9.3.2 `ChatService` 抽取 + 惰性引擎
@@ -504,3 +509,108 @@ VECTOR_STORE_TYPE=faiss  python scripts/eval_retrieval.py
 ```
 
 通过标准：全部 `RESULT: OK`；评测 `18/18`、`leaks=0`、MRR ≥ 0.89。
+
+---
+
+## 10. 明日待办（2026-11-01）
+
+> 起点：265 项测试全绿、覆盖率 92%、Milvus 2.5.4 + 服务端稀疏 BM25 在生产化配置下运行。
+> 今天结束时的状态：`vector_store=milvus`、26 chunks、`hybrid.engine=milvus`、`/health=ok`。
+> 本地 `.env` 仍写 `VECTOR_STORE_TYPE=faiss`；当前服务是**环境变量覆盖**为 milvus，改动前先确认。
+
+### 10.1 P1 稳定性（预计 2–3 小时）
+
+#### 10.1.1 LLM 失败降级（检索摘要兜底）
+- [ ] 位置：`src/chat_service.py::run` / `_stream`，`src/errors.py`
+- [ ] 现状：LLM 不可用或超时时只返回 `503 upstream_unavailable` / `504 timeout`，用户拿不到任何信息
+- [ ] 方案：
+  - 捕获 `is_upstream_error` / `ChatTimeout` 后，用本次已检索到的 `sources` 拼一段确定性摘要（前 3 条 snippet + 来源）
+  - 响应带 `degraded=true` 与 `degraded_reason=llm_unavailable`，HTTP 仍 200（或按配置返回 503 + body）
+  - 流式：先发一个 `warning` 事件，再发 `done`（`cached=false`, `degraded=true`）
+  - 开关：`LLM_FALLBACK_ENABLED=true`（默认开），可回退到旧行为
+- [ ] 注意：只对**已经完成检索**的请求降级；检索本身失败仍返回 503
+- [ ] 验收：
+  - 把 `LLM_API_BASE` 指向不可达地址，`/chat` 返回来源摘要而非空错误
+  - `test_agent.py` 增加“LLM 不可用”用例；`pytest` 新增降级测试
+  - `degraded` 不计入缓存（避免把兜底答案缓存一天）
+
+#### 10.1.2 CORS（外部前端接入）
+- [ ] 位置：`main.py`
+- [ ] 现状：`/ui/`、`/admin` 同源可用；第三方页面调用 `/chat` 会被浏览器拦截
+- [ ] 方案：`CORS_ORIGINS`（逗号分隔，默认空=不启用）→ `CORSMiddleware`
+  - 只对 `/chat`、`/chat/stream`、`/info`、`/health` 放行；`/admin/api` 不开放
+  - `allow_credentials` 与 `*` 互斥，需显式列出域名
+- [ ] 验收：`curl -H 'Origin: http://example.com' -X OPTIONS` 返回正确的 `Access-Control-Allow-Origin`；默认配置下无 CORS 头
+
+#### 10.1.3 CI 首跑确认
+- [ ] 位置：GitHub 仓库 Actions 页面（本机没有 `gh`）
+- [ ] 待确认：`lint-and-test` 是否通过、依赖安装是否缺包、缓存是否生效
+- [ ] 若失败：把报错贴回，按缺失依赖补 `requirements-test.txt`
+- [ ] 验收：main 分支最近一次 run 为绿色
+
+### 10.2 P2 体验（预计 3 小时）
+
+#### 10.2.1 会话持久化与前端体验
+- [ ] `static/index.html`：`localStorage` 保存 `history` + 部门/用户，刷新不丢
+- [ ] 复制回答按钮、停止生成（`AbortController` + 后端已有超时兜底）
+- [ ] Markdown 渲染（仅安全子集，避免 XSS；先做粗体/列表/代码块）
+- [ ] 验收：刷新后对话仍在；点停止后请求确实中断（Network 面板）；回答中的 `**粗体**` 正确渲染
+
+#### 10.2.2 引用质量
+- [ ] 同页多 chunk 合并为一条 source（保留最高分/最长 snippet）
+- [ ] `sources` 增加 `score`（Milvus 有 distance；FAISS 用 L2 距离换算）
+- [ ] UI 来源面板显示分数并按分数排序
+- [ ] 验收：预算问题只出现一条 `confidential_budget_2026.pdf p.1`，不再重复；评测脚本不受影响
+
+#### 10.2.3 检索可观测性补齐
+- [ ] `timings` 增加 `rerank_ms`（目前混在 `retrieval_ms`）
+- [ ] `bench_retrieval.py` 增加重排开关对比
+- [ ] 验收：`RERANK_ENABLED=true` 时响应含独立 `rerank_ms`；关闭时字段为 0
+
+### 10.3 P3 规模化与文档（有余力）
+
+#### 10.3.1 文档补全
+- [ ] `README.md`（仓库首页）：一句话定位、架构图、5 分钟 Quickstart 链接、能力表、许可证
+- [ ] 运维手册：新增部门、新增工具、重建索引、切换后端、回滚、备份
+- [ ] 离线/内网安装：`pip download` 打包 + 预置 `HF_HOME` 模型目录
+- [ ] 明确多 worker 约束（FAISS 单写者、进程内缓存/任务/限流、指标聚合）
+- [ ] 验收：新机器只读 README → QUICKSTART 可跑通
+
+#### 10.3.2 前端/服务端会话
+- [ ] 服务端会话存储（可选）：避免客户端全量回传 history；超窗口自动摘要
+- [ ] 外部前端 CORS 已在 10.1.2 覆盖
+- [ ] 验收：连续 20 轮对话后请求体不再线性增长
+
+#### 10.3.3 解析增强
+- [ ] 扫描版 PDF OCR（`ocrmypdf` 预处理或 PaddleOCR）
+- [ ] XLSX 按行切块（当前整表可能被截断）
+- [ ] 大文件流式解析（当前 50MB 一次性读入）
+- [ ] 验收：新增扫描版样例可检索；`check_loaders.py` 覆盖新格式
+
+#### 10.3.4 规模化（按需）
+- [ ] 9.2.3 FAISS 按部门索引（仅当单部门数据量 > 数万时才需要）
+- [ ] 批量 embedding（入库逐文档 → batch）
+- [ ] Redis 版缓存/限流/任务队列（多副本时）
+- [ ] 客户端断开即取消（异步 LLM 客户端）
+- [ ] 验收：对应基准脚本给出前后对比
+
+### 10.4 建议排期
+
+| 时段 | 内容 |
+|---|---|
+| 上午 | 10.1.1 LLM 降级（含测试）+ 10.1.2 CORS |
+| 下午前半 | 10.2.1 前端体验 + 10.2.2 引用合并/分数 |
+| 下午后半 | 10.3.1 README + 运维手册 |
+| 收尾 | 跑 9.5 回归清单，更新 `WORKLOG.md` 与本文件进度记录 |
+
+### 10.5 明日回归清单（同 9.5，另加）
+
+```bash
+pytest -q
+ruff check src tests main.py run_ingestion.py scripts
+python scripts/doctor.py
+# 降级验证：LLM 指向不可达地址后
+curl -s -X POST localhost:8000/chat -H 'Content-Type: application/json' \
+  -d '{"user_id":"u1","user_dept":"Tech","message":"What is the code review process?"}' | head -c 300
+```
+
