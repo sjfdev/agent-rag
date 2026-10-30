@@ -32,13 +32,9 @@ class EnterpriseETL:
         self,
         data_dir: str = "./data",
         on_log: Optional[Callable[[str], None]] = None,
-        force: bool = False,
     ):
         self.data_dir = Path(data_dir)
         self.on_log = on_log
-        # A full rebuild starts from an empty shadow index: the live hashes
-        # would otherwise mark every file as unchanged and write nothing.
-        self.force = force
         self.splitter = RecursiveCharacterTextSplitter(
             chunk_size=800,
             chunk_overlap=100,
@@ -116,7 +112,9 @@ class EnterpriseETL:
             return doc_id
 
         doc_hash = file_sha1(path)
-        existing_hash = None if self.force else kb_engine.get_doc_hash(doc_id)
+        # During a shadow rebuild `get_doc_hash()` reads the (empty) shadow, so
+        # every file is written; outside a rebuild it reads the live index.
+        existing_hash = kb_engine.get_doc_hash(doc_id)
         if existing_hash == doc_hash:
             self.stats["skipped"] += 1
             self._log(f"  skip     {source} (unchanged)")

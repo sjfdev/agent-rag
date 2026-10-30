@@ -1,0 +1,16 @@
+target-version = "py311"
+line-length = 100
+
+[lint]
+# Style modernisations (UP006/UP007) would churn every file; the codebase uses
+# typing.Dict/List deliberately for consistency.
+select = ["E", "F", "W", "I", "B"]
+ignore = [
+    "E501",   # long lines are tolerated in comments/docstrings
+    "B008",   # FastAPI Depends()/File() in defaults is idiomatic
+    "B904",   # raise ... from is optional in this codebase
+    "B027",   # abstract base methods with no-op bodies are intentional
+]
+
+[lint.per-file-ignores]
+"tests/*" = ["B011"]

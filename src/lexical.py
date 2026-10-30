@@ -65,7 +65,7 @@ class LexicalIndex:
             return []
         scores = self._bm25.get_scores(tokens)
         ranked = sorted(
-            zip(scores, self.docs), key=lambda pair: float(pair[0]), reverse=True
+            zip(scores, self.docs, strict=False), key=lambda pair: float(pair[0]), reverse=True
         )
         return [doc for score, doc in ranked[:k] if score > 0]
 

@@ -98,6 +98,8 @@ agent-rag/
 ├── db/vector_db/            # FAISS 索引与元数据
 ├── volumes/                 # Milvus/etcd 数据卷
 ├── eval/cases.jsonl         # 检索评测集（命中 + 泄漏用例）
+├── tests/                   # pytest 离线测试（83 项）
+├── .github/workflows/ci.yml # ruff + pytest（CI）
 ├── WORKLOG.md               # 本轮迭代记录与验证矩阵
 ├── scripts/
 │   ├── generate_samples.py  # 生成 8 份样例 PDF
@@ -302,6 +304,18 @@ python run_ingestion.py                 # 增量入库
 - 文件删除 → 自动清理其 chunk（`--no-prune` 可关闭）
 - 切换 FAISS/Milvus 或元数据结构变化后，用 `--reset` 重建
 
+### 4.5.1 运行测试
+
+```bash
+pytest -q                    # 全部离线测试（fake embedding + stub LLM）
+pytest tests/test_etl.py -q  # 单个文件
+pytest --cov=src             # 带覆盖率
+```
+
+- 测试不联网、不下载模型、不调用 LLM；`conftest.py` 会把 `EMBEDDING_BACKEND` 设为 `fake` 并使用临时 FAISS 目录
+- CI（GitHub Actions）配置在 `.github/workflows/ci.yml`，执行 `ruff` + `pytest`
+- 需要真实链路时再跑 `test_agent.py`（需要启动服务与可用 LLM）
+
 ### 4.6 启动 Milvus（可选）
 
 ```bash
@@ -496,7 +510,9 @@ python scripts/check_loaders.py      # 9 种格式解析（不写向量库）
 python scripts/check_admin.py        # 管理台上传→入库→删除冒烟
 python scripts/bench_retrieval.py    # embedding / FAISS / Milvus / LLM 延迟
 python scripts/generate_demo_files.py  # 重建 data/Demo 多格式样例
-python test_agent.py                 # 端到端 13 项断言（需服务已启动）
+pytest -q                            # 离线单测/接口测试（83 项，~25s，无需服务/LLM）
+ruff check src tests main.py run_ingestion.py   # 代码检查
+python test_agent.py                 # 端到端 18 项断言（需服务已启动）
 ```
 
 补充说明：
@@ -586,7 +602,7 @@ python run_ingestion.py --no-prune # 不清理已删除文件
 | `MILVUS_HOST` / `MILVUS_PORT` | `localhost` / `19530` | Milvus 连接地址 |
 | `MILVUS_COLLECTION` | `enterprise_kb` | 集合名 |
 | `MILVUS_URI` | 空 | 非空时优先于 host/port（如 `http://host:19530`） |
-| `EMBEDDING_BACKEND` | `local` | `local` 或 `openai` |
+| `EMBEDDING_BACKEND` | `local` | `local` / `openai` / `fake`（测试用确定性向量） |
 | `LOCAL_EMBEDDING_MODEL` | `BAAI/bge-small-zh-v1.5` | 本地 embedding（512 维） |
 | `EMBEDDING_MODEL` | `text-embedding-3-small` | `EMBEDDING_BACKEND=openai` 时使用 |
 | `HF_ENDPOINT` | `https://hf-mirror.com` | 模型下载镜像（`src/__init__.py` 设定） |

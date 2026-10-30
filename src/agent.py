@@ -2,16 +2,16 @@ import re
 import time
 from typing import Annotated, Any, Dict, List, TypedDict
 
-from langgraph.graph import StateGraph, END
-from langgraph.graph.message import add_messages
-from langgraph.prebuilt import ToolNode
-from langchain_openai import ChatOpenAI
 from langchain_core.messages import (
     BaseMessage,
     HumanMessage,
     SystemMessage,
     ToolMessage,
 )
+from langchain_openai import ChatOpenAI
+from langgraph.graph import END, StateGraph
+from langgraph.graph.message import add_messages
+from langgraph.prebuilt import ToolNode
 
 from src.config import settings
 from src.engine import kb_engine
@@ -97,7 +97,7 @@ def _similarity(previous: str, current: str) -> float:
 
         a = kb_engine.embeddings.embed_query(previous)
         b = kb_engine.embeddings.embed_query(current)
-        dot = sum(x * y for x, y in zip(a, b))
+        dot = sum(x * y for x, y in zip(a, b, strict=False))
         na = math.sqrt(sum(x * x for x in a))
         nb = math.sqrt(sum(y * y for y in b))
         if not na or not nb:

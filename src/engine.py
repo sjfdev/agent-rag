@@ -1,6 +1,8 @@
+import hashlib
 import json
 import logging
 import os
+import random
 import shutil
 import threading
 import time
@@ -21,7 +23,33 @@ from src.validation import validate_dept
 logger = logging.getLogger(__name__)
 
 
+class FakeEmbeddings:
+    """Deterministic, dependency-free embeddings for offline tests.
+
+    Enabled with ``EMBEDDING_BACKEND=fake``. Vectors depend only on the text, so
+    tests are reproducible and never download a model or call a network API.
+    """
+
+    def __init__(self, dim: int = 64):
+        self.dim = dim
+
+    def _vector(self, text: str):
+        seed = int.from_bytes(hashlib.sha256(text.encode("utf-8")).digest()[:8], "big")
+        rng = random.Random(seed)
+        values = [rng.uniform(-1.0, 1.0) for _ in range(self.dim)]
+        norm = sum(v * v for v in values) ** 0.5 or 1.0
+        return [v / norm for v in values]
+
+    def embed_query(self, text: str):
+        return self._vector(text)
+
+    def embed_documents(self, texts):
+        return [self._vector(text) for text in texts]
+
+
 def _raw_embeddings():
+    if settings.EMBEDDING_BACKEND == "fake":
+        return FakeEmbeddings()
     if settings.EMBEDDING_BACKEND == "openai":
         return OpenAIEmbeddings(
             model=settings.EMBEDDING_MODEL,
@@ -383,7 +411,7 @@ class MilvusDriver(BaseVectorStore):
         return int(res[0]["count(*)"]) if res else 0
 
     def add_documents(self, texts: List[str], metadatas: List[Dict[str, Any]]):
-        docs = [Document(page_content=t, metadata=m) for t, m in zip(texts, metadatas)]
+        docs = [Document(page_content=t, metadata=m) for t, m in zip(texts, metadatas, strict=False)]
         self._write_db.add_documents(docs)
         if self.sparse_enabled and getattr(self, "_rebuild_target", None) is None:
             # The first insert may have just created the collection/BM25 index.
@@ -767,7 +795,7 @@ class FAISSDriver(BaseVectorStore):
         return target.docstore._dict
 
     def add_documents(self, texts: List[str], metadatas: List[Dict[str, Any]]):
-        docs = [Document(page_content=t, metadata=m) for t, m in zip(texts, metadatas)]
+        docs = [Document(page_content=t, metadata=m) for t, m in zip(texts, metadatas, strict=False)]
         if getattr(self, "_rebuild_path", None):
             self._write_add(docs)
             return

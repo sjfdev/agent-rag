@@ -8,19 +8,24 @@ from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional
 
 from fastapi import FastAPI, HTTPException, Request, Response
-from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import (
+    FileResponse,
+    JSONResponse,
+    RedirectResponse,
+    StreamingResponse,
+)
 from fastapi.staticfiles import StaticFiles
 from langchain_core.messages import AIMessage, HumanMessage
 from pydantic import BaseModel, Field
 
+from src import metrics
 from src.admin_api import router as admin_router
 from src.agent import app as agent_app
 from src.cache import answer_cache
 from src.config import settings
-from src.runtime import in_maintenance
 from src.engine import kb_engine
 from src.health import router as health_router
-from src import metrics
+from src.runtime import in_maintenance
 from src.validation import InvalidDepartment, validate_dept
 
 # Vector-store connection failures (Milvus down, FAISS index unreadable).
@@ -66,6 +71,15 @@ if STATIC_DIR.is_dir():
 @app.get("/", include_in_schema=False)
 def root():
     return RedirectResponse(url="/ui/")
+
+
+@app.exception_handler(InvalidDepartment)
+async def _invalid_department_handler(request: Request, exc: InvalidDepartment):
+    # Admin routes validate department names directly and rely on this mapping.
+    return JSONResponse(
+        status_code=400,
+        content={"detail": "invalid department name"},
+    )
 
 
 app.include_router(admin_router)

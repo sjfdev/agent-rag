@@ -22,9 +22,9 @@ from src.config import settings
 from src.engine import kb_engine
 from src.etl import EnterpriseETL, doc_id_for
 from src.hashing import clear_hash_cache, file_sha1
-from src.runtime import begin_maintenance, end_maintenance
-from src.metrics import observe_ingest_job
 from src.loaders import LEGACY_EXTENSIONS, SUPPORTED_EXTENSIONS
+from src.metrics import observe_ingest_job
+from src.runtime import begin_maintenance, end_maintenance
 from src.validation import validate_dept
 
 logger = logging.getLogger("agent-rag.admin")
@@ -224,9 +224,7 @@ def _run_job(job_id: str, dept: Optional[str], reset: bool) -> None:
             rebuilding = True
 
         etl = EnterpriseETL(
-            data_dir=settings.DATA_DIR,
-            on_log=lambda m: _job_log(job_id, m),
-            force=reset,
+            data_dir=settings.DATA_DIR, on_log=lambda m: _job_log(job_id, m)
         )
         root = _data_root()
         departments = [dept] if dept else _list_depts()

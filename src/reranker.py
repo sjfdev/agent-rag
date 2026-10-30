@@ -48,7 +48,7 @@ class EnterpriseReranker:
         except Exception as exc:
             print(f"[reranker] inference failed, keeping vector order: {exc}")
             return docs[:top_k]
-        ranked = sorted(zip(scores, docs), key=lambda pair: float(pair[0]), reverse=True)
+        ranked = sorted(zip(scores, docs, strict=False), key=lambda pair: float(pair[0]), reverse=True)
         return [doc for _, doc in ranked[:top_k]]
 
 

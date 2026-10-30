@@ -56,7 +56,7 @@ def main():
         print("Building a shadow index...")
         kb_engine.begin_rebuild()
 
-    etl = EnterpriseETL(data_dir=root, force=args.reset)
+    etl = EnterpriseETL(data_dir=root)
     keep = set()
 
     for dept in departments:

@@ -83,4 +83,6 @@ def cache_namespace() -> str:
     """Identity of the embedding model so a swap never reuses stale vectors."""
     if settings.EMBEDDING_BACKEND == "openai":
         return f"openai:{settings.EMBEDDING_MODEL}"
+    if settings.EMBEDDING_BACKEND == "fake":
+        return "fake"
     return f"local:{settings.LOCAL_EMBEDDING_MODEL}"

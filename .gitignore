@@ -1,9 +1,19 @@
-.env
-.env.*
-!.env.example
-db/
+# Python
 __pycache__/
-*.pyc
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+*.egg-info/
+
+# Environment / local data
+.env
+db/
 volumes/
-*.log
+logs/
+
+# OS / editor
 .DS_Store
+.idea/

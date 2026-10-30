@@ -13,7 +13,6 @@ import logging
 from pathlib import Path
 from typing import List
 
-from langchain_community.document_loaders import PyPDFLoader
 from langchain_core.documents import Document
 
 logger = logging.getLogger(__name__)
@@ -60,6 +59,10 @@ def read_text(path: Path) -> str:
 
 
 def _load_pdf(path: Path) -> List[Document]:
+    # Imported lazily: the loader pulls in pypdf, which is unnecessary for
+    # non-PDF ingestion and slows down importing `src.loaders` in tests.
+    from langchain_community.document_loaders import PyPDFLoader
+
     docs = PyPDFLoader(str(path)).load()
     out = []
     for doc in docs:

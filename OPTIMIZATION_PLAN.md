@@ -438,10 +438,18 @@ curl -f http://localhost:9091/healthz
 ### 9.3 P3 工程与运维（预计 4–6 小时）
 
 #### 9.3.1 pytest + CI
-- [ ] 把 `scripts/check_*.py` 的断言重构成 pytest 用例（保留脚本入口）
-- [ ] LLM 用 stub（`monkeypatch` ChatOpenAI）保证离线可跑；向量库用临时 FAISS 目录
-- [ ] GitHub Actions：`ruff`（或 `flake8`）+ `pytest` + `test_agent.py`（可选 nightly）
-- [ ] 验收：`pytest -q` 全绿；CI 在 PR 上运行
+
+> **什么是 GitHub Actions**：GitHub 提供的一台临时机器。每次 push / PR，它会按
+> `.github/workflows/ci.yml` 自动 checkout 代码、装依赖、跑 lint 和测试，结果直接显示在
+> PR 页面上。作用是「防止把坏代码合进 main」——本地忘了跑测试时 CI 会拦下来。
+> 它不部署、不碰生产数据；也可以关掉，只留本地 `pytest`。
+- [x] 新建 `tests/`（validation / loaders / hybrid / etl / cache / admin / api），共 **83 个用例**，约 25 秒跑完
+- [x] 离线可跑：新增 `EMBEDDING_BACKEND=fake` 确定性向量；LLM 用 `monkeypatch` 替换为 stub；向量库用临时 FAISS 目录（`conftest.py` 自动配置）
+- [x] `pytest.ini` + `ruff.toml`；`requirements-test.txt` 只列测试所需依赖（不含 torch）
+- [x] GitHub Actions `.github/workflows/ci.yml`：ruff → pytest(含覆盖率) → 上传 coverage
+- [x] 同时修掉一个真实缺陷：admin 路由抛 `InvalidDepartment` 现在由全局处理器映射为 400（此前是 500）
+- [x] 验收（本机）：`pytest -q` 83 passed；`ruff check` 全绿；覆盖率 68%（engine 51%，reranker 0% 因默认关闭）
+- [ ] CI 首次在 GitHub 上跑通（需要 push 后观察 Actions 结果；本地已验证同样的命令全绿）
 
 #### 9.3.2 `ChatService` 抽取 + 惰性引擎
 - [ ] `/chat` 与 `/chat/stream` 的校验、维护检查、异常映射、指标记录抽到 `src/chat_service.py`

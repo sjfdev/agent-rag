@@ -24,7 +24,8 @@
 | 13 | 管理台冒烟测试清理残留部门 | `53e82b9` | 完成 |
 | 14 | 性能与死代码清理（批量删除、哈希缓存、元数据缓存） | `c6a90c6` | 完成 |
 | 15 | 零停机重建 + 安全替换 + 多轮相似度护栏 | `2701aba` | 完成 |
-| 16 | FAQ 答案缓存 + 查询向量缓存 | 本轮 | 完成 |
+| 16 | FAQ 答案缓存 + 查询向量缓存 | `69190c1` | 完成 |
+| 17 | pytest 测试套件 + ruff + GitHub Actions | 本轮 | 完成 |
 
 当前运行态：`vector_store=milvus`、`hybrid.engine=milvus`、Milvus `v2.5.4`、26 chunks / 4 部门。
 
@@ -239,6 +240,31 @@
 
 ---
 
+## 5.9 测试与 CI（本轮，9.3.1）
+
+| 文件 | 内容 |
+|---|---|
+| `tests/conftest.py` | 离线环境（fake embeddings、临时 FAISS、无网络）+ 共享 fixtures |
+| `tests/test_validation.py` | 15 项：合法/非法部门、注入串 |
+| `tests/test_loaders.py` | 15 项：9 种格式、表格/备注/页码/sheet、脚本剥离 |
+| `tests/test_hybrid.py` | 23 项：分词、BM25、RRF、能力判定、删除表达式、fake embedding |
+| `tests/test_etl.py` | 5 项：首次入库、增量跳过、安全替换、prune、解析失败保留旧版 |
+| `tests/test_cache.py` | 9 项：答案缓存 LRU/TTL/部门隔离、向量缓存 |
+| `tests/test_admin.py` | 6 项：meta、令牌、上传→入库→删除、扩展名/路径、部门校验 |
+| `tests/test_api.py` | 10 项：答案+来源、部门隔离、缓存命中/旁路、流式、health |
+
+配套：
+
+- `EMBEDDING_BACKEND=fake`：`FakeEmbeddings` 用 sha256 生成确定性单位向量，跑测试不下载模型、不联网
+- `pytest.ini`、`ruff.toml`、`requirements-test.txt`
+- `.github/workflows/ci.yml`：Python 3.11 → 安装测试依赖 → `ruff check` → `pytest --cov` → 上传覆盖率
+
+本机结果：**83 passed / ~25s**，`ruff` 全绿，覆盖率 68%（cache/config/validation 100%，engine 51%，reranker 0% 因默认关闭）。
+
+顺带修复：admin 路由抛出的 `InvalidDepartment` 以前会变成 500，现在由 `main.py` 的全局异常处理器统一返回 400。
+
+---
+
 ## 6. Milvus 升级（2.4.0 → 2.5.4）
 
 - 升级前备份数据卷：`volumes/milvus` + `volumes/etcd` → `milvus-2.4-<时间戳>.tgz`
@@ -283,6 +309,8 @@
 | 检查 | 结果 |
 |---|---|
 | `python test_agent.py` | 18/18 通过（需服务 + LLM，含缓存断言） |
+| `pytest -q`（离线，含 CI） | 83/83，约 25s |
+| `ruff check src tests main.py run_ingestion.py` | 全绿 |
 | `python scripts/check_hybrid.py` | 69/69 |
 | `python scripts/check_hybrid_milvus.py` | 19/19（2.5+），低版本 SKIP |
 | `python scripts/check_health.py [--probe]` | 12/12、14/14 |

@@ -2,6 +2,7 @@ from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+
 class Settings(BaseSettings):
     # Loads .env if present; real env vars take precedence.
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
@@ -67,7 +68,7 @@ class Settings(BaseSettings):
     # Embedding Config
     # "local"  -> sentence-transformers (offline, no API key needed)
     # "openai" -> OpenAI-compatible /embeddings endpoint
-    EMBEDDING_BACKEND: Literal["local", "openai"] = "local"
+    EMBEDDING_BACKEND: Literal["local", "openai", "fake"] = "local"
     LOCAL_EMBEDDING_MODEL: str = "BAAI/bge-small-zh-v1.5"
     EMBEDDING_MODEL: str = "text-embedding-3-small"
 
