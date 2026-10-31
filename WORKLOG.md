@@ -35,6 +35,7 @@
 | 24 | LLM 降级 + CORS（10.1） | 本轮 | 完成 |
 | 25 | 前端体验 + 引用质量 + rerank_ms（10.2） | 本轮 | 完成 |
 | 26 | README / 运维手册 / 离线安装（10.3） | 本轮 | 完成 |
+| 27 | 修复 CI 依赖冲突与 torch-free 测试 | 本轮 | 完成 |
 
 当前运行态：`vector_store=milvus`、`hybrid.engine=milvus`、Milvus `v2.5.4`、26 chunks / 4 部门。
 
@@ -446,6 +447,27 @@
 ### 文档
 
 `README.md`（定位/架构/能力表/接口/快速开始）、`AGENT_GUIDE.md` 第 12 节运维手册（新增部门/工具、重建、切换后端、升级、回滚、备份、多 worker）、`DEPLOYMENT_CN.md` 第 7 节离线/内网安装。
+
+### CI 首跑排查
+
+GitHub Actions 前 6 次 run 均为失败，失败步骤是 `Install test dependencies`（lint 与测试被跳过）。
+
+**根因 1**：`ci.yml` 手写依赖，把 `langchain-core` 钉在 `0.3.79`，而 `langchain-community==0.4.2` 要求 `langchain-core>=1.4.0`：
+
+```
+ERROR: Cannot install langchain-community==0.4.2 and langchain-core==0.3.79 ...
+ResolutionImpossible
+```
+
+**根因 2**：`tests/test_reranker_runtime.py` 直接 `import sentence_transformers`，CI 不装 torch，即使依赖修好也会有 4 个用例失败。
+
+**修复**：
+
+- CI 不再维护第二份依赖清单，改为 `pip install -r requirements-test.txt`（本地跑 287 项用的就是它）
+- `ruff` 检查范围补上 `scripts/` 与 `test_agent.py`
+- reranker 测试通过 `monkeypatch.setitem(sys.modules, "sentence_transformers", fake)` 注入假模块
+
+**本地复现**：新建干净 venv → 按 CI 步骤安装 → `ruff` 全绿、`pytest` **287 passed**、覆盖率 92%。
 
 ---
 

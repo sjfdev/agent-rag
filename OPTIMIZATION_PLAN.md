@@ -248,6 +248,7 @@ curl -f http://localhost:9091/healthz
 | 2026-10-31 | 10.1 LLM 降级 + CORS | LLM 不可用时返回检索摘录（200 + `degraded`），不写缓存；`CORS_ORIGINS` + 管理台跨站防护；`test_agent` 20 项、pytest 287 项 |
 | 2026-10-31 | 10.2 前端体验 + 引用质量 + rerank_ms | `localStorage` 会话、复制/停止；同页 chunk 合并、相对 score、独立 `rerank_ms` |
 | 2026-10-31 | 10.3 文档 | 新增 `README.md`、运维手册（GUIDE §12）、离线安装（DEPLOYMENT_CN §7） |
+| 2026-10-31 | CI 修复 | run #5–#10 失败原因：手写依赖中 `langchain-core==0.3.79` 与 `langchain-community==0.4.2` 冲突；CI 改用 `requirements-test.txt`；reranker 测试改为 stub，不再依赖 torch |
 
 ---
 
@@ -538,10 +539,12 @@ VECTOR_STORE_TYPE=faiss  python scripts/eval_retrieval.py
 - [x] 验收：允许来源返回 `Access-Control-Allow-Origin`，预检包含 `X-API-Key`；未配置时无 CORS 头；伪造来源访问 `/admin/api` 返回 403
 
 #### 10.1.3 CI 首跑确认
-- [ ] 位置：GitHub 仓库 Actions 页面（本机没有 `gh`，需要在浏览器确认）
-- [ ] 待确认：`lint-and-test` 是否通过、依赖安装是否缺包、缓存是否生效
-- [ ] 若失败：把报错贴回，按缺失依赖补 `requirements-test.txt`
-- [ ] 验收：main 分支最近一次 run 为绿色
+- [x] 通过 GitHub API 查看：run #5–#10 全部失败，失败点在 **Install test dependencies**
+- [x] 根因：`ci.yml` 里手写的依赖清单把 `langchain-core` 钉在 `0.3.79`，而 `langchain-community==0.4.2` 要求 `langchain-core>=1.4.0` → `ResolutionImpossible`
+- [x] 第二个问题：`tests/test_reranker_runtime.py` 直接 `import sentence_transformers`，而 CI 不装 torch，即使依赖修好也会 4 个用例失败
+- [x] 修复：CI 改为 `pip install -r requirements-test.txt`（本地已验证的同一套 pin）；reranker 测试改为注入假的 `sentence_transformers` 模块
+- [x] 本地无网复现：用干净 venv 按 CI 步骤安装 → `ruff` 全绿、`pytest` **287 passed**、覆盖率 92%
+- [ ] 推送后确认 GitHub Actions 变绿（下一次 run）
 
 ### 10.2 P2 体验（预计 3 小时）
 
