@@ -341,6 +341,33 @@ curl -fsS localhost:8000/health
 - 慢网络可用构建参数：`--build-arg PIP_INDEX_URL=... TORCH_INDEX_URL=... HF_ENDPOINT=...`
 - 单 worker 限制见 §12.8；多副本前需 Redis
 
+### 4.4.3 登录与身份（`AUTH_MODE=jwt`）
+
+默认 `AUTH_MODE=none`：身份由请求体传入，适合内网/单机。
+
+对外部署时打开 jwt 模式，身份只认签名 token：
+
+```bash
+# 服务端
+AUTH_MODE=jwt AUTH_JWT_SECRET='至少32字符的随机串' uvicorn main:app --port 8000
+
+# 签发 token（运维/测试；生产应由网关或身份服务签发）
+python scripts/mint_token.py --user alice --dept Tech --dept HR --group exec --ttl 3600
+
+# 调用
+curl -H "Authorization: Bearer <token>" -X POST localhost:8000/chat \
+  -H 'Content-Type: application/json' -d '{"message":"..."}'
+```
+
+规则：
+
+- jwt 模式下**忽略**请求体里的 `user_id` / `user_dept` / `user_groups`，伪造无效
+- 部门来自 token 的 `depts`，ACL 组来自 `groups`，缓存键按部门+组隔离
+- `admin: true` 的 token 可访问 `/admin/api`；`ADMIN_TOKEN` 保留为应急后门
+- 未带 / 过期 / 签名错误的 token 返回 401；非管理员访问管理接口返回 403
+- `AUTH_JWT_SECRET` 少于 32 字符时服务**拒绝启动**（避免弱密钥）
+- 集成 OIDC 时，让网关把 IdP 的 token 换成这里约定的 HS256 token，或把 `decode_token` 换成 JWKS 校验
+
 ### 4.5.0 常用命令（Makefile）
 
 ```bash
@@ -666,7 +693,13 @@ python run_ingestion.py --no-prune # 不清理已删除文件
 | `MAX_UPLOAD_TOTAL_MB` | `200` | 单次上传合计上限（0 不限制） |
 | `AUDIT_LOG_PATH` | `./logs/admin_audit.log` | 管理操作审计（JSON Lines） |
 | `JOBS_PATH` | `./logs/ingest_jobs.json` | 入库任务历史（重启恢复） |
-| `CHAT_API_KEY` | 空 | 非空时 `/chat` 需要 `X-API-Key` 或 Bearer |
+| `AUTH_MODE` | `none` | `none`（body 传身份）或 `jwt`（Bearer token 为准） |
+| `AUTH_JWT_SECRET` | 空 | jwt 模式必填，≥32 字符；泄漏等于全部权限 |
+| `AUTH_JWT_ALGORITHM` | `HS256` | 签名算法 |
+| `AUTH_JWT_ISSUER` | 空 | 非空时校验 `iss` |
+| `AUTH_JWT_AUDIENCE` | 空 | 非空时校验 `aud` |
+| `AUTH_TOKEN_TTL` | `43200` | 签发脚本给出的默认有效期（秒） |
+| `CHAT_API_KEY` | 空 | 非空时 `/chat` 需要 `X-API-Key` 或 Bearer（jwt 模式下忽略） |
 | `RATE_LIMIT_PER_MINUTE` | `0` | 每调用方每分钟请求上限（0 关闭），超限 429 |
 | `CHAT_TIMEOUT` | `120` | 单次问答整体时限（秒），超时 504 `timeout` |
 | `HISTORY_MAX_MESSAGES` | `20` | 实际使用的上下文条数；超出时静默丢弃最早的消息（按 user/assistant 成对裁剪） |

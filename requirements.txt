@@ -20,6 +20,7 @@ faiss-cpu==1.15.1
 pymilvus==3.0.2
 
 prometheus-client==0.24.1
+PyJWT==2.10.1
 rank-bm25==0.2.2
 
 fastapi==0.162.0

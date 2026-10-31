@@ -14,7 +14,7 @@ from fastapi.responses import (
 )
 from fastapi.staticfiles import StaticFiles
 
-from src import chat_service, metrics
+from src import auth, chat_service, metrics
 from src.admin_api import _job_store
 from src.admin_api import router as admin_router
 from src.config import settings
@@ -95,6 +95,13 @@ def info():
 
 @app.on_event("startup")
 async def startup_event():
+    try:
+        auth.validate_config()
+    except RuntimeError as exc:
+        # A misconfigured auth setup must not start silently open.
+        logger.error("authentication misconfigured: %s", exc)
+        raise
+
     # Jobs that were mid-flight when the process died are marked failed so the
     # console does not show a permanently "running" task after a restart.
     try:
@@ -148,7 +155,13 @@ def prometheus_metrics(request: Request):
 
 
 def require_chat_key(http_request: Request) -> None:
-    """Optional API key for the chat endpoints (open when unset)."""
+    """Optional API key for the chat endpoints (open when unset).
+
+    In jwt mode the bearer token is the credential, so the static key is not
+    required; identity and permissions are resolved in `chat_service.prepare`.
+    """
+    if auth.auth_enabled():
+        return
     expected = settings.CHAT_API_KEY
     if not expected:
         return

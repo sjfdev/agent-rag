@@ -39,7 +39,8 @@
 | 28 | 解析增强（表格分块 / PDF 表格 / OCR） | `f0a7632` | 完成 |
 | 29 | 多轮上下文修复 + bench 重排对比 | `332567e` | 完成 |
 | 30 | 产品化交付（Docker / 生产 compose / 路线图） | `63378ca` | 完成 |
-| 31 | 待办收敛到第 11 节 | 本轮 | 完成 |
+| 31 | 待办收敛到第 11 节 | `97769f5` | 完成 |
+| 32 | JWT 登录与身份来源（11.1.1） | 本轮 | 完成 |
 
 当前运行态：`vector_store=milvus`、`hybrid.engine=milvus`、Milvus `v2.5.4`、26 chunks / 4 部门。
 
@@ -662,6 +663,29 @@ ResolutionImpossible
 - **11.3 P2 规模化（按需）**：多进程指标、Redis、批量 embedding、FAISS 分部门、大文件流式
 
 恢复开发时的自检命令见 §11.5。
+
+---
+
+## 5.18 JWT 登录（11.1.1）
+
+| 能力 | 实现 |
+|---|---|
+| Token | HS256；claims `sub`/`depts`/`groups`/`admin`/`iat`/`exp`，可选 `iss`/`aud` |
+| 模式 | `AUTH_MODE=none`（默认，body 身份）或 `jwt` |
+| 身份优先级 | jwt 模式下 token 唯一有效；body 里的 `user_id`/`user_dept`/`user_groups` 被丢弃 |
+| 管理台 | `admin: true` 的 token 放行；`ADMIN_TOKEN` 保留应急；非管理员 403 |
+| 缓存 | 键 = token 部门 + ACL 组（`cache_scope`），跨身份不共享 |
+| 限流 | 键优先转发 IP，否则 token 的 `user_id` |
+| 启动校验 | `AUTH_JWT_SECRET` < 32 字符 → 拒绝启动 |
+| 签发 | `scripts/mint_token.py --user alice --dept Tech --group exec --admin` |
+
+实测：
+
+- 无 token → 401；`AUTH_MODE=none` 缺 `user_id` → 400（向后兼容）
+- token 部门是 Tech、body 伪称 Finance → 来源仍只有 Tech
+- alice/bob 同问题各自缓存（`cache_scope` 相同部门时共享，跨部门不共享）
+- admin token `/admin/api/meta` 200；普通 token 403；无 token 401
+- `/chat/stream` 带 token 正常 SSE
 
 ---
 

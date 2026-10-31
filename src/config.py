@@ -80,7 +80,17 @@ class Settings(BaseSettings):
     # Optional bearer token for GET /metrics (empty = open, rely on the network).
     METRICS_TOKEN: str = ""
     # Optional API key for /chat; when set, callers must send X-API-Key.
+    # Ignored when AUTH_MODE=jwt (the bearer token is the credential).
     CHAT_API_KEY: str = ""
+    # Authentication: "none" keeps the legacy body-supplied identity,
+    # "jwt" requires a signed bearer token (see src/auth.py).
+    AUTH_MODE: Literal["none", "jwt"] = "none"
+    AUTH_JWT_SECRET: str = ""
+    AUTH_JWT_ALGORITHM: str = "HS256"
+    AUTH_JWT_ISSUER: str = ""
+    AUTH_JWT_AUDIENCE: str = ""
+    # Lifetime of tokens minted by scripts/mint_token.py (seconds).
+    AUTH_TOKEN_TTL: int = 43200
     # Per-caller rate limit for /chat and /chat/stream (0 disables).
     # Requests are counted per user_id (or client IP when absent) in a sliding
     # window; with several workers each process enforces its own limit.

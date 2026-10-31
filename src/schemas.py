@@ -11,7 +11,10 @@ class HistoryItem(BaseModel):
 
 
 class ChatRequest(BaseModel):
-    user_id: str = Field(min_length=1, max_length=64)
+    # Optional so jwt-authenticated clients do not have to supply identity in
+    # the body (it comes from the token). In AUTH_MODE=none it is required,
+    # which `chat_service.prepare` enforces.
+    user_id: str = Field(default="", max_length=64)
     # Single-department callers keep using `user_dept`; users who span several
     # departments can send `user_depts` instead (or both, which is merged).
     user_dept: Optional[str] = Field(default=None, max_length=64)

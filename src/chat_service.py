@@ -22,7 +22,7 @@ from typing import Any, Dict, Iterator, List, Optional
 from fastapi import HTTPException
 from langchain_core.messages import AIMessage, HumanMessage
 
-from src import metrics
+from src import auth, metrics
 from src.agent import app as agent_app
 from src.cache import answer_cache
 from src.config import settings
@@ -40,6 +40,7 @@ __all__ = [
     "Prepared",
     "cache_bypassed",
     "cache_lookup",
+    "cache_scope",
     "cache_store",
     "classify_error",
     "is_store_error",
@@ -106,9 +107,12 @@ class Prepared:
     endpoint: str
     started: float
     inputs: Dict[str, Any]
+    # Cache scope (departments + ACL groups): never share answers across
+    # identities that could see different documents.
+    scope: str = ""
 
 
-def _client_key(request: ChatRequest, headers: Any) -> str:
+def _client_key(user_id: str, headers: Any) -> str:
     """Rate-limit identity: real client IP when known, else the user id.
 
     Behind a proxy the forwarded address is the only value an abusive caller
@@ -120,7 +124,7 @@ def _client_key(request: ChatRequest, headers: Any) -> str:
     client_ip = forwarded or lowered.get("x-real-ip", "").strip()
     if client_ip:
         return f"ip:{client_ip}"
-    return f"user:{request.user_id or 'unknown'}"
+    return f"user:{user_id or 'unknown'}"
 
 
 def prepare(
@@ -134,7 +138,45 @@ def prepare(
     request_id = uuid.uuid4().hex[:8]
     started = time.perf_counter()
 
-    allowed, retry_after = ratelimiter().allow(_client_key(request, headers))
+    # Identity: in jwt mode the token is authoritative and body fields are
+    # ignored; in "none" mode the body is used (legacy behaviour).
+    try:
+        identity = auth.identity_from_headers(headers)
+    except auth.AuthError as exc:
+        logger.warning("rejected unauthenticated request: %s", exc)
+        metrics.observe_request(
+            endpoint=endpoint,
+            status="rejected",
+            elapsed_seconds=time.perf_counter() - started,
+        )
+        raise HTTPException(
+            status_code=401,
+            detail={"error": "unauthorized", "message": "invalid or missing token"},
+            headers={"X-Request-ID": request_id, "WWW-Authenticate": "Bearer"},
+        )
+
+    requested_depts = request.departments()
+    requested_groups = list(request.user_groups or [])
+    if identity is not None:
+        # Body-supplied identity is discarded entirely.
+        requested_depts = list(identity.departments)
+        requested_groups = list(identity.groups)
+        effective_user = identity.user_id
+    else:
+        effective_user = request.user_id
+        if not effective_user.strip():
+            metrics.observe_request(
+                endpoint=endpoint,
+                status="rejected",
+                elapsed_seconds=time.perf_counter() - started,
+            )
+            raise HTTPException(
+                status_code=400,
+                detail={"error": "missing_user_id", "message": "user_id is required"},
+                headers={"X-Request-ID": request_id},
+            )
+
+    allowed, retry_after = ratelimiter().allow(_client_key(effective_user, headers))
     if not allowed:
         metrics.observe_request(
             endpoint=endpoint,
@@ -167,12 +209,12 @@ def prepare(
         )
 
     try:
-        safe_depts = validate_depts(request.departments())
+        safe_depts = validate_depts(requested_depts)
     except InvalidDepartment:
         logger.warning(
             "rejected invalid dept request_id=%s depts=%r",
             request_id,
-            request.departments(),
+            requested_depts,
         )
         metrics.observe_request(
             endpoint=endpoint,
@@ -195,13 +237,14 @@ def prepare(
         request_id=request_id,
         endpoint=endpoint,
         started=started,
+        scope=cache_scope(safe_depts, requested_groups),
         inputs={
             "messages": messages,
-            "user_id": request.user_id,
+            "user_id": effective_user,
             # Primary department keeps single-dept behaviour and citations.
             "user_dept": safe_depts[0],
             "user_depts": safe_depts,
-            "user_groups": list(request.user_groups or []),
+            "user_groups": requested_groups,
         },
     )
 
@@ -257,12 +300,13 @@ def cache_bypassed(headers: Any) -> bool:
 
 
 def cache_lookup(
-    request: ChatRequest, headers: Any
+    request: ChatRequest, headers: Any, scope: Optional[str] = None
 ) -> Optional[Dict[str, Any]]:
     """Only single-turn questions are cached: follow-ups depend on history."""
     if not _cache_enabled() or request.history or cache_bypassed(headers):
         return None
-    payload = answer_cache.get(_cache_dept(request), request.message)
+    key_scope = scope if scope is not None else cache_scope(request.departments(), request.user_groups)
+    payload = answer_cache.get(key_scope, request.message)
     metrics.observe_cache("answer", "hit" if payload is not None else "miss")
     return payload
 
@@ -272,6 +316,7 @@ def cache_store(
     headers: Any,
     final_state: Dict[str, Any],
     timings: Dict[str, Any],
+    scope: Optional[str] = None,
 ) -> None:
     """Cache only replay-safe answers (one LLM call, no tool use)."""
     if not _cache_enabled() or request.history or cache_bypassed(headers):
@@ -283,8 +328,11 @@ def cache_store(
     messages = final_state.get("messages") or []
     if not messages:
         return
+    key_scope = scope if scope is not None else cache_scope(
+        request.departments(), request.user_groups
+    )
     answer_cache.put(
-        _cache_dept(request),
+        key_scope,
         request.message,
         {
             "response": messages[-1].content,
@@ -298,17 +346,16 @@ def _cache_enabled() -> bool:
     return settings.FAQ_CACHE_ENABLED and answer_cache.max_entries > 0
 
 
-def _cache_dept(request: ChatRequest) -> str:
+def cache_scope(departments: Any, groups: Any = None) -> str:
     """Cache key scope: departments plus ACL groups.
 
     Groups must be part of the key, otherwise an answer built with elevated
     access could be replayed for a caller without it.
     """
-    depts = request.departments()
-    scope = "|".join(depts) if depts else "unknown"
-    groups = sorted(str(group) for group in (request.user_groups or []))
+    depts = list(departments or [])
+    scope = "|".join(str(dept) for dept in depts) if depts else "unknown"
     if settings.ACL_ENABLED and groups:
-        scope += "::" + ",".join(groups)
+        scope += "::" + ",".join(sorted(str(group) for group in groups))
     return scope
 
 
@@ -320,7 +367,7 @@ def run(request: ChatRequest, headers: Any, endpoint: str = "chat") -> ChatRespo
     prepared = prepare(request, endpoint, headers)
     started = prepared.started
 
-    cached = cache_lookup(request, headers)
+    cached = cache_lookup(request, headers, prepared.scope)
     if cached is not None:
         timings = cached_timings(started)
         metrics.observe_request(
@@ -350,7 +397,7 @@ def run(request: ChatRequest, headers: Any, endpoint: str = "chat") -> ChatRespo
     if degraded:
         timings["degraded"] = True
     else:
-        cache_store(request, headers, final_state, timings)
+        cache_store(request, headers, final_state, timings, prepared.scope)
     logger.info(
         "chat ok request_id=%s dept=%s total_ms=%s llm_ms=%s llm_calls=%s",
         prepared.request_id,
@@ -438,7 +485,7 @@ def _stream(
     final_state: Dict[str, Any] = {}
     first_token_at = None
 
-    cached = cache_lookup(request, headers)
+    cached = cache_lookup(request, headers, prepared.scope)
     if cached is not None:
         timings = cached_timings(started)
         metrics.observe_request(
@@ -487,7 +534,7 @@ def _stream(
         if degraded:
             timings["degraded"] = True
         else:
-            cache_store(request, headers, final_state, timings)
+            cache_store(request, headers, final_state, timings, prepared.scope)
         logger.info(
             "chat stream ok request_id=%s dept=%s total_ms=%s llm_ms=%s llm_calls=%s",
             request_id,

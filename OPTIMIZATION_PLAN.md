@@ -669,12 +669,16 @@ curl -s -X POST localhost:8000/chat -H 'Content-Type: application/json' \
 
 ### 11.1 P0 对外发布前必须先做
 
-#### 11.1.1 登录与用户体系
-- [ ] 选型：接 OIDC（Keycloak/Auth0/企业微信/飞书，1–2 天）或自建账号（3–5 天）
-- [ ] 落点：`main.py` 增加身份依赖；`src/chat_service.py::prepare` 从身份取 `user_id`/`user_dept`/`user_groups`，忽略客户端自报
-- [ ] 管理台改用同一套登录，`ADMIN_TOKEN` 仅作为应急后门
-- [ ] 缓存键、审计 actor、限流键都改用以身份为准
-- [ ] 验收：伪造 `user_dept` 无效；未登录 401；两个用户的会话互不可见
+#### 11.1.1 登录与用户体系（已完成 JWT 模式）
+- [x] 新增 `src/auth.py`：HS256 JWT（`sub`/`depts`/`groups`/`admin`），可选 `iss`/`aud` 校验；弱密钥拒绝启动
+- [x] `AUTH_MODE=none|jwt`：jwt 模式下 `chat_service.prepare` 只认 token，请求体的 `user_id`/`user_dept`/`user_groups` 全部忽略
+- [x] 缓存键改为 token 派生的部门+组（`cache_scope`），不同身份不共享答案
+- [x] 限流键使用 token 的 `user_id`（无转发 IP 时）
+- [x] 管理台：`admin: true` 的 token 可访问 `/admin/api`；`ADMIN_TOKEN` 保留应急后门；非管理员 403、无 token 401
+- [x] `scripts/mint_token.py` 签发/自测；`/chat` 与 `/chat/stream` 均已验证
+- [x] 验收（实测）：无 token 401；body 伪造 `Finance` 仍只能拿到 Tech 来源；跨部门缓存不共享；非管理员管理接口 403；`AUTH_MODE=none` 完全兼容（缺 `user_id` 时 400）
+- [ ] 接入具体 IdP（Keycloak/企业微信/飞书）：本实现是网关/IdP 签发 HS256 token 的接入点；如需 JWKS/RS256，替换 `decode_token`
+- [ ] 管理台前端登录页（当前用 `X-Admin-Token` 或直接带 Bearer）
 
 #### 11.1.2 多租户（做 SaaS 才需要）
 - [ ] chunk 增加 `tenant` 元数据；检索表达式 `tenant == 'x' and dept in [...]`

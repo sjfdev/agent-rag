@@ -99,9 +99,9 @@ def test_stream_deadline_emits_timeout_error(monkeypatch):
 
 
 def test_rate_limit_identity_uses_forwarded_ip(monkeypatch):
-    req = chat_service.ChatRequest(
-        user_id="anon", user_dept="Tech", message="hi"
+    assert (
+        chat_service._client_key("anon", {"X-Forwarded-For": "1.2.3.4, 5.6.7.8"})
+        == "ip:1.2.3.4"
     )
-    assert chat_service._client_key(req, {"X-Forwarded-For": "1.2.3.4, 5.6.7.8"}) == "ip:1.2.3.4"
-    assert chat_service._client_key(req, {"x-real-ip": "9.9.9.9"}) == "ip:9.9.9.9"
-    assert chat_service._client_key(req, {}) == "user:anon"
+    assert chat_service._client_key("anon", {"x-real-ip": "9.9.9.9"}) == "ip:9.9.9.9"
+    assert chat_service._client_key("anon", {}) == "user:anon"

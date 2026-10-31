@@ -18,7 +18,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from pydantic import BaseModel, Field
 
-from src import audit
+from src import audit, auth
 from src.config import settings
 from src.engine import kb_engine
 from src.etl import EnterpriseETL, doc_id_for
@@ -51,12 +51,30 @@ def require_admin(request: Request) -> None:
         host = request.headers.get("host", "")
         if origin not in allowed and host and origin.split("://", 1)[-1] != host:
             raise HTTPException(status_code=403, detail="cross-origin admin request")
+    # Break glass first: a matching static token always works (emergency).
     token = settings.ADMIN_TOKEN
-    if token:
-        provided = request.headers.get("X-Admin-Token", "")
-        if not secrets.compare_digest(provided, token):
-            raise HTTPException(status_code=401, detail="invalid admin token")
+    provided = request.headers.get("X-Admin-Token", "")
+    if token and secrets.compare_digest(provided, token):
         return
+
+    if auth.auth_enabled():
+        # In jwt mode the loopback shortcut is disabled: only admin tokens or
+        # the static break-glass token are accepted.
+        try:
+            identity = auth.identity_from_headers(request.headers)
+        except auth.AuthError as exc:
+            raise HTTPException(
+                status_code=401,
+                detail="invalid or missing token",
+                headers={"WWW-Authenticate": "Bearer"},
+            ) from exc
+        if identity is not None and identity.is_admin:
+            return
+        raise HTTPException(status_code=403, detail="admin privileges required")
+
+    if token:
+        raise HTTPException(status_code=401, detail="invalid admin token")
+
     host = request.client.host if request.client else ""
     if host not in _LOCAL_HOSTS:
         raise HTTPException(
