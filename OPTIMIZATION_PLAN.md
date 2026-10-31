@@ -248,6 +248,7 @@ curl -f http://localhost:9091/healthz
 | 2026-10-31 | 10.1 LLM 降级 + CORS | LLM 不可用时返回检索摘录（200 + `degraded`），不写缓存；`CORS_ORIGINS` + 管理台跨站防护；`test_agent` 20 项、pytest 287 项 |
 | 2026-10-31 | 10.2 前端体验 + 引用质量 + rerank_ms | `localStorage` 会话、复制/停止；同页 chunk 合并、相对 score、独立 `rerank_ms` |
 | 2026-10-31 | 10.3 文档 | 新增 `README.md`、运维手册（GUIDE §12）、离线安装（DEPLOYMENT_CN §7） |
+| 2026-10-31 | 产品化交付 | Dockerfile（CPU-only/模型内置/非 root）、生产 compose、`PRODUCTIZATION.md`；容器内端到端与故障演练通过 |
 | 2026-10-31 | 多轮上下文修复 + bench 重排对比 | `HISTORY_MAX_MESSAGES` 裁剪（按 user/assistant 成对）、前端只发最近 20 条、422/429/413 友好提示；`bench_retrieval.py --rerank` 分离加载/单次/端到端；309 项测试 |
 | 2026-10-31 | 解析增强 | XLSX/CSV 表头重复分块、PDF 表格（pdfplumber）、可选 OCR；`tests/test_parsing.py` 13 项；Demo 增加 Roster 表验证分块 |
 | 2026-10-31 | CI 修复 | run #5–#10 失败原因：手写依赖中 `langchain-core==0.3.79` 与 `langchain-community==0.4.2` 冲突；CI 改用 `requirements-test.txt`；reranker 测试改为 stub，不再依赖 torch |
@@ -594,7 +595,16 @@ VECTOR_STORE_TYPE=faiss  python scripts/eval_retrieval.py
 
 > 元数据键保持不变（`kind/page/slide/sheet/title/ocr`），因此**不需要重建现有集合**；新的切块只影响下一次变更文件。
 
-#### 10.3.4 规模化（按需）
+#### 10.3.4 产品化交付（2026-10-31 完成）
+
+- [x] `Dockerfile`：CPU-only torch、模型内置、非 root、`/info` 存活探针；构建参数可换 PyPI/torch/HF 镜像
+- [x] `docker-compose.prod.yml`：etcd + Milvus + app，只有 app 暴露 8000，数据卷与开发栈隔离
+- [x] `PRODUCTIZATION.md`：发布路径（打包 → 登录 → 多租户 → 计费 → 发布流程 → 备份），含实施顺序与风险
+- [x] 端到端实测：镜像构建成功；容器内 `/chat`、`/chat/stream`、`/ui/`、`/admin`、`/metrics` 正常；停掉 Milvus 时 `/health` 503、`/info` 仍 200、容器保持 healthy
+- [ ] 登录与用户体系（需接入 OIDC 或自建账号）
+- [ ] 多租户、配额计费、Grafana 告警、前端产品化
+
+#### 10.3.5 规模化（按需）
 - [ ] 9.2.3 FAISS 按部门索引（仅当单部门数据量 > 数万时才需要）
 - [ ] 批量 embedding（入库逐文档 → batch）
 - [ ] Redis 版缓存/限流/任务队列（多副本时）

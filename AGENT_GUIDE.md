@@ -325,6 +325,22 @@ brew install tesseract poppler          # macOS；OCR 还需要：
 pip install pytesseract==0.3.13 pdf2image==1.17.0
 ```
 
+### 4.4.2 容器化部署
+
+```bash
+cp .env.example .env          # 填 LLM_API_BASE / LLM_API_KEY / LLM_MODEL
+docker compose -f docker-compose.prod.yml up -d --build
+docker compose -f docker-compose.prod.yml exec app python run_ingestion.py
+curl -fsS localhost:8000/health
+```
+
+- 镜像 CPU-only（torch 从 CPU 索引安装），embedding 模型已内置，冷启动不联网
+- 只有 `app` 暴露 8000；Milvus/etcd 在内网
+- 数据卷：`./data`（原始文件）、`./logs`、`./volumes-prod`（索引，与本地开发栈隔离）
+- 容器健康检查用 `/info`（存活）；**就绪探针请用 `/health`**（索引为空时返回 503）
+- 慢网络可用构建参数：`--build-arg PIP_INDEX_URL=... TORCH_INDEX_URL=... HF_ENDPOINT=...`
+- 单 worker 限制见 §12.8；多副本前需 Redis
+
 ### 4.5.0 常用命令（Makefile）
 
 ```bash

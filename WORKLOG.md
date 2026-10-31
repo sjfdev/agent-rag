@@ -37,7 +37,8 @@
 | 26 | README / 运维手册 / 离线安装（10.3） | 本轮 | 完成 |
 | 27 | 修复 CI 依赖冲突与 torch-free 测试 | `5799504` | 完成 |
 | 28 | 解析增强（表格分块 / PDF 表格 / OCR） | `f0a7632` | 完成 |
-| 29 | 多轮上下文修复 + bench 重排对比 | 本轮 | 完成 |
+| 29 | 多轮上下文修复 + bench 重排对比 | `332567e` | 完成 |
+| 30 | 产品化交付（Docker / 生产 compose / 路线图） | 本轮 | 完成 |
 
 当前运行态：`vector_store=milvus`、`hybrid.engine=milvus`、Milvus `v2.5.4`、26 chunks / 4 部门。
 
@@ -515,6 +516,25 @@ ResolutionImpossible
 | `ms-marco-MiniLM-L-6-v2` | 162ms | 467ms | 444ms | 24ms |
 
 结论：BGE-base 在 CPU 上每查询约 4 秒，只适合离线评测或 GPU；线上若开重排建议 MiniLM 或 GPU 部署。
+
+## 5.17 产品化交付
+
+| 产物 | 说明 |
+|---|---|
+| `Dockerfile` | `python:3.11-slim`；torch 走 CPU 索引；embedding 模型构建期下载并内置（`HF_ENDPOINT` 可换镜像）；非 root（uid 10001）；存活探针用 `/info`；单 worker |
+| `docker-compose.prod.yml` | etcd + Milvus + app；只有 app 发布 8000；`./data`、`./logs`、`./volumes-prod`；`env_file: .env` 且容器网络覆盖 `MILVUS_URI` |
+| `.dockerignore` | 排除 tests、db、volumes、logs、data、.env |
+| `PRODUCTIZATION.md` | 发布路径：打包 → 登录（OIDC/自建）→ 多租户 → 配额计费 → 可观测 → 前端 → 发布流程 → 备份；含实施顺序与风险 |
+
+**构建取舍**：最初版本用 `apt-get install curl` 做健康检查，本机网络下 apt 卡住十分钟；改为纯 Python 探针后无需任何 Debian 包。PyPI 在本机被重置连接，构建参数默认指向清华镜像与 SJTU 的 torch 轮子镜像（均可用构建参数覆盖）。
+
+**端到端验证**（真实容器）：
+
+- `docker compose -f docker-compose.prod.yml up -d --build` → app `healthy`
+- 容器内 `run_ingestion.py` 写入 28 chunks；`/health` = ok
+- `/chat` 200 带 3 条来源；`/chat/stream` 正常 SSE；`/ui/`、`/admin`、`/metrics` 均 200
+- 故障演练：停掉 Milvus 后 `/health` 503、`/info` 200、容器保持 `healthy`；恢复 Milvus 后 `/health` 自动回到 ok
+- 生产栈移除后，开发栈与本地 uvicorn 恢复正常
 
 ---
 

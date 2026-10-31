@@ -13,6 +13,7 @@
 
 ## Developer Commands
 All commands assume the conda env `agent-rag` is active (`conda activate agent-rag`).
+Container build: `docker build -t agent-rag:dev .` (CPU-only torch, embedding model baked in; build args `PIP_INDEX_URL`/`TORCH_INDEX_URL`/`HF_ENDPOINT` for slow networks). Production stack: `docker compose -f docker-compose.prod.yml up -d --build` (etcd + Milvus + app, app on :8000). The container healthcheck uses `/info` (liveness) so a fresh deployment is healthy before the first ingestion; point load balancers at `/health` (readiness).
 `make help` lists shortcuts (`install/data/ingest/run/test/lint/cov/milvus-up/milvus-down/reset-*/doctor/check/eval/clean`); `scripts/doctor.py` checks the environment.
 - **Rate limit / deadline**: `RATE_LIMIT_PER_MINUTE` (0 = off, per forwarded IP or user id, 429 + `Retry-After`); `CHAT_TIMEOUT` caps the whole request (504 `timeout`). Error classification lives in `src/errors.py`.
 - **History**: `HISTORY_MAX_MESSAGES` (default 20) is what actually reaches the model; older messages are dropped in user/assistant pairs by `chat_service.trim_history`, so long chats never fail validation. The schema's 200-message cap is only an abuse guard.
