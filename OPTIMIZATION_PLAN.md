@@ -2,7 +2,7 @@
 
 > 记录时间：2026-10-29；最后更新：2026-10-31
 > 用途：继续开发的唯一入口。完成一项就把 `[ ]` 改成 `[x]`，并在第 7 节「进度记录」补一行。
-> **下一次开发直接看第 10 节「明日待办（2026-11-01）」**；第 9 节是上一轮已完成的历史归档。
+> **下一次开发直接看第 11 节「后续待办（按优先级）」**；第 9、10 节是已完成的历史归档。
 > 相关文档：`AGENT_GUIDE.md`（使用说明）、`DEPLOYMENT_CN.md` / `DEPLOYMENT.md`（部署）、`AGENTS.md`（协作约定）
 
 ---
@@ -134,7 +134,7 @@ VECTOR_STORE_TYPE=milvus uvicorn main:app --port 8000   # .env 仍写 faiss，�
 
 ### 2.6 工程基建
 - [x] 生成 `requirements.txt`（精确 pin，含安装顺序注释）
-- [ ] 可选 `pyproject.toml` + `uv`/`pip-tools` 锁文件（暂不需要）
+- 见 §11.3：`pyproject.toml` + 锁文件
 - [x] `Makefile`：`install / data / ingest / run / test / lint / cov / milvus-up / milvus-down / milvus-logs / reset-faiss / reset-milvus / doctor / check / eval / clean`
 - [x] `scripts/doctor.py`：Python 版本、numpy ABI、12 个关键包、embedding 缓存、数据目录、索引、Milvus 端口/版本、Docker、LLM 探针；`--no-llm` 跳过网络
 - [x] `.gitignore` 补 `volumes/`、`logs/`、覆盖率与缓存目录
@@ -248,6 +248,7 @@ curl -f http://localhost:9091/healthz
 | 2026-10-31 | 10.1 LLM 降级 + CORS | LLM 不可用时返回检索摘录（200 + `degraded`），不写缓存；`CORS_ORIGINS` + 管理台跨站防护；`test_agent` 20 项、pytest 287 项 |
 | 2026-10-31 | 10.2 前端体验 + 引用质量 + rerank_ms | `localStorage` 会话、复制/停止；同页 chunk 合并、相对 score、独立 `rerank_ms` |
 | 2026-10-31 | 10.3 文档 | 新增 `README.md`、运维手册（GUIDE §12）、离线安装（DEPLOYMENT_CN §7） |
+| 2026-10-31 | 待办收敛 | 新增第 11 节（P0 发布前 → P1 产品化 → P2 规模化），旧章节未完成项统一指向第 11 节；第 10 节转为归档 |
 | 2026-10-31 | 产品化交付 | Dockerfile（CPU-only/模型内置/非 root）、生产 compose、`PRODUCTIZATION.md`；容器内端到端与故障演练通过 |
 | 2026-10-31 | 多轮上下文修复 + bench 重排对比 | `HISTORY_MAX_MESSAGES` 裁剪（按 user/assistant 成对）、前端只发最近 20 条、422/429/413 友好提示；`bench_retrieval.py --rerank` 分离加载/单次/端到端；309 项测试 |
 | 2026-10-31 | 解析增强 | XLSX/CSV 表头重复分块、PDF 表格（pdfplumber）、可选 OCR；`tests/test_parsing.py` 13 项；Demo 增加 Roster 表验证分块 |
@@ -281,8 +282,7 @@ curl -f http://localhost:9091/healthz
 - [x] **compose 加 `restart: unless-stopped` + 资源限制**：昨天 `milvus-standalone` 因 etcd lease 丢失退出后没有自动重启
 - [x] **`/health`**：向量库与 LLM 连通性、索引是否为空、入库/重建状态；`?probe=1` 带 LLM 探测
 - [x] **请求超时**：`CHAT_TIMEOUT` 限制整体耗时（非流式用线程池 `result(timeout)`，流式逐帧检查），超时返回 504 `timeout`
-- [ ] **客户端断开即取消**：客户端断开后同步 LLM 调用仍会跑完；彻底取消需要异步客户端或协作式取消
-  - 可加 `asyncio.to_thread` + 取消检查，或限制 `--limit-concurrency`
+- 见 §11.2.5：客户端断开即取消
 - [x] **速率限制**：`RATE_LIMIT_PER_MINUTE`（默认 0 关闭），滑动窗口，超限 429
 
 ### 8.3 架构与代码质量
@@ -300,7 +300,7 @@ curl -f http://localhost:9091/healthz
 
 - [x] UI：`localStorage` 会话、复制、停止生成已实现；Markdown 渲染与移动端未做
 - [x] UI：来源展示（折叠面板 + 原文 `snippet`）
-- [ ] 服务端会话存储（可选）：避免客户端全量回传 history 导致 token 膨胀；超出窗口时自动摘要
+- 见 §11.2.4：服务端会话存储：避免客户端全量回传 history 导致 token 膨胀
 - [x] 多部门用户：`user_depts: list[str]`，Milvus 用 `dept in [...]`
 - [x] CORS：`CORS_ORIGINS`（默认关闭）+ 管理台跨站防护
 
@@ -330,7 +330,7 @@ curl -f http://localhost:9091/healthz
 - [x] `scripts/check_loaders.py` 无依赖自检（17 项）
 - [x] 内置 `data/Demo/` 9 文件多格式数据集 + `scripts/generate_demo_files.py`
 - [x] 扫描版 PDF OCR：`OCR_ENABLED` + pytesseract/pdf2image（代码与测试完成，依赖需自行安装）
-- [ ] 大文件流式解析与分页入库（当前 50MB 一次性读取）
+- 见 §11.3：大文件流式解析与分页入库
 
 ### 8.8 入库管理台（2026-10-29 新增，已实现）
 
@@ -366,12 +366,12 @@ curl -f http://localhost:9091/healthz
 
 - [x] **`/health`**：向量库块数、入库任务、重建状态；`?probe=1` 带 LLM 探测（15s 缓存）；空库/不可达返回 503，`check_health.py` 10 项冒烟
 - [x] **指标（Prometheus）**：`/metrics` 覆盖请求/错误、端到端与检索/LLM 耗时、首 token、索引块数、入库任务、重建状态；可选 `METRICS_TOKEN`
-- [ ] **多进程指标聚合**：多 worker 时各进程独立，需 Pushgateway 或按 instance 聚合；指标也未持久化
+- 见 §11.3：多进程指标聚合
 - [x] **N+1 查询与重复哈希**：批量删除（每 100 doc 一次）、`doc_summary()` 一次聚合替代逐文件查询、元数据缓存 5s、文件哈希按 stat 缓存；`/admin/api/meta` 451ms → 6ms
 - [x] **缓存**：答案 LRU + 查询向量缓存，命中 4ms
 - [x] **限流**：`RATE_LIMIT_PER_MINUTE`（429 + Retry-After）
 - [x] **管理台增强**：审计、任务持久化、上传总量上限、进度条
-- [ ] **单 worker 约束**：jobs/锁都在进程内，`--workers>1` 会状态分裂；多副本需 Redis/RQ 等外部队列
+- 见 §11.3：单 worker 约束
 
 #### P3 工程与体验
 
@@ -381,7 +381,7 @@ curl -f http://localhost:9091/healthz
 - [x] **前端**：复制、停止生成、localStorage 会话；Markdown 渲染/移动端未做
 - [x] **多轮上下文上限**：`HISTORY_MAX_MESSAGES` 裁剪 + 前端只发送最近 N 条；此前第 12 轮起 422，已修复
 - [x] **权限**：多部门、文档级 ACL、`/chat` API Key；CORS 未做
-- [ ] **规模**：批量 embedding、任务队列、Milvus 分区/索引参数、备份恢复
+- 见 §11.3：规模化项
 - [x] **解析增强**：OCR、PDF 表格结构化、XLSX 按行切块（见 10.3.3）
 
 #### 快速收益（1–3 小时/项）
@@ -448,9 +448,7 @@ curl -f http://localhost:9091/healthz
 - [x] 验收（实测）：重复检索 **1434ms → 9ms**；热态 `embed_query` 0.03ms，Milvus RPC 约 13ms
 
 #### 9.2.3 FAISS 按部门索引（可选）
-- [ ] 现状：全库检索后本地过滤，`pool = max(k*20, 50)`，部门多/数据偏斜时召回不足
-- [ ] 方案：每个部门一个 FAISS 索引文件 + 默认 index 元数据
-- [ ] 验收：新增“多部门大数据”基准，Recall@4 不低于 Milvus 模式；`verify_retrieval` 隔离仍通过
+- 见 §11.3：FAISS 按部门索引（仅单部门数据量很大时才需要）
 
 ### 9.3 P3 工程与运维（预计 4–6 小时）
 
@@ -520,11 +518,10 @@ VECTOR_STORE_TYPE=faiss  python scripts/eval_retrieval.py
 
 ---
 
-## 10. 明日待办（2026-11-01）
+## 10. 上一轮待办归档（2026-11-01，已完成）
 
-> 起点：265 项测试全绿、覆盖率 92%、Milvus 2.5.4 + 服务端稀疏 BM25 在生产化配置下运行。
-> 今天结束时的状态：`vector_store=milvus`、26 chunks、`hybrid.engine=milvus`、`/health=ok`。
-> 本地 `.env` 仍写 `VECTOR_STORE_TYPE=faiss`；当前服务是**环境变量覆盖**为 milvus，改动前先确认。
+> 本节保留作为记录：10.1 稳定性、10.2 体验、10.3 文档与解析、10.3.4 容器化交付均已完成。
+> 未完成项已统一收敛到 **第 11 节**。
 
 ### 10.1 P1 稳定性（预计 2–3 小时）
 
@@ -556,7 +553,7 @@ VECTOR_STORE_TYPE=faiss  python scripts/eval_retrieval.py
 - [x] `localStorage` 保存 `history` + 部门/用户 + 已渲染对话；`?new=...` 新窗口不恢复
 - [x] 复制回答按钮；停止生成（`AbortController`，后端已有超时兜底）
 - [x] 会话持久化、复制、停止生成；友好错误提示（422/429/413）
-- [ ] Markdown 渲染（仅安全子集）— 未做，留待下一轮
+- 见 §11.2.3：Markdown 渲染（仅安全子集）
 - [x] 验收：刷新后对话仍在；停止后提示「已停止生成」；切换部门/清空会同时清除本地会话
 
 #### 10.2.2 引用质量
@@ -582,15 +579,14 @@ VECTOR_STORE_TYPE=faiss  python scripts/eval_retrieval.py
 - [x] 验收：README 链接到 QUICKSTART；`make doctor` 可确认环境
 
 #### 10.3.2 前端/服务端会话
-- [ ] 服务端会话存储（可选）：避免客户端全量回传 history；超窗口自动摘要
+- 见 §11.2.4：服务端会话存储；验收：连续 20 轮请求体不再线性增长
 - [x] 外部前端 CORS 已在 10.1.2 覆盖
-- [ ] 验收：连续 20 轮对话后请求体不再线性增长
 
 #### 10.3.3 解析增强
 - [x] XLSX/CSV 按行切块：每块重复表头（`XLSX_ROWS_PER_CHUNK` / `CSV_ROWS_PER_CHUNK`，默认 20），`XLSX_MAX_ROWS` 封顶并告警，不再静默截断
 - [x] PDF 表格：`pdfplumber` 可选依赖（`PDF_TABLES_ENABLED`），按页把表格行追加到正文；未安装时自动跳过
 - [x] 扫描版 PDF OCR：`OCR_ENABLED`（默认关闭），页面文本少于 `OCR_MIN_CHARS` 时用 `pdf2image + pytesseract` 补文字，标注 `metadata.ocr`；任一依赖缺失或失败只记日志
-- [ ] 大文件流式解析（当前仍是整文件读入）
+- 见 §11.3：大文件流式解析
 - [x] 验收：`tests/test_parsing.py` 13 项（表头重复、行数封顶、PDF 表格、OCR 开关/失败、metadata 稳定性）；`check_loaders.py` 增加表头断言
 
 > 元数据键保持不变（`kind/page/slide/sheet/title/ocr`），因此**不需要重建现有集合**；新的切块只影响下一次变更文件。
@@ -601,15 +597,10 @@ VECTOR_STORE_TYPE=faiss  python scripts/eval_retrieval.py
 - [x] `docker-compose.prod.yml`：etcd + Milvus + app，只有 app 暴露 8000，数据卷与开发栈隔离
 - [x] `PRODUCTIZATION.md`：发布路径（打包 → 登录 → 多租户 → 计费 → 发布流程 → 备份），含实施顺序与风险
 - [x] 端到端实测：镜像构建成功；容器内 `/chat`、`/chat/stream`、`/ui/`、`/admin`、`/metrics` 正常；停掉 Milvus 时 `/health` 503、`/info` 仍 200、容器保持 healthy
-- [ ] 登录与用户体系（需接入 OIDC 或自建账号）
-- [ ] 多租户、配额计费、Grafana 告警、前端产品化
+- 见 §11.1 / §11.2：登录、多租户、配额计费、Grafana 告警、前端产品化
 
 #### 10.3.5 规模化（按需）
-- [ ] 9.2.3 FAISS 按部门索引（仅当单部门数据量 > 数万时才需要）
-- [ ] 批量 embedding（入库逐文档 → batch）
-- [ ] Redis 版缓存/限流/任务队列（多副本时）
-- [ ] 客户端断开即取消（异步 LLM 客户端）
-- [ ] 验收：对应基准脚本给出前后对比
+- 见 §11.3：FAISS 按部门索引、批量 embedding、Redis、客户端断开取消；验收：对应基准脚本给出前后对比
 
 ### 10.4 建议排期
 
@@ -667,4 +658,95 @@ curl -s -X POST localhost:8000/chat -H 'Content-Type: application/json' \
 | 两后端隔离 / 评测 | OK；18/18、MRR 0.89、0 泄漏 |
 | 降级实测 | LLM 不可达时 `/chat` 200 + 3 条摘录，`degraded=true`，`X-Cache: miss` |
 | CORS 实测 | 允许来源带 `Access-Control-Allow-Origin`；伪来源访问 `/admin/api` 403 |
+
+---
+
+## 11. 后续待办（按优先级，2026-11-01 之后）
+
+> 当前基线：**309 项测试、92% 覆盖率、CI 全绿**；`milvus 2.5.4 + 服务端稀疏 BM25`；28 chunks；`/health=ok`。
+> 容器化交付已完成（`Dockerfile` / `docker-compose.prod.yml` / `PRODUCTIZATION.md`）。
+> 下面按「对外发布必须先做 → 产品化 → 规模化」排序，每项都有落点与验收方式。
+
+### 11.1 P0 对外发布前必须先做
+
+#### 11.1.1 登录与用户体系
+- [ ] 选型：接 OIDC（Keycloak/Auth0/企业微信/飞书，1–2 天）或自建账号（3–5 天）
+- [ ] 落点：`main.py` 增加身份依赖；`src/chat_service.py::prepare` 从身份取 `user_id`/`user_dept`/`user_groups`，忽略客户端自报
+- [ ] 管理台改用同一套登录，`ADMIN_TOKEN` 仅作为应急后门
+- [ ] 缓存键、审计 actor、限流键都改用以身份为准
+- [ ] 验收：伪造 `user_dept` 无效；未登录 401；两个用户的会话互不可见
+
+#### 11.1.2 多租户（做 SaaS 才需要）
+- [ ] chunk 增加 `tenant` 元数据；检索表达式 `tenant == 'x' and dept in [...]`
+- [ ] 选定隔离策略：共享集合 + tenant 过滤，或一租户一集合
+- [ ] 需全量重建索引（Milvus schema 变更），先备份
+- [ ] 验收：跨租户检索 0 泄漏；管理台按租户隔离
+
+#### 11.1.3 发布流程
+- [ ] `CHANGELOG.md`（按版本记录行为变更）
+- [ ] `git tag` 与镜像 tag 对齐（`APP_TAG`）
+- [ ] 发布前清单：`make check` + `make doctor` + 两后端 `eval_retrieval.py`
+- [ ] schema 变更写迁移说明（当前只有 `--reset`）
+
+#### 11.1.4 备份与恢复演练
+- [ ] 备份 `data/` + `volumes-prod/` + `logs/`
+- [ ] 每季度演练「删库 → 恢复 → 验证」
+- [ ] 验收：恢复后 `verify_retrieval.py` 与 `eval_retrieval.py` 通过
+
+### 11.2 P1 产品化与稳定性
+
+#### 11.2.1 告警（有指标，无人收）
+- [ ] Prometheus 抓取 `/metrics` + Grafana 面板
+- [ ] 告警项：错误率、缓存命中骤降、`index_chunks == 0`、`/health` 连续非 200
+- [ ] 日志接入 Loki/ELK（`request_id` 已贯穿）
+
+#### 11.2.2 配额与计费
+- [ ] 统计 `user`/`tenant` 的 token 与请求数（落库，不只存进程内）
+- [ ] 与限流同位置做配额检查（`chat_service.prepare`）
+- [ ] 只对成功完成的 LLM 调用计费（失败/降级不计）
+
+#### 11.2.3 前端产品化
+- [ ] Markdown 渲染（安全子集：粗体/列表/代码块，禁 HTML）
+- [ ] 服务端会话列表与历史（配合 11.2.4）
+- [ ] 引用点击预览原文；移动端适配
+
+#### 11.2.4 服务端会话存储
+- [ ] 会话表 + 消息表（role/content/sources/degraded）
+- [ ] 超窗口自动摘要（多一次 LLM 调用，计入成本）
+- [ ] 验收：连续 20 轮请求体不再线性增长
+
+#### 11.2.5 客户端断开即取消
+- [ ] 现状：客户端断开后同步 LLM 调用仍会跑完
+- [ ] 方案：异步 LLM 客户端或协作式取消检查
+- [ ] 验收：断开后 1 秒内停止上游调用（看日志/指标）
+
+### 11.3 P2 规模化（按需，未到规模前不做）
+
+- [ ] **多进程指标聚合**：多 worker 各进程独立，需 Pushgateway 或按 instance 聚合
+- [ ] **单 worker 约束**：jobs/锁/缓存/限流都在进程内；多副本需 Redis/RQ
+- [ ] **Redis 版缓存/限流/任务队列**
+- [ ] **批量 embedding**：入库逐文档 → batch
+- [ ] **FAISS 按部门索引**：仅当单部门 > 数万 chunk（当前 FAISS 全库检索后过滤）
+- [ ] **大文件流式解析**：当前 50MB 一次性读入
+- [ ] **Milvus 分区/索引参数调优**（数据量到十万级后再评估）
+- [ ] **`pyproject.toml` + 锁文件**：当前 `requirements*.txt` 已够用
+
+### 11.4 建议顺序
+
+1. 11.1.1 登录（决定后续所有权限形态）
+2. 11.1.3 发布流程 + 11.1.4 备份演练（1 天，风险兜底）
+3. 11.2.1 告警（半天，接上已有指标）
+4. 11.2.3 前端最小版（Markdown + 会话列表）
+5. 做 SaaS 时：11.1.2 多租户 → 11.2.2 计费
+6. 11.3 全部按需，触发条件写在每项里
+
+### 11.5 恢复开发时的自检
+
+```bash
+git pull && make doctor && pytest -q
+docker compose ps                      # 开发栈 etcd + milvus
+curl -s localhost:8000/health          # 期望 ok
+python scripts/verify_retrieval.py     # 部门隔离
+VECTOR_STORE_TYPE=milvus python scripts/eval_retrieval.py
+```
 
