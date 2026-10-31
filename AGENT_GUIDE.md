@@ -99,7 +99,7 @@ agent-rag/
 ├── volumes/                 # Milvus/etcd 数据卷
 ├── eval/cases.jsonl         # 检索评测集（命中 + 泄漏用例）
 ├── config/acl.example.json  # 文档级 ACL 规则示例
-├── tests/                   # pytest 离线测试（287 项，覆盖率 92%）
+├── tests/                   # pytest 离线测试（300 项，覆盖率 92%）
 ├── Makefile                 # 常用命令（make help）
 ├── .github/workflows/ci.yml # ruff + pytest（CI）
 ├── WORKLOG.md               # 本轮迭代记录与验证矩阵
@@ -310,6 +310,20 @@ python run_ingestion.py                 # 增量入库
 - 内容变更 → 删除该 `doc_id` 的旧 chunk 后重新写入
 - 文件删除 → 自动清理其 chunk（`--no-prune` 可关闭）
 - 切换 FAISS/Milvus 或元数据结构变化后，用 `--reset` 重建
+
+### 4.4.1 解析增强（表格 / 扫描件）
+
+- **XLSX / CSV**：按行切块，每块重复表头，避免表头只出现在第一个 chunk；`XLSX_MAX_ROWS` 封顶时会在日志告警
+- **PDF 表格**：安装 `pdfplumber` 后自动按页提取表格行（`PDF_TABLES_ENABLED=true`）；未安装不影响正文解析
+- **扫描版 PDF**：安装 `tesseract` + `poppler` 后设置 `OCR_ENABLED=true`，页面文本过少时会自动 OCR，并在来源中标注
+- 以上都**不新增元数据键**，因此不需要重建索引；只对之后变更/新入库的文件生效
+
+```bash
+# 可选依赖（按需安装）
+pip install pdfplumber==0.11.4          # PDF 表格
+brew install tesseract poppler          # macOS；OCR 还需要：
+pip install pytesseract==0.3.13 pdf2image==1.17.0
+```
 
 ### 4.5.0 常用命令（Makefile）
 
@@ -548,7 +562,7 @@ python scripts/check_loaders.py      # 9 种格式解析（不写向量库）
 python scripts/check_admin.py        # 管理台上传→入库→删除冒烟
 python scripts/bench_retrieval.py    # embedding / FAISS / Milvus / LLM 延迟
 python scripts/generate_demo_files.py  # 重建 data/Demo 多格式样例
-pytest -q                            # 离线测试（287 项，~26s，覆盖率 92%，无需服务/LLM）
+pytest -q                            # 离线测试（300 项，~34s，覆盖率 92%，无需服务/LLM）
 ruff check src tests main.py run_ingestion.py   # 代码检查
 python test_agent.py                 # 端到端 18 项断言（需服务已启动）
 ```
@@ -640,6 +654,13 @@ python run_ingestion.py --no-prune # 不清理已删除文件
 | `CHAT_TIMEOUT` | `120` | 单次问答整体时限（秒），超时 504 `timeout` |
 | `LLM_FALLBACK_ENABLED` | `true` | LLM 不可用时用检索摘录作答（`degraded`），不写缓存 |
 | `CORS_ORIGINS` | 空 | 允许的浏览器来源（逗号分隔）；空=不启用 |
+| `XLSX_ROWS_PER_CHUNK` | `20` | XLSX 每个块的行数（每块重复表头） |
+| `CSV_ROWS_PER_CHUNK` | `20` | CSV 每个块的行数 |
+| `XLSX_MAX_ROWS` | `20000` | 单表最多索引行数，超出会告警 |
+| `PDF_TABLES_ENABLED` | `true` | 用 pdfplumber 提取 PDF 表格（未安装则跳过） |
+| `OCR_ENABLED` | `false` | 扫描版 PDF OCR（需 pytesseract/pdf2image/tesseract/poppler） |
+| `OCR_MIN_CHARS` | `20` | 页面文本少于该值时触发 OCR |
+| `OCR_LANG` | `eng+chi_sim` | tesseract 语言包 |
 | `ACL_ENABLED` | `false` | 是否启用文档级 ACL |
 | `ACL_FILE` | `./config/acl.json` | ACL 规则文件（见 `config/acl.example.json`） |
 | `FAQ_CACHE_ENABLED` | `true` | 是否启用 FAQ 答案缓存 |

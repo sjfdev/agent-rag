@@ -248,6 +248,7 @@ curl -f http://localhost:9091/healthz
 | 2026-10-31 | 10.1 LLM 降级 + CORS | LLM 不可用时返回检索摘录（200 + `degraded`），不写缓存；`CORS_ORIGINS` + 管理台跨站防护；`test_agent` 20 项、pytest 287 项 |
 | 2026-10-31 | 10.2 前端体验 + 引用质量 + rerank_ms | `localStorage` 会话、复制/停止；同页 chunk 合并、相对 score、独立 `rerank_ms` |
 | 2026-10-31 | 10.3 文档 | 新增 `README.md`、运维手册（GUIDE §12）、离线安装（DEPLOYMENT_CN §7） |
+| 2026-10-31 | 解析增强 | XLSX/CSV 表头重复分块、PDF 表格（pdfplumber）、可选 OCR；`tests/test_parsing.py` 13 项；Demo 增加 Roster 表验证分块 |
 | 2026-10-31 | CI 修复 | run #5–#10 失败原因：手写依赖中 `langchain-core==0.3.79` 与 `langchain-community==0.4.2` 冲突；CI 改用 `requirements-test.txt`；reranker 测试改为 stub，不再依赖 torch |
 
 ---
@@ -582,10 +583,13 @@ VECTOR_STORE_TYPE=faiss  python scripts/eval_retrieval.py
 - [ ] 验收：连续 20 轮对话后请求体不再线性增长
 
 #### 10.3.3 解析增强
-- [ ] 扫描版 PDF OCR（`ocrmypdf` 预处理或 PaddleOCR）
-- [ ] XLSX 按行切块（当前整表可能被截断）
-- [ ] 大文件流式解析（当前 50MB 一次性读入）
-- [ ] 验收：新增扫描版样例可检索；`check_loaders.py` 覆盖新格式
+- [x] XLSX/CSV 按行切块：每块重复表头（`XLSX_ROWS_PER_CHUNK` / `CSV_ROWS_PER_CHUNK`，默认 20），`XLSX_MAX_ROWS` 封顶并告警，不再静默截断
+- [x] PDF 表格：`pdfplumber` 可选依赖（`PDF_TABLES_ENABLED`），按页把表格行追加到正文；未安装时自动跳过
+- [x] 扫描版 PDF OCR：`OCR_ENABLED`（默认关闭），页面文本少于 `OCR_MIN_CHARS` 时用 `pdf2image + pytesseract` 补文字，标注 `metadata.ocr`；任一依赖缺失或失败只记日志
+- [ ] 大文件流式解析（当前仍是整文件读入）
+- [x] 验收：`tests/test_parsing.py` 13 项（表头重复、行数封顶、PDF 表格、OCR 开关/失败、metadata 稳定性）；`check_loaders.py` 增加表头断言
+
+> 元数据键保持不变（`kind/page/slide/sheet/title/ocr`），因此**不需要重建现有集合**；新的切块只影响下一次变更文件。
 
 #### 10.3.4 规模化（按需）
 - [ ] 9.2.3 FAISS 按部门索引（仅当单部门数据量 > 数万时才需要）

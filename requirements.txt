@@ -43,3 +43,8 @@ chardet==7.7.0
 pytest==8.3.4
 pytest-cov==6.0.0
 ruff==0.8.6
+
+# Optional parsing extras (install only if you need them):
+#   pdfplumber==0.11.4     structured PDF tables (PDF_TABLES_ENABLED)
+#   pytesseract==0.3.13    OCR for scanned PDFs (OCR_ENABLED; needs tesseract)
+#   pdf2image==1.17.0      renders PDF pages for OCR (needs poppler)

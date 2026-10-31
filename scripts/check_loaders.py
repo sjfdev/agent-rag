@@ -124,6 +124,12 @@ def main():
             html_docs and html_docs[0].metadata.get("title") == "Ops",
         )
 
+        # XLSX/CSV are split into header-repeating row blocks.
+        check("xlsx header repeated", all(
+            d.page_content.splitlines()[0].startswith("item")
+            for d in load_file(root / "sheet.xlsx")
+        ))
+
         try:
             load_file(root / "notes.txt").pop()
             (root / "bad.bin").write_bytes(b"\x00\x01")

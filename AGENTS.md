@@ -3,7 +3,7 @@
 ## Core Architecture
 - **Chat flow**: `src/chat_service.py` owns validation, maintenance gating, answer caching, error classification and metrics for both `/chat` and `/chat/stream`; `main.py` only adapts to HTTP. Request/response models live in `src/schemas.py`.
 - **RAG Pipeline**: LangGraph $\rightarrow$ Milvus $\rightarrow$ Cross-Encoder Reranker. Answers return `sources` (`source`+`page`) built from retrieval metadata; excerpts are wrapped in `<document>` tags and treated as untrusted data.
-- **Ingestion**: multi-format (`pdf/docx/pptx/xlsx/csv/md/txt/html/json`) via `src/loaders.py`; incremental — chunks carry `dept/source/page|slide|sheet/doc_id/doc_hash/kind/chunk_index`; unchanged files skipped by hash, changed files are written first and old versions deleted afterwards (crash-safe), removed ones pruned.
+- **Ingestion**: multi-format (`pdf/docx/pptx/xlsx/csv/md/txt/html/json`) via `src/loaders.py`; XLSX/CSV are split into header-repeating row blocks (`XLSX_ROWS_PER_CHUNK`/`CSV_ROWS_PER_CHUNK`, `XLSX_MAX_ROWS`); optional PDF table extraction (`PDF_TABLES_ENABLED`, needs pdfplumber) and OCR (`OCR_ENABLED`, needs pytesseract/pdf2image); keep metadata keys stable or the Milvus schema requires a reset; incremental — chunks carry `dept/source/page|slide|sheet/doc_id/doc_hash/kind/chunk_index`; unchanged files skipped by hash, changed files are written first and old versions deleted afterwards (crash-safe), removed ones pruned.
 - **Zero-downtime rebuild**: `--reset` / the admin console build into a shadow index (Milvus: temp collection + alias swap; FAISS: temp dir + `os.replace`). Queries keep hitting the live index; maintenance is only set during the millisecond alias swap. `count()` is the write target, `live_count()` is what queries see.
 - **Citations**: answers include `sources` (`source` + `page`/`slide`/`sheet` + `kind` + `snippet` + relative `score`); same-page chunks are merged, and `score` is a rank (1.0 for the top hit), not a cross-engine comparable value.
 - **Failure fallback**: when the LLM is unreachable/timeouts *after* retrieval, the graph answers with the top excerpts (`degraded=true`, `degraded_reason=llm_unavailable`); degraded answers are never cached. Toggle with `LLM_FALLBACK_ENABLED`.
@@ -29,7 +29,7 @@ All commands assume the conda env `agent-rag` is active (`conda activate agent-r
 - **Loader Check**: `python scripts/check_loaders.py` (extracts every supported format in /tmp, no vector store needed).
 - **Admin Check**: `python scripts/check_admin.py` (upload→ingest→delete smoke test; server must be running).
 - **Latency Benchmark**: `python scripts/bench_retrieval.py` (embedding vs FAISS vs Milvus vs LLM). `/chat` responses include `timings` (`retrieval_ms`, `llm_ms`, `llm_calls`, `overhead_ms`, `total_ms`).
-- **Tests (offline)**: `pytest -q` runs 287 unit/API/service tests with fake embeddings and a stubbed LLM (no network, ~25s, 92% coverage). `pytest --cov=src` for coverage. Lint with `ruff check src tests main.py run_ingestion.py`.
+- **Tests (offline)**: `pytest -q` runs 300 unit/API/service tests with fake embeddings and a stubbed LLM (no network, ~25s, 92% coverage). `pytest --cov=src` for coverage. Lint with `ruff check src tests main.py run_ingestion.py`.
 - **Verification (live)**: `python test_agent.py` (requires the API server + a working LLM endpoint).
 
 ## Critical Gotchas & Setup

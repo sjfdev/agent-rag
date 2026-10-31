@@ -24,6 +24,20 @@ class Settings(BaseSettings):
     MAX_UPLOAD_MB: int = 50
     # Total size allowed in a single upload request (0 = no limit).
     MAX_UPLOAD_TOTAL_MB: int = 200
+    # Parsing: split large tables into row blocks so a sheet is never silently
+    # truncated (each block repeats the header row for context).
+    # Small enough that a block usually stays within the 800-char splitter
+    # window, so every chunk keeps its header instead of only the first one.
+    XLSX_ROWS_PER_CHUNK: int = 20
+    CSV_ROWS_PER_CHUNK: int = 20
+    XLSX_MAX_ROWS: int = 20000
+    # Structured PDF tables via pdfplumber (optional dependency).
+    PDF_TABLES_ENABLED: bool = True
+    # OCR for scanned PDFs via pytesseract + pdf2image (optional dependencies).
+    # Disabled by default: it is slow and needs the tesseract binary.
+    OCR_ENABLED: bool = False
+    OCR_MIN_CHARS: int = 20
+    OCR_LANG: str = "eng+chi_sim"
     # Admin audit trail and ingestion job history (JSON lines / JSON).
     AUDIT_LOG_PATH: str = "./logs/admin_audit.log"
     JOBS_PATH: str = "./logs/ingest_jobs.json"

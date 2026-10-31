@@ -15,6 +15,8 @@ from typing import List
 
 from langchain_core.documents import Document
 
+from src.config import settings
+
 logger = logging.getLogger(__name__)
 
 SUPPORTED_EXTENSIONS = {
@@ -58,19 +60,101 @@ def read_text(path: Path) -> str:
         return data.decode("utf-8", errors="replace")
 
 
+def _pdf_tables(path: Path) -> dict:
+    """Structured table rows per page via pdfplumber, when it is installed.
+
+    Returns ``{page_number: [line, ...]}``. Any failure is logged and ignored:
+    table extraction is a quality improvement, not a prerequisite.
+    """
+    if not settings.PDF_TABLES_ENABLED:
+        return {}
+    try:
+        import pdfplumber
+    except Exception:
+        logger.debug("pdfplumber not installed; PDF tables are skipped")
+        return {}
+    tables: dict = {}
+    try:
+        with pdfplumber.open(str(path)) as pdf:
+            for number, page in enumerate(pdf.pages, start=1):
+                try:
+                    extracted = page.extract_tables() or []
+                except Exception:
+                    logger.debug("table extraction failed on page %s", number)
+                    continue
+                lines: List[str] = []
+                for table in extracted:
+                    lines.extend(_table_lines(table))
+                if lines:
+                    tables[number] = lines
+    except Exception:
+        logger.warning("pdfplumber failed on %s; using text only", path, exc_info=True)
+        return {}
+    return tables
+
+
+def _ocr_page(path: Path, page_number: int) -> str:
+    """OCR one PDF page; returns "" when the toolchain is unavailable."""
+    try:
+        import pytesseract
+        from pdf2image import convert_from_path
+    except Exception:
+        logger.debug("OCR dependencies missing; cannot OCR page %s", page_number)
+        return ""
+    try:
+        images = convert_from_path(
+            str(path), first_page=page_number, last_page=page_number, dpi=200
+        )
+        if not images:
+            return ""
+        return pytesseract.image_to_string(images[0], lang=settings.OCR_LANG) or ""
+    except Exception:
+        logger.warning("OCR failed for %s page %s", path, page_number, exc_info=True)
+        return ""
+
+
 def _load_pdf(path: Path) -> List[Document]:
     # Imported lazily: the loader pulls in pypdf, which is unnecessary for
     # non-PDF ingestion and slows down importing `src.loaders` in tests.
     from langchain_community.document_loaders import PyPDFLoader
 
     docs = PyPDFLoader(str(path)).load()
+    tables = _pdf_tables(path)
     out = []
+    ocr_used = 0
     for doc in docs:
         page = doc.metadata.get("page")
+        page_number = page + 1 if isinstance(page, int) else None
+        text = doc.page_content or ""
+
+        if page_number and page_number in tables:
+            # Keep the parsed text first; append rows so table cells stay
+            # searchable even when the PDF layout splits them.
+            text = _clean_lines([text.strip(), *tables[page_number]])
+
+        if (
+            settings.OCR_ENABLED
+            and page_number
+            and len(text.strip()) < settings.OCR_MIN_CHARS
+        ):
+            ocr_text = _ocr_page(path, page_number)
+            if ocr_text.strip():
+                text = _clean_lines([text.strip(), ocr_text])
+                ocr_used += 1
+
+        if not text.strip():
+            continue
         meta = {"kind": "pdf"}
-        if isinstance(page, int):
-            meta["page"] = page + 1
-        out.append(Document(page_content=doc.page_content, metadata=meta))
+        if page_number:
+            meta["page"] = page_number
+        # Keep the metadata keys stable: the Milvus schema is created from the
+        # first batch, so adding a key here would require a full re-ingestion.
+        if settings.OCR_ENABLED and page_number and ocr_used:
+            meta["ocr"] = "1"
+        out.append(Document(page_content=text, metadata=meta))
+
+    if not out:
+        logger.warning("%s produced no extractable text (scanned PDF?)", path.name)
     return out
 
 
@@ -131,33 +215,77 @@ def _load_pptx(path: Path) -> List[Document]:
     return out
 
 
+def _row_blocks(rows, rows_per_block: int, max_rows: int):
+    """Split rows into blocks that repeat the header row.
+
+    Yields ``(header_line, [row lines], first_row, last_row)`` so every block is
+    self-contained: a retrievable chunk still says which columns it belongs to.
+    A sheet that exceeds ``max_rows`` is capped and reported, never silently cut.
+    """
+    header: List[str] = []
+    block: List[str] = []
+    first = 0
+    seen = 0
+    emitted = 0
+    truncated = False
+    for row in rows:
+        cells = ["" if cell is None else str(cell).strip() for cell in row]
+        if not any(cells):
+            continue
+        if not header:
+            header = cells
+            seen = 1
+            continue
+        if seen >= max_rows:
+            truncated = True
+            break
+        if not block:
+            first = seen
+        block.append(" | ".join(cells).rstrip(" |"))
+        seen += 1
+        if len(block) >= rows_per_block:
+            yield header, block, first, first + len(block) - 1
+            emitted += 1
+            block = []
+    if block:
+        yield header, block, first, first + len(block) - 1
+        emitted += 1
+    elif emitted == 0 and header:
+        # Header-only table (single-row CSV, empty sheet with column names):
+        # keep it searchable instead of dropping the file entirely.
+        yield header, [], 1, 1
+    if truncated:
+        logger.warning(
+            "table capped at %s rows; remaining rows were not indexed", max_rows
+        )
+
+
+def _block_text(header: List[str], block: List[str]) -> str:
+    lines = [" | ".join(header).rstrip(" |")] if header else []
+    lines.extend(block)
+    return _clean_lines(lines)
+
+
 def _load_xlsx(path: Path) -> List[Document]:
     from openpyxl import load_workbook
 
+    rows_per_block = max(int(settings.XLSX_ROWS_PER_CHUNK), 1)
+    max_rows = max(int(settings.XLSX_MAX_ROWS), rows_per_block)
     workbook = load_workbook(str(path), read_only=True, data_only=True)
     out = []
     try:
         for sheet in workbook.worksheets:
-            lines = []
-            for row in sheet.iter_rows(values_only=True, max_row=MAX_ROWS_PER_SHEET):
-                cells = ["" if v is None else str(v) for v in row]
-                if any(c.strip() for c in cells):
-                    lines.append(" | ".join(cells).rstrip(" |"))
-            text = _clean_lines(lines)
-            if text:
-                out.append(
-                    Document(
-                        page_content=text,
-                        metadata={"kind": "xlsx", "sheet": sheet.title},
+            for header, block, _first, _last in _row_blocks(
+                sheet.iter_rows(values_only=True), rows_per_block, max_rows
+            ):
+                text = _block_text(header, block)
+                if text:
+                    out.append(
+                        Document(
+                            page_content=text,
+                            metadata={"kind": "xlsx", "sheet": sheet.title},
+                        )
                     )
-                )
-            if sheet.max_row and sheet.max_row > MAX_ROWS_PER_SHEET:
-                logger.warning(
-                    "%s sheet %s truncated at %s rows",
-                    path.name,
-                    sheet.title,
-                    MAX_ROWS_PER_SHEET,
-                )
     finally:
         workbook.close()
     return out
@@ -171,9 +299,17 @@ def _load_csv(path: Path) -> List[Document]:
     except csv.Error:
         dialect = csv.excel
     rows = list(csv.reader(io.StringIO(text), dialect))
-    lines = _table_lines(rows)
-    body = _clean_lines(lines)
-    return [Document(page_content=body, metadata={"kind": "csv"})] if body else []
+    rows_per_block = max(int(settings.CSV_ROWS_PER_CHUNK), 1)
+    out = []
+    # csv rows are plain strings; _row_blocks expects iterables of cells, which
+    # a row already is, so it can be reused unchanged.
+    for header, block, _first, _last in _row_blocks(
+        rows, rows_per_block, max_rows=max(len(rows), 1)
+    ):
+        body = _block_text(header, block)
+        if body:
+            out.append(Document(page_content=body, metadata={"kind": "csv"}))
+    return out
 
 
 def _load_html(path: Path) -> List[Document]:

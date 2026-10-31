@@ -162,6 +162,12 @@ def write_xlsx(root: Path):
     detail.append(["area", "owner"])
     detail.append(["API", "Alice"])
     detail.append(["UI", "Bob"])
+
+    # A longer table: proves chunking keeps the header on every block.
+    roster = wb.create_sheet("Roster")
+    roster.append(["employee_id", "name", "team", "on_call_week"])
+    for index in range(1, 25):
+        roster.append([f"E{index:03d}", f"Employee {index}", "Ops" if index % 2 else "QA", index % 4 + 1])
     wb.save(root / "metrics.xlsx")
 
 

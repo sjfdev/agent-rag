@@ -35,7 +35,8 @@
 | 24 | LLM 降级 + CORS（10.1） | 本轮 | 完成 |
 | 25 | 前端体验 + 引用质量 + rerank_ms（10.2） | 本轮 | 完成 |
 | 26 | README / 运维手册 / 离线安装（10.3） | 本轮 | 完成 |
-| 27 | 修复 CI 依赖冲突与 torch-free 测试 | 本轮 | 完成 |
+| 27 | 修复 CI 依赖冲突与 torch-free 测试 | `5799504` | 完成 |
+| 28 | 解析增强（表格分块 / PDF 表格 / OCR） | 本轮 | 完成 |
 
 当前运行态：`vector_store=milvus`、`hybrid.engine=milvus`、Milvus `v2.5.4`、26 chunks / 4 部门。
 
@@ -471,6 +472,23 @@ ResolutionImpossible
 
 **线上确认**：推送 `5799504` 后 run **#11 全部步骤成功**（装依赖 → ruff → pytest → 上传覆盖率）。
 
+## 5.15 解析增强
+
+| 能力 | 实现 | 默认 |
+|---|---|---|
+| 大表分块 | `_row_blocks()` 把 XLSX/CSV 切成重复表头的块；`XLSX_MAX_ROWS` 封顶并告警 | 20 行/块，2 万行上限 |
+| PDF 表格 | `pdfplumber.extract_tables()` 按页提取，追加到该页正文之后 | `PDF_TABLES_ENABLED=true`（未安装依赖则跳过） |
+| 扫描版 OCR | 页面文本 < `OCR_MIN_CHARS` 时用 `pdf2image + pytesseract` 补字 | `OCR_ENABLED=false` |
+| 元数据 | PDF 表格页保留正文；OCR 页带 `metadata.ocr="1"` | 键集合不变，无需重建 |
+
+设计取舍：
+
+- **表头必须进每个 chunk**：块大小默认 20 行，配合 800 字符切分器，绝大多数块都能带上表头；实测 Demo `Roster` 24 行被切成 20 + 4 两块，两块都含表头
+- **依赖缺失不算错误**：`pdfplumber` / `pytesseract` / `pdf2image` 都是可选依赖，缺失或运行失败只写日志，退回纯文本解析
+- **不新增元数据键**：Milvus schema 在首次入库时固定，新增键会要求全量重建，所以只复用 `ocr` 这个已有可选键
+
+实测：`data/Demo/metrics.xlsx` 重新入库后 `Roster` 产生 2 个带表头的 chunk（20 行 + 4 行），总数 28 chunks；`test_agent`、两种后端评测、admin、loaders 全部通过。
+
 ---
 
 ## 6. Milvus 升级（2.4.0 → 2.5.4）
@@ -517,7 +535,7 @@ ResolutionImpossible
 | 检查 | 结果 |
 |---|---|
 | `python test_agent.py` | 20/20 通过（需服务 + LLM，含缓存断言） |
-| `pytest -q`（离线，含 CI） | 287/287，约 26s；覆盖率 92% |
+| `pytest -q`（离线，含 CI） | 300/300，约 34s；覆盖率 92% |
 | `ruff check src tests main.py run_ingestion.py` | 全绿 |
 | `python scripts/check_hybrid.py` | 69/69 |
 | `python scripts/check_hybrid_milvus.py` | 19/19（2.5+），低版本 SKIP |
