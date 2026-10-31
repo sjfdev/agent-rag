@@ -19,7 +19,10 @@ class ChatRequest(BaseModel):
     # Optional group membership for the document-level ACL.
     user_groups: List[str] = Field(default_factory=list, max_length=50)
     message: str = Field(min_length=1, max_length=4000)
-    history: List[HistoryItem] = Field(default_factory=list, max_length=20)
+    # Hard guard only (payload size / abuse). `HISTORY_MAX_MESSAGES` decides how
+    # much of it is actually used, so ordinary long chats are trimmed, not
+    # rejected.
+    history: List[HistoryItem] = Field(default_factory=list, max_length=200)
 
     def departments(self) -> List[str]:
         """All requested departments, de-duplicated, in request order."""

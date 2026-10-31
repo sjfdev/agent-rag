@@ -248,6 +248,7 @@ curl -f http://localhost:9091/healthz
 | 2026-10-31 | 10.1 LLM 降级 + CORS | LLM 不可用时返回检索摘录（200 + `degraded`），不写缓存；`CORS_ORIGINS` + 管理台跨站防护；`test_agent` 20 项、pytest 287 项 |
 | 2026-10-31 | 10.2 前端体验 + 引用质量 + rerank_ms | `localStorage` 会话、复制/停止；同页 chunk 合并、相对 score、独立 `rerank_ms` |
 | 2026-10-31 | 10.3 文档 | 新增 `README.md`、运维手册（GUIDE §12）、离线安装（DEPLOYMENT_CN §7） |
+| 2026-10-31 | 多轮上下文修复 + bench 重排对比 | `HISTORY_MAX_MESSAGES` 裁剪（按 user/assistant 成对）、前端只发最近 20 条、422/429/413 友好提示；`bench_retrieval.py --rerank` 分离加载/单次/端到端；309 项测试 |
 | 2026-10-31 | 解析增强 | XLSX/CSV 表头重复分块、PDF 表格（pdfplumber）、可选 OCR；`tests/test_parsing.py` 13 项；Demo 增加 Roster 表验证分块 |
 | 2026-10-31 | CI 修复 | run #5–#10 失败原因：手写依赖中 `langchain-core==0.3.79` 与 `langchain-community==0.4.2` 冲突；CI 改用 `requirements-test.txt`；reranker 测试改为 stub，不再依赖 torch |
 
@@ -327,7 +328,7 @@ curl -f http://localhost:9091/healthz
 - [x] 嵌套子目录、50MB 上限、旧格式 `.doc/.ppt/.xls` 提示
 - [x] `scripts/check_loaders.py` 无依赖自检（17 项）
 - [x] 内置 `data/Demo/` 9 文件多格式数据集 + `scripts/generate_demo_files.py`
-- [ ] 扫描版 PDF OCR（建议 `ocrmypdf` 预处理或接 PaddleOCR）
+- [x] 扫描版 PDF OCR：`OCR_ENABLED` + pytesseract/pdf2image（代码与测试完成，依赖需自行安装）
 - [ ] 大文件流式解析与分页入库（当前 50MB 一次性读取）
 
 ### 8.8 入库管理台（2026-10-29 新增，已实现）
@@ -377,9 +378,10 @@ curl -f http://localhost:9091/healthz
 - [x] **惰性引擎 + ChatService**：已消除重复分支
 - [x] **文件清单性能**：`src/hashing.py` 按 `(path, mtime_ns, size)` 缓存 sha1；`doc_summary()` 缓存 5s；`/admin/api/meta` 451ms → 6ms
 - [x] **前端**：复制、停止生成、localStorage 会话；Markdown 渲染/移动端未做
+- [x] **多轮上下文上限**：`HISTORY_MAX_MESSAGES` 裁剪 + 前端只发送最近 N 条；此前第 12 轮起 422，已修复
 - [x] **权限**：多部门、文档级 ACL、`/chat` API Key；CORS 未做
 - [ ] **规模**：批量 embedding、任务队列、Milvus 分区/索引参数、备份恢复
-- [ ] **解析增强**：OCR、PDF 表格结构化、XLSX 按行切块避免行被截断
+- [x] **解析增强**：OCR、PDF 表格结构化、XLSX 按行切块（见 10.3.3）
 
 #### 快速收益（1–3 小时/项）
 
@@ -463,7 +465,7 @@ curl -f http://localhost:9091/healthz
 - [x] GitHub Actions `.github/workflows/ci.yml`：ruff → pytest(含覆盖率) → 上传 coverage
 - [x] 同时修掉一个真实缺陷：admin 路由抛 `InvalidDepartment` 现在由全局处理器映射为 400（此前是 500）
 - [x] 验收（本机）：`pytest -q` **265 passed**；`ruff check` 全绿；覆盖率 **92%**（engine 86%，reranker/metrics/runtime/tools 100%）
-- [ ] CI 首次在 GitHub 上跑通（需要推送后在仓库 Actions 页面观察；本机没有 `gh`，本地已验证同样的命令全绿）
+- [x] CI 已跑通（run #11–#13 全部 success，详见 5.15 前的 CI 排查记录）
 
 #### 9.3.2 `ChatService` 抽取 + 惰性引擎
 - [x] 新增 `src/chat_service.py`：`prepare / run / open_stream` 统一校验、维护检查、答案缓存、异常分类、指标与日志；`/chat` 与 `/chat/stream` 各剩约 15 行
@@ -552,6 +554,7 @@ VECTOR_STORE_TYPE=faiss  python scripts/eval_retrieval.py
 #### 10.2.1 会话持久化与前端体验
 - [x] `localStorage` 保存 `history` + 部门/用户 + 已渲染对话；`?new=...` 新窗口不恢复
 - [x] 复制回答按钮；停止生成（`AbortController`，后端已有超时兜底）
+- [x] 会话持久化、复制、停止生成；友好错误提示（422/429/413）
 - [ ] Markdown 渲染（仅安全子集）— 未做，留待下一轮
 - [x] 验收：刷新后对话仍在；停止后提示「已停止生成」；切换部门/清空会同时清除本地会话
 
@@ -565,7 +568,7 @@ VECTOR_STORE_TYPE=faiss  python scripts/eval_retrieval.py
 #### 10.2.3 检索可观测性补齐
 - [x] `timings` 增加独立 `rerank_ms`（引擎在重排前后计时，经 `search(timings=...)` 传出），`overhead_ms` 已扣除
 - [x] UI 仅在非零时显示「重排」耗时
-- [ ] `bench_retrieval.py` 增加重排开关对比 — 未做
+- [x] `bench_retrieval.py` 增加重排开关对比（模型加载/单次重排/端到端分开计时）
 - [x] 验收：普通问答 `rerank_ms=0.0`；开启重排后为实际耗时
 
 ### 10.3 P3 规模化与文档（有余力）

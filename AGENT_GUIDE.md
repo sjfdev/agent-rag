@@ -99,7 +99,7 @@ agent-rag/
 ├── volumes/                 # Milvus/etcd 数据卷
 ├── eval/cases.jsonl         # 检索评测集（命中 + 泄漏用例）
 ├── config/acl.example.json  # 文档级 ACL 规则示例
-├── tests/                   # pytest 离线测试（300 项，覆盖率 92%）
+├── tests/                   # pytest 离线测试（309 项，覆盖率 92%）
 ├── Makefile                 # 常用命令（make help）
 ├── .github/workflows/ci.yml # ruff + pytest（CI）
 ├── WORKLOG.md               # 本轮迭代记录与验证矩阵
@@ -486,7 +486,8 @@ curl -s http://localhost:8000/metrics | grep '^agent_rag_'
 
 服务端日志会打印完整堆栈与 `request_id`，响应头也带 `X-Request-ID`，便于对账。
 
-约束：`user_id` ≤64、`user_dept` ≤64（仅字母/数字/下划线/中划线/中文）、`message` 1–4000 字符、`history` ≤20 条。
+约束：`user_id` ≤64、`user_dept` ≤64（仅字母/数字/下划线/中划线/中文）、`message` 1–4000 字符、`history` ≤200 条（仅防滥用）。
+实际参与推理的上下文由 `HISTORY_MAX_MESSAGES`（默认 20）决定：超出时服务端静默丢弃最早的消息，并按 user/assistant 成对裁剪，不会返回 422。
 
 多部门与 ACL：
 
@@ -562,7 +563,7 @@ python scripts/check_loaders.py      # 9 种格式解析（不写向量库）
 python scripts/check_admin.py        # 管理台上传→入库→删除冒烟
 python scripts/bench_retrieval.py    # embedding / FAISS / Milvus / LLM 延迟
 python scripts/generate_demo_files.py  # 重建 data/Demo 多格式样例
-pytest -q                            # 离线测试（300 项，~34s，覆盖率 92%，无需服务/LLM）
+pytest -q                            # 离线测试（309 项，~24s，覆盖率 92%，无需服务/LLM）
 ruff check src tests main.py run_ingestion.py   # 代码检查
 python test_agent.py                 # 端到端 18 项断言（需服务已启动）
 ```
@@ -652,6 +653,7 @@ python run_ingestion.py --no-prune # 不清理已删除文件
 | `CHAT_API_KEY` | 空 | 非空时 `/chat` 需要 `X-API-Key` 或 Bearer |
 | `RATE_LIMIT_PER_MINUTE` | `0` | 每调用方每分钟请求上限（0 关闭），超限 429 |
 | `CHAT_TIMEOUT` | `120` | 单次问答整体时限（秒），超时 504 `timeout` |
+| `HISTORY_MAX_MESSAGES` | `20` | 实际使用的上下文条数；超出时静默丢弃最早的消息（按 user/assistant 成对裁剪） |
 | `LLM_FALLBACK_ENABLED` | `true` | LLM 不可用时用检索摘录作答（`degraded`），不写缓存 |
 | `CORS_ORIGINS` | 空 | 允许的浏览器来源（逗号分隔）；空=不启用 |
 | `XLSX_ROWS_PER_CHUNK` | `20` | XLSX 每个块的行数（每块重复表头） |

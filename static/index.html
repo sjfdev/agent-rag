@@ -194,6 +194,17 @@ let history = [];
 let busy = false;
 let abortController = null;
 
+// Keep in sync with the backend's HISTORY_MAX_MESSAGES (default 20).
+const HISTORY_MAX_MESSAGES = 20;
+
+// Only the most recent messages are sent, starting at a user turn. This keeps
+// long conversations working instead of hitting the request size limit.
+function recentHistory() {
+  const kept = history.slice(-HISTORY_MAX_MESSAGES);
+  while (kept.length && kept[0].role !== "user") kept.shift();
+  return kept;
+}
+
 // --- session persistence ---------------------------------------------------
 const SESSION_KEY = "agent-rag-session-v1";
 
@@ -202,7 +213,7 @@ function saveSession() {
     localStorage.setItem(
       SESSION_KEY,
       JSON.stringify({
-        history,
+        history: recentHistory(),
         dept: deptSel.value,
         uid: uidInput.value,
         transcript: Array.from(chat.children)
@@ -385,6 +396,10 @@ function addMsg(role, text, timings, isError) {
 async function send() {
   const text = input.value.trim();
   if (!text || busy) return;
+  if (text.length > 4000) {
+    addMsg("bot", "问题太长了（上限 4000 字符），请精简后再发送。").classList.add("error");
+    return;
+  }
 
   busy = true;
   sendBtn.disabled = true;
@@ -409,7 +424,7 @@ async function send() {
         user_id: uidInput.value.trim() || "u1",
         user_dept: deptSel.value,
         message: text,
-        history: history,
+        history: recentHistory(),
       }),
     });
 
@@ -424,6 +439,12 @@ async function send() {
         addRetry(bubble, text);
       } else if (resp.status === 400) {
         bubble.textContent = "部门名称不合法。";
+      } else if (resp.status === 422) {
+        bubble.textContent = "请求内容过长或历史消息过多，请点击「清空当前」后重试。";
+      } else if (resp.status === 429) {
+        bubble.textContent = "请求过于频繁，请稍后再试。";
+      } else if (resp.status === 413) {
+        bubble.textContent = "请求内容过大。";
       } else {
         bubble.textContent = "请求失败：" + (typeof detail === "object" ? JSON.stringify(detail) : detail);
       }

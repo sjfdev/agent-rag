@@ -36,7 +36,8 @@
 | 25 | 前端体验 + 引用质量 + rerank_ms（10.2） | 本轮 | 完成 |
 | 26 | README / 运维手册 / 离线安装（10.3） | 本轮 | 完成 |
 | 27 | 修复 CI 依赖冲突与 torch-free 测试 | `5799504` | 完成 |
-| 28 | 解析增强（表格分块 / PDF 表格 / OCR） | 本轮 | 完成 |
+| 28 | 解析增强（表格分块 / PDF 表格 / OCR） | `f0a7632` | 完成 |
+| 29 | 多轮上下文修复 + bench 重排对比 | 本轮 | 完成 |
 
 当前运行态：`vector_store=milvus`、`hybrid.engine=milvus`、Milvus `v2.5.4`、26 chunks / 4 部门。
 
@@ -489,6 +490,32 @@ ResolutionImpossible
 
 实测：`data/Demo/metrics.xlsx` 重新入库后 `Roster` 产生 2 个带表头的 chunk（20 行 + 4 行），总数 28 chunks；`test_agent`、两种后端评测、admin、loaders 全部通过。
 
+## 5.16 多轮上下文与重排基准
+
+### 多轮上下文修复
+
+**问题**（真实缺陷）：`ChatRequest.history` 上限 20 条，而前端每轮追加 2 条且从不裁剪，第 12 轮起必然 422；页面还把原始校验 JSON 直接显示出来。
+
+| 位置 | 改动 |
+|---|---|
+| `src/config.py` | 新增 `HISTORY_MAX_MESSAGES`（默认 20） |
+| `src/schemas.py` | 硬上限放宽到 200（仅防滥用） |
+| `src/chat_service.py` | `trim_history()` 取最近 N 条，若首条是 assistant 一并丢弃，保证序列从 user 开始 |
+| `static/index.html` | 发送与持久化都只带最近 20 条；422/429/413 给出中文提示；超长输入在本地拦截 |
+
+实测：22 / 40 / 80 / 200 条历史均返回 200；300 条（超过硬上限）仍返回 422，符合预期。
+
+### 重排基准
+
+`scripts/bench_retrieval.py` 新增 `--rerank`（默认在 `RERANK_ENABLED=true` 时自动启用）与 `--no-llm`、`--queries`、`--dept`，把**模型加载、单次重排、端到端**分开计时：
+
+| 配置 | 加载 | 单次重排 p50 | 检索+重排 p50 | 纯检索 p50 |
+|---|---|---|---|---|
+| `BAAI/bge-reranker-base` | 2970ms | 4081ms | 4116ms | 17ms |
+| `ms-marco-MiniLM-L-6-v2` | 162ms | 467ms | 444ms | 24ms |
+
+结论：BGE-base 在 CPU 上每查询约 4 秒，只适合离线评测或 GPU；线上若开重排建议 MiniLM 或 GPU 部署。
+
 ---
 
 ## 6. Milvus 升级（2.4.0 → 2.5.4）
@@ -535,7 +562,7 @@ ResolutionImpossible
 | 检查 | 结果 |
 |---|---|
 | `python test_agent.py` | 20/20 通过（需服务 + LLM，含缓存断言） |
-| `pytest -q`（离线，含 CI） | 300/300，约 34s；覆盖率 92% |
+| `pytest -q`（离线，含 CI） | 309/309，约 24s；覆盖率 92% |
 | `ruff check src tests main.py run_ingestion.py` | 全绿 |
 | `python scripts/check_hybrid.py` | 69/69 |
 | `python scripts/check_hybrid_milvus.py` | 19/19（2.5+），低版本 SKIP |

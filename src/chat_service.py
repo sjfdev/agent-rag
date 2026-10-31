@@ -17,7 +17,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeout
 from dataclasses import dataclass
-from typing import Any, Dict, Iterator, Optional
+from typing import Any, Dict, Iterator, List, Optional
 
 from fastapi import HTTPException
 from langchain_core.messages import AIMessage, HumanMessage
@@ -81,6 +81,24 @@ class ChatFailure(Exception):
 # ---------------------------------------------------------------------------
 # request preparation
 # ---------------------------------------------------------------------------
+
+def trim_history(history: List[Any], limit: Optional[int] = None) -> List[Any]:
+    """Keep the most recent messages, starting at a user turn.
+
+    Oldest messages are dropped first. If the cut lands on an assistant
+    message, it is dropped too so the model never sees a reply without its
+    question (some providers reject that, and it confuses follow-up rewriting).
+    """
+    if not history:
+        return []
+    budget = settings.HISTORY_MAX_MESSAGES if limit is None else limit
+    if budget <= 0:
+        return []
+    kept = list(history[-budget:])
+    while kept and kept[0].role != "user":
+        kept.pop(0)
+    return kept
+
 
 @dataclass
 class Prepared:
@@ -168,7 +186,7 @@ def prepare(
         )
 
     messages = []
-    for item in request.history:
+    for item in trim_history(request.history):
         cls = HumanMessage if item.role == "user" else AIMessage
         messages.append(cls(content=item.content))
     messages.append(HumanMessage(content=request.message))

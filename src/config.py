@@ -87,6 +87,10 @@ class Settings(BaseSettings):
     RATE_LIMIT_PER_MINUTE: int = 0
     # How long the LLM may take before the request is abandoned (seconds).
     CHAT_TIMEOUT: int = 120
+    # Conversation history actually used for context. Older messages are
+    # dropped silently (oldest first, in user/assistant pairs) so long
+    # conversations keep working instead of failing validation.
+    HISTORY_MAX_MESSAGES: int = 20
     # When the LLM is unreachable or times out, answer from the retrieved
     # excerpts instead of failing the request. Retrieved facts, no generation.
     LLM_FALLBACK_ENABLED: bool = True
