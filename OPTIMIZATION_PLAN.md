@@ -129,7 +129,7 @@ VECTOR_STORE_TYPE=milvus uvicorn main:app --port 8000   # .env 仍写 faiss，�
 - [x] 位置：`src/reranker.py`
 - [x] 已接入 `kb_engine.search`，`RERANK_ENABLED=true` 时先融合候选再重排取 top-k
 - [x] 懒加载 + 失败降级（加载/推理失败保持原顺序），默认关闭
-- [ ] `timings` 暂未单独暴露 `rerank_ms`（包含在 `retrieval_ms` 内）
+- [x] `timings` 已暴露独立 `rerank_ms`（默认 0）
 - [x] 验收：24 条评测 MiniLM MRR 0.88→0.92（+205ms）、BGE 0.88→0.97（+1.2s）
 
 ### 2.6 工程基建
@@ -152,7 +152,7 @@ VECTOR_STORE_TYPE=milvus uvicorn main:app --port 8000   # .env 仍写 faiss，�
 - [x] 文档级 ACL：`src/acl.py`（`ACL_ENABLED` / `ACL_FILE`，用户与 `group:xxx`）
 - [x] 评测集 `eval/cases.jsonl` + `scripts/eval_retrieval.py`（hit@k / MRR / 泄漏）
 - [x] CI：`.github/workflows/ci.yml`（ruff + pytest + 覆盖率）
-- [ ] 多 worker 说明：`uvicorn --workers N` 下 FAISS 写冲突、embedding 内存翻倍
+- [x] 多 worker 约束已写入 `AGENT_GUIDE.md` §12.8（FAISS 单写者、进程内缓存/任务/限流、指标聚合）
 - [x] 管理接口：`/admin/api` 上传/删除/入库/重建/任务/审计
 
 ---
@@ -160,7 +160,7 @@ VECTOR_STORE_TYPE=milvus uvicorn main:app --port 8000   # .env 仍写 faiss，�
 ## 4. 安装说明待补（`DEPLOYMENT.md` / `DEPLOYMENT_CN.md`）
 
 - [x] 用 `requirements.txt` 替换三处重复 pip 命令，避免版本漂移
-- [ ] 增加离线/内网安装：`pip download` 打包、`HF_HOME` 预置模型目录
+- [x] 离线/内网安装已写入 `DEPLOYMENT_CN.md` §7（`pip download`、预置 HF 缓存、`HF_HUB_OFFLINE=1`）
 - [x] 增加「Milvus 重置」完整流程：`docker compose down` → 清理 `./volumes` → `up -d`（schema 变更后必须重建）
 - [x] 明确 `.env` 与文档默认值不一致时的优先级（环境变量 > `.env` > 代码默认）
 - [x] `.env.example` 补 `DOCKER_VOLUME_DIRECTORY`、`MILVUS_*`、`RETRIEVAL_K`
@@ -170,7 +170,7 @@ VECTOR_STORE_TYPE=milvus uvicorn main:app --port 8000   # .env 仍写 faiss，�
 
 - [x] API 错误码表（400/422/500/503）与请求限制（message 长度、history 条数）
 - [x] 客户端示例：AGENT_GUIDE 已有 curl / Python / SSE 示例与错误码表
-- [ ] 运维手册：新增部门、新增工具、重建索引、切换后端、回滚
+- [x] 运维手册见 `AGENT_GUIDE.md` §12
 - [x] 「切换后端必须重新入库」已用警告块强调
 - [x] UI：来源面板显示文件/页码/原文、缓存命中标签；导出对话与部门配色未做
 - [x] 补充评测方法与基线指标（hit@k、MRR、泄漏、P50/P95）
@@ -294,19 +294,19 @@ curl -f http://localhost:9091/healthz
 
 ### 8.4 体验
 
-- [ ] UI：`localStorage` 保存当前会话（刷新不丢）、复制回答、停止生成
+- [x] UI：`localStorage` 会话、复制、停止生成已实现；Markdown 渲染与移动端未做
 - [x] UI：来源展示（折叠面板 + 原文 `snippet`）
 - [ ] 服务端会话存储（可选）：避免客户端全量回传 history 导致 token 膨胀；超出窗口时自动摘要
 - [x] 多部门用户：`user_depts: list[str]`，Milvus 用 `dept in [...]`
-- [ ] 外部前端接入时补 CORS（鉴权已可选：`CHAT_API_KEY`）
+- [x] CORS：`CORS_ORIGINS`（默认关闭）+ 管理台跨站防护
 
 ### 8.5 文档
 
 - [x] 本轮变更记录（`WORKLOG.md`）+ 安装/使用/FAQ 已同步
 - [x] 一页式 Quickstart：`QUICKSTART.md`（安装 → 配置 → 入库 → 启动 → 验证 + 排错表）
-- [ ] 离线/内网安装（wheel 包 + 预置 `HF_HOME`）
-- [ ] Milvus 重置流程（down → 清 `./volumes` → up）
-- [ ] 引用来源字段与流式事件格式补进 API 章节
+- [x] 离线/内网安装见 `DEPLOYMENT_CN.md` §7
+- [x] Milvus 重置与升级流程见 `AGENT_GUIDE.md` §12.3/§12.5
+- [x] `sources`（含 `score`/`snippet`）、`degraded` 与流式事件格式已补进 API 章节
 
 ### 8.6 建议执行顺序
 
@@ -353,12 +353,12 @@ curl -f http://localhost:9091/healthz
 - [x] **混合检索（本地 BM25）**：`src/lexical.py` 中英文分词 + RRF 融合，默认开启；24 条评测 MRR 0.88→0.89，精确标识符类查询收益明显；后台预热、入库后预热、按部门缓存
 - [x] **能力自适应混合检索**：`HYBRID_ENGINE=auto` 探测 Milvus 版本与集合稀疏字段/BM25 索引，2.5+ 走服务端 `hybrid_search`+RRF，否则回退进程内 BM25；`milvus` 显式模式下能力不足启动即报错；`/info`、`/health`、`/metrics` 暴露实际引擎
 - [x] **升级 Milvus 到 2.5 并重建集合**：已升级 2.5.4（先备份数据卷），`run_ingestion.py --reset` 重建，实测 `hybrid.engine=milvus`、端到端 18/18
-- [ ] **引用去重/score**：同页多 chunk 合并、展示相关性分数
+- [x] **引用去重/score**：同页合并 + 相对 score
 
 #### P2 稳定与运维
 
 - [x] **限流与超时**：`src/ratelimit.py` 滑动窗口（按转发 IP 或 user_id，默认关闭），超限 429 + `Retry-After`；`CHAT_TIMEOUT` 为 `/chat` 与 `/chat/stream` 增加整体截止时间，超时映射 504 `timeout`
-- [ ] **降级回答**：LLM 失败时返回检索摘要或备用模型（目前只返回 503/504）
+- [x] **降级回答**：LLM 失败时用检索摘录作答（`degraded=true`）
 
 - [x] **`/health`**：向量库块数、入库任务、重建状态；`?probe=1` 带 LLM 探测（15s 缓存）；空库/不可达返回 503，`check_health.py` 10 项冒烟
 - [x] **指标（Prometheus）**：`/metrics` 覆盖请求/错误、端到端与检索/LLM 耗时、首 token、索引块数、入库任务、重建状态；可选 `METRICS_TOKEN`
@@ -374,7 +374,7 @@ curl -f http://localhost:9091/healthz
 - [x] **pytest + CI**：`validate_dept`、expr 转义、loaders、ETL 增量、admin 路由；LLM 用 stub 保证离线可跑
 - [x] **惰性引擎 + ChatService**：已消除重复分支
 - [x] **文件清单性能**：`src/hashing.py` 按 `(path, mtime_ns, size)` 缓存 sha1；`doc_summary()` 缓存 5s；`/admin/api/meta` 451ms → 6ms
-- [ ] **前端**：Markdown 渲染、复制回答、停止生成、localStorage 会话、移动端
+- [x] **前端**：复制、停止生成、localStorage 会话；Markdown 渲染/移动端未做
 - [x] **权限**：多部门、文档级 ACL、`/chat` API Key；CORS 未做
 - [ ] **规模**：批量 embedding、任务队列、Milvus 分区/索引参数、备份恢复
 - [ ] **解析增强**：OCR、PDF 表格结构化、XLSX 按行切块避免行被截断
