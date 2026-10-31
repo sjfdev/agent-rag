@@ -237,3 +237,52 @@ LLM_MODEL=glm-4-flash
 - `WORKLOG.md`：本轮功能与验证记录（管理台、评测、混合检索、健康检查、指标、Milvus 2.5 升级）
 - `AGENT_GUIDE.md`：完整使用说明、FAQ 与性能优化
 - `OPTIMIZATION_PLAN.md`：待办清单与进度记录
+
+---
+
+## 📦 7. 离线 / 内网安装
+
+目标机器无法访问 PyPI / HuggingFace 时，在**有网的机器**上准备好依赖与模型。
+
+### 7.1 打包 Python 依赖
+
+```bash
+# 有网机器（Python 3.11，与目标机器同平台）
+pip download -r requirements.txt -r requirements-test.txt -d wheels/
+# 打包 wheels/ 传输到内网
+```
+
+```bash
+# 内网机器
+pip install --no-index --find-links=wheels/ -r requirements.txt
+```
+
+### 7.2 预置 embedding 模型
+
+代码默认走 `HF_ENDPOINT=https://hf-mirror.com`；完全离线时需要先把模型放进缓存目录：
+
+```bash
+# 有网机器
+python -c "from sentence_transformers import SentenceTransformer as S; S('BAAI/bge-small-zh-v1.5')"
+# 可选重排模型
+python -c "from sentence_transformers import CrossEncoder as C; C('BAAI/bge-reranker-base')"
+# 打包缓存（默认 ~/.cache/huggingface/hub）
+tar -czf hf-cache.tgz -C ~/.cache/huggingface hub
+```
+
+```bash
+# 内网机器
+mkdir -p ~/.cache/huggingface
+tar -xzf hf-cache.tgz -C ~/.cache/huggingface
+export HF_HUB_OFFLINE=1      # 跳过所有远端元数据探测
+make doctor                  # 应显示 Embedding model cached
+```
+
+### 7.3 校验
+
+```bash
+python scripts/doctor.py --no-llm   # 除 LLM 外全部 OK
+pytest -q                         # 完全离线也能跑
+```
+
+> LLM 仍需要一个可达的 OpenAI 兼容端点；若也完全离线，可用内网 vLLM / Ollama，把 `LLM_API_BASE` 指向它。

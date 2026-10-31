@@ -159,8 +159,43 @@ def main():
     check("first answer was not cached", first_t.get("cached") is not True, str(first_t))
     check("first answer used the LLM", first_t.get("llm_calls", 0) >= 1, str(first_t))
 
-    # 8. Invalid input: department names are validated before reaching the store
-    print("[8] Invalid department is rejected")
+    # 8. LLM failure fallback: answer from excerpts when the model is down
+    print("[8] LLM unreachable -> retrieval fallback")
+    from langchain_core.messages import HumanMessage
+
+    import src.agent as agent_module
+
+    original_llm = agent_module.llm
+
+    class DownLLM:
+        def invoke(self, _messages):
+            raise ConnectionError("simulated outage")
+
+    # The compiled graph captured `llm` at import time, so patch the node's
+    # callable lookup by swapping the module attribute used inside call_model.
+    agent_module.llm = DownLLM()
+    # The running server has its own process, so exercise the graph in-process
+    # and assert on the returned state instead of the HTTP payload.
+    try:
+        state = agent_module.call_model(
+            {
+                "messages": [HumanMessage(content="What is the code review process?")],
+                "user_id": "u1",
+                "user_dept": "Tech",
+                "user_depts": ["Tech"],
+            }
+        )
+    finally:
+        agent_module.llm = original_llm
+    check("fallback marks degraded", state.get("degraded") is True)
+    check(
+        "fallback returns excerpts",
+        "知识库" in state["messages"][0].content and state.get("sources") != [],
+        state["messages"][0].content[:120],
+    )
+
+    # 9. Invalid input: department names are validated before reaching the store
+    print("[9] Invalid department is rejected")
     try:
         resp = requests.post(
             URL,

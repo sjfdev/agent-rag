@@ -170,12 +170,33 @@ class BaseVectorStore(ABC):
         """Drop the index/collection. Used by `run_ingestion.py --reset`."""
 
 
-def hits_to_documents(hits: List[Dict[str, Any]]) -> List[Document]:
-    """Convert pymilvus search/hybrid_search hits into LangChain Documents."""
+def _l2_to_score(distance: float) -> float:
+    """Map an L2 distance (lower is better) to a 0..1-ish similarity."""
+    try:
+        value = float(distance)
+    except (TypeError, ValueError):
+        return 0.0
+    return round(1.0 / (1.0 + max(value, 0.0)), 4)
+
+
+def hits_to_documents(
+    hits: List[Dict[str, Any]], score_mode: str = "distance"
+) -> List[Document]:
+    """Convert pymilvus search/hybrid_search hits into LangChain Documents.
+
+    ``retrieval_score`` is added to metadata and always means "higher is
+    better": dense search reports an L2 distance (converted), while hybrid
+    search already reports a fused rank score.
+    """
     docs: List[Document] = []
     for hit in hits or []:
         row = dict(hit.get("entity") or hit)
         text = row.pop("text", "")
+        distance = hit.get("distance", hit.get("score"))
+        if distance is not None:
+            row["retrieval_score"] = (
+                _l2_to_score(distance) if score_mode == "distance" else round(float(distance), 4)
+            )
         for key in ("id", "distance", "score", "pk"):
             row.pop(key, None)
         docs.append(Document(page_content=text, metadata=row))
@@ -403,7 +424,7 @@ class MilvusDriver(BaseVectorStore):
             )
             return None
 
-        return hits_to_documents(results[0] if results else [])
+        return hits_to_documents(results[0] if results else [], score_mode="score")
 
     def _query(
         self, expr: str, fields: List[str], limit: int = 1
@@ -839,8 +860,13 @@ class FAISSDriver(BaseVectorStore):
         # Fetch a wider candidate pool, then filter down to the allowed depts.
         allowed = _allowed_depts(user_dept)
         pool = max(k * 20, 50)
-        results = self.vector_db.similarity_search(query, k=pool)
-        filtered = [doc for doc in results if doc.metadata.get("dept") in allowed]
+        scored = self.vector_db.similarity_search_with_score(query, k=pool)
+        filtered = []
+        for doc, distance in scored:
+            if doc.metadata.get("dept") not in allowed:
+                continue
+            doc.metadata["retrieval_score"] = _l2_to_score(distance)
+            filtered.append(doc)
         return filtered[:k]
 
     def is_empty(self) -> bool:
@@ -1142,14 +1168,28 @@ class KnowledgeBaseEngine:
         except Exception:  # metrics must never break search
             pass
 
-    def _maybe_rerank(self, query: str, docs: List[Document], k: int) -> List[Document]:
+    def _maybe_rerank(
+        self, query: str, docs: List[Document], k: int, timings: Optional[Dict[str, Any]] = None
+    ) -> List[Document]:
         if not settings.RERANK_ENABLED:
             return docs[:k]
         from src.reranker import rerank_documents
 
-        return rerank_documents(query, docs[: max(k, settings.RERANK_CANDIDATES)], k)
+        started = time.perf_counter()
+        ranked = rerank_documents(query, docs[: max(k, settings.RERANK_CANDIDATES)], k)
+        if timings is not None:
+            timings["rerank_ms"] = timings.get("rerank_ms", 0.0) + (
+                time.perf_counter() - started
+            ) * 1000
+        return ranked
 
-    def search(self, query: str, user_dept, k: int = 5) -> List[Document]:
+    def search(
+        self,
+        query: str,
+        user_dept,
+        k: int = 5,
+        timings: Optional[Dict[str, Any]] = None,
+    ) -> List[Document]:
         from src.lexical import rrf_fuse
 
         if not query.strip():
@@ -1161,7 +1201,7 @@ class KnowledgeBaseEngine:
                 k, settings.RERANK_CANDIDATES if settings.RERANK_ENABLED else k
             )
             return self._maybe_rerank(
-                query, self.driver.search(query, user_dept, candidates), k
+                query, self.driver.search(query, user_dept, candidates), k, timings
             )
 
         candidates = max(k, settings.HYBRID_CANDIDATES)
@@ -1172,13 +1212,13 @@ class KnowledgeBaseEngine:
             fused = self.driver.hybrid_search(query, user_dept, candidates, candidates)
             if fused is not None:
                 self._observe("milvus")
-                return self._maybe_rerank(query, fused, k)
+                return self._maybe_rerank(query, fused, k, timings)
             # Server-side hybrid failed: degrade for this query only.
             self._observe("fallback")
 
         self._observe("local")
         return self._maybe_rerank(
-            query, self._local_hybrid(query, user_dept, candidates, rrf_fuse), k
+            query, self._local_hybrid(query, user_dept, candidates, rrf_fuse), k, timings
         )
 
     def _local_hybrid(self, query: str, user_dept, candidates: int, fuse):

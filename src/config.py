@@ -73,6 +73,12 @@ class Settings(BaseSettings):
     RATE_LIMIT_PER_MINUTE: int = 0
     # How long the LLM may take before the request is abandoned (seconds).
     CHAT_TIMEOUT: int = 120
+    # When the LLM is unreachable or times out, answer from the retrieved
+    # excerpts instead of failing the request. Retrieved facts, no generation.
+    LLM_FALLBACK_ENABLED: bool = True
+    # Comma-separated browser origins allowed to call the public endpoints.
+    # Empty disables CORS entirely (same-origin UI keeps working).
+    CORS_ORIGINS: str = ""
     # Document-level ACL (JSON file). Disabled by default.
     ACL_ENABLED: bool = False
     ACL_FILE: str = "./config/acl.json"

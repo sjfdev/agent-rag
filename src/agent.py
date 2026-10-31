@@ -1,8 +1,10 @@
+import logging
 import re
 import time
 from typing import Annotated, Any, Dict, List, TypedDict
 
 from langchain_core.messages import (
+    AIMessage,
     BaseMessage,
     HumanMessage,
     SystemMessage,
@@ -15,7 +17,10 @@ from langgraph.prebuilt import ToolNode
 
 from src.config import settings
 from src.engine import get_engine
+from src.errors import is_transport_error
 from src.tools import agent_tools
+
+logger = logging.getLogger("agent-rag.agent")
 
 
 class AgentState(TypedDict, total=False):
@@ -30,6 +35,9 @@ class AgentState(TypedDict, total=False):
     timings: Dict[str, float]
     # Deduplicated excerpts used for the answer, surfaced as citations.
     sources: List[Dict[str, Any]]
+    # Set when the answer was built from excerpts because the LLM failed.
+    degraded: bool
+    degraded_reason: str
 
 
 SYSTEM_PROMPT = """You are an enterprise knowledge base assistant.
@@ -133,6 +141,22 @@ def _retrieval_query(messages: List[BaseMessage]) -> str:
     return current
 
 
+def _fallback_answer(sources: List[Dict[str, Any]]) -> str:
+    """Deterministic answer built from retrieved excerpts (no generation)."""
+    lines = ["模型服务暂时不可用，以下为知识库中检索到的原文摘录："]
+    for index, source in enumerate(sources[:3], start=1):
+        label = source.get("source") or "unknown"
+        if source.get("page"):
+            label += f" p.{source['page']}"
+        elif source.get("slide"):
+            label += f" slide {source['slide']}"
+        elif source.get("sheet"):
+            label += f" sheet {source['sheet']}"
+        snippet = (source.get("snippet") or "").strip()
+        lines.append(f"{index}. {label}：{snippet}")
+    return "\n".join(lines)
+
+
 def call_model(state: AgentState):
     """Retrieve permission-filtered context, then let the LLM answer or call a tool."""
     messages = state["messages"]
@@ -154,7 +178,11 @@ def call_model(state: AgentState):
         query = _retrieval_query(messages)
         t_search = time.perf_counter()
         docs = (
-            get_engine().search(query, depts, k=settings.RETRIEVAL_K) if query else []
+            get_engine().search(
+                query, depts, k=settings.RETRIEVAL_K, timings=timings
+            )
+            if query
+            else []
         )
         if docs and settings.ACL_ENABLED:
             from src.acl import filter_documents
@@ -176,6 +204,7 @@ def call_model(state: AgentState):
             sheet = meta.get("sheet") or ""
             page, slide, sheet = page or None, slide or None, sheet or None
             key = (meta.get("source"), page, slide, sheet)
+            snippet = " ".join(doc.page_content.split())[:220]
             if key not in seen:
                 seen.add(key)
                 item = {"source": meta.get("source"), "dept": meta.get("dept")}
@@ -188,10 +217,28 @@ def call_model(state: AgentState):
                     item["kind"] = meta["kind"]
                 if meta.get("title"):
                     item["title"] = meta["title"]
-                snippet = " ".join(doc.page_content.split())
+                if meta.get("retrieval_score") is not None:
+                    item["score"] = meta["retrieval_score"]
                 if snippet:
-                    item["snippet"] = snippet[:220]
+                    item["snippet"] = snippet
                 sources.append(item)
+            else:
+                # Same page/sheet from a second chunk: keep the best score and
+                # the longest snippet instead of emitting a duplicate citation.
+                for existing in sources:
+                    existing_key = (
+                        existing.get("source"), existing.get("page"),
+                        existing.get("slide"), existing.get("sheet"),
+                    )
+                    if existing_key != key:
+                        continue
+                    if meta.get("retrieval_score") is not None:
+                        existing["score"] = max(
+                            existing.get("score") or 0.0, meta["retrieval_score"]
+                        )
+                    if snippet and len(snippet) > len(existing.get("snippet") or ""):
+                        existing["snippet"] = snippet
+                    break
 
             label = meta.get("source") or "unknown"
             if isinstance(page, int):
@@ -204,6 +251,17 @@ def call_model(state: AgentState):
             body = doc.page_content.replace("</document>", "[/document]")
             blocks.append(f"<document source=\"{label}\">\n{body}\n</document>")
 
+        if any(source.get("score") is not None for source in sources):
+            sources.sort(key=lambda item: item.get("score") or 0.0, reverse=True)
+            # Backend scales differ (L2 similarity vs RRF fusion) and are not
+            # comparable across engines, so expose a relative rank: the best hit
+            # is 1.0 and the last is 1/n. The raw score stays in `retrieval_ms`
+            # diagnostics and in `retrieval_score` on the underlying document.
+            total = len(sources)
+            for index, source in enumerate(sources):
+                if source.get("score") is not None:
+                    source["score"] = round(1 - index / total, 3)
+
         excerpts = "\n\n".join(blocks) if blocks else "(no relevant excerpts found)"
         prompt.append(
             SystemMessage(
@@ -215,7 +273,34 @@ def call_model(state: AgentState):
         )
 
     t_llm = time.perf_counter()
-    response = llm.invoke(prompt + messages)
+    try:
+        response = llm.invoke(prompt + messages)
+    except Exception as exc:
+        timings["llm_ms"] = timings.get("llm_ms", 0.0) + (
+            time.perf_counter() - t_llm
+        ) * 1000
+        # Degrade only when this request already retrieved context: the user
+        # still gets a factual (if terse) answer with citations.
+        if (
+            settings.LLM_FALLBACK_ENABLED
+            and not already_retrieved
+            and sources
+            and is_transport_error(exc)
+        ):
+            logger.warning(
+                "llm unavailable (%s); answering from %d excerpt(s)",
+                type(exc).__name__,
+                len(sources),
+            )
+            return {
+                "messages": [AIMessage(content=_fallback_answer(sources))],
+                "sources": sources,
+                "degraded": True,
+                "degraded_reason": "llm_unavailable",
+                "timings": timings,
+            }
+        raise
+
     timings["llm_ms"] = timings.get("llm_ms", 0.0) + (
         time.perf_counter() - t_llm
     ) * 1000

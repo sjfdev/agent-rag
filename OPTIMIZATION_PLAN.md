@@ -245,6 +245,9 @@ curl -f http://localhost:9091/healthz
 | 2026-10-30 | 测试覆盖率 73%→92% | 246 项；新增 engine(Milvus 假客户端)/health/metrics/reranker/agent/ETL/admin 补充测试 |
 | 2026-10-30 | 工程基建与稳定性 | Makefile、doctor、限流（429+Retry-After）、请求超时（504）；265 项测试 |
 | 2026-10-31 | Quickstart + 计划校正 | 新增 `QUICKSTART.md`；勾掉 35 项已实现条目，剩余待办收敛到第 10 节 |
+| 2026-10-31 | 10.1 LLM 降级 + CORS | LLM 不可用时返回检索摘录（200 + `degraded`），不写缓存；`CORS_ORIGINS` + 管理台跨站防护；`test_agent` 20 项、pytest 287 项 |
+| 2026-10-31 | 10.2 前端体验 + 引用质量 + rerank_ms | `localStorage` 会话、复制/停止；同页 chunk 合并、相对 score、独立 `rerank_ms` |
+| 2026-10-31 | 10.3 文档 | 新增 `README.md`、运维手册（GUIDE §12）、离线安装（DEPLOYMENT_CN §7） |
 
 ---
 
@@ -521,29 +524,21 @@ VECTOR_STORE_TYPE=faiss  python scripts/eval_retrieval.py
 ### 10.1 P1 稳定性（预计 2–3 小时）
 
 #### 10.1.1 LLM 失败降级（检索摘要兜底）
-- [ ] 位置：`src/chat_service.py::run` / `_stream`，`src/errors.py`
-- [ ] 现状：LLM 不可用或超时时只返回 `503 upstream_unavailable` / `504 timeout`，用户拿不到任何信息
-- [ ] 方案：
-  - 捕获 `is_upstream_error` / `ChatTimeout` 后，用本次已检索到的 `sources` 拼一段确定性摘要（前 3 条 snippet + 来源）
-  - 响应带 `degraded=true` 与 `degraded_reason=llm_unavailable`，HTTP 仍 200（或按配置返回 503 + body）
-  - 流式：先发一个 `warning` 事件，再发 `done`（`cached=false`, `degraded=true`）
-  - 开关：`LLM_FALLBACK_ENABLED=true`（默认开），可回退到旧行为
-- [ ] 注意：只对**已经完成检索**的请求降级；检索本身失败仍返回 503
-- [ ] 验收：
-  - 把 `LLM_API_BASE` 指向不可达地址，`/chat` 返回来源摘要而非空错误
-  - `test_agent.py` 增加“LLM 不可用”用例；`pytest` 新增降级测试
-  - `degraded` 不计入缓存（避免把兜底答案缓存一天）
+- [x] 位置：`src/agent.py::_fallback_answer`、`src/errors.py::is_transport_error`
+- [x] 方案：`call_model` 捕获传输类异常（连接/超时/上游）且**该请求已检索到片段**时，用前 3 条 snippet + 来源拼确定性摘要返回；带 `degraded=True` / `degraded_reason=llm_unavailable`
+- [x] 开关 `LLM_FALLBACK_ENABLED`（默认开）；已检索后工具回路中的失败不降级
+- [x] 接口：`/chat` 返回 `degraded`/`degraded_reason`，`timings.degraded=true`；流式 `done` 事件带同样字段
+- [x] 缓存：降级答案**不写入** FAQ 缓存（`cache_store` 二次校验 + 调用点跳过）
+- [x] UI：显示「降级回答」标签与提示文案
+- [x] 验收：LLM 指向不可达地址时 `/chat` 仍 200 并返回 3 条来源摘录；`X-Cache: miss` 且缓存条目为 0；`test_agent.py` 新增 fallback 用例
 
 #### 10.1.2 CORS（外部前端接入）
-- [ ] 位置：`main.py`
-- [ ] 现状：`/ui/`、`/admin` 同源可用；第三方页面调用 `/chat` 会被浏览器拦截
-- [ ] 方案：`CORS_ORIGINS`（逗号分隔，默认空=不启用）→ `CORSMiddleware`
-  - 只对 `/chat`、`/chat/stream`、`/info`、`/health` 放行；`/admin/api` 不开放
-  - `allow_credentials` 与 `*` 互斥，需显式列出域名
-- [ ] 验收：`curl -H 'Origin: http://example.com' -X OPTIONS` 返回正确的 `Access-Control-Allow-Origin`；默认配置下无 CORS 头
+- [x] `CORS_ORIGINS`（逗号分隔，默认空=不启用）；`allow_credentials=False`，`allow_headers` 含 `X-API-Key`，`expose_headers` 含 `X-Request-ID`/`X-Cache`
+- [x] 管理台额外防护：`require_admin` 拒绝非配置来源且非同源的 `Origin`（403），避免管理接口被跨站调用
+- [x] 验收：允许来源返回 `Access-Control-Allow-Origin`，预检包含 `X-API-Key`；未配置时无 CORS 头；伪造来源访问 `/admin/api` 返回 403
 
 #### 10.1.3 CI 首跑确认
-- [ ] 位置：GitHub 仓库 Actions 页面（本机没有 `gh`）
+- [ ] 位置：GitHub 仓库 Actions 页面（本机没有 `gh`，需要在浏览器确认）
 - [ ] 待确认：`lint-and-test` 是否通过、依赖安装是否缺包、缓存是否生效
 - [ ] 若失败：把报错贴回，按缺失依赖补 `requirements-test.txt`
 - [ ] 验收：main 分支最近一次 run 为绿色
@@ -551,34 +546,36 @@ VECTOR_STORE_TYPE=faiss  python scripts/eval_retrieval.py
 ### 10.2 P2 体验（预计 3 小时）
 
 #### 10.2.1 会话持久化与前端体验
-- [ ] `static/index.html`：`localStorage` 保存 `history` + 部门/用户，刷新不丢
-- [ ] 复制回答按钮、停止生成（`AbortController` + 后端已有超时兜底）
-- [ ] Markdown 渲染（仅安全子集，避免 XSS；先做粗体/列表/代码块）
-- [ ] 验收：刷新后对话仍在；点停止后请求确实中断（Network 面板）；回答中的 `**粗体**` 正确渲染
+- [x] `localStorage` 保存 `history` + 部门/用户 + 已渲染对话；`?new=...` 新窗口不恢复
+- [x] 复制回答按钮；停止生成（`AbortController`，后端已有超时兜底）
+- [ ] Markdown 渲染（仅安全子集）— 未做，留待下一轮
+- [x] 验收：刷新后对话仍在；停止后提示「已停止生成」；切换部门/清空会同时清除本地会话
 
 #### 10.2.2 引用质量
-- [ ] 同页多 chunk 合并为一条 source（保留最高分/最长 snippet）
-- [ ] `sources` 增加 `score`（Milvus 有 distance；FAISS 用 L2 距离换算）
-- [ ] UI 来源面板显示分数并按分数排序
-- [ ] 验收：预算问题只出现一条 `confidential_budget_2026.pdf p.1`，不再重复；评测脚本不受影响
+- [x] 同页多 chunk 合并为一条 source（取最高分 + 最长 snippet）
+- [x] 底层 `retrieval_score`：Milvus 稠密用 L2→相似度换算、混合检索直接用融合分；FAISS 用 `similarity_search_with_score`
+- [x] 对外 `sources[].score` 使用**相对排序**（第 1 名 1.0，依次递减），避免不同引擎分数不可比
+- [x] 来源按分数排序；UI 显示分数
+- [x] 验收：预算问题 3 条来源分数 1.0 / 0.667 / 0.333；评测脚本不受影响
 
 #### 10.2.3 检索可观测性补齐
-- [ ] `timings` 增加 `rerank_ms`（目前混在 `retrieval_ms`）
-- [ ] `bench_retrieval.py` 增加重排开关对比
-- [ ] 验收：`RERANK_ENABLED=true` 时响应含独立 `rerank_ms`；关闭时字段为 0
+- [x] `timings` 增加独立 `rerank_ms`（引擎在重排前后计时，经 `search(timings=...)` 传出），`overhead_ms` 已扣除
+- [x] UI 仅在非零时显示「重排」耗时
+- [ ] `bench_retrieval.py` 增加重排开关对比 — 未做
+- [x] 验收：普通问答 `rerank_ms=0.0`；开启重排后为实际耗时
 
 ### 10.3 P3 规模化与文档（有余力）
 
 #### 10.3.1 文档补全
-- [ ] `README.md`（仓库首页）：一句话定位、架构图、5 分钟 Quickstart 链接、能力表、许可证
-- [ ] 运维手册：新增部门、新增工具、重建索引、切换后端、回滚、备份
-- [ ] 离线/内网安装：`pip download` 打包 + 预置 `HF_HOME` 模型目录
-- [ ] 明确多 worker 约束（FAISS 单写者、进程内缓存/任务/限流、指标聚合）
-- [ ] 验收：新机器只读 README → QUICKSTART 可跑通
+- [x] `README.md`：定位、架构图、能力表、接口、快速开始、文档索引、已知限制
+- [x] 运维手册（`AGENT_GUIDE.md` 第 12 节）：新增部门、新增工具、重建索引、切换后端、升级 Milvus、回滚、备份、多 worker 约束、速查命令
+- [x] 离线/内网安装（`DEPLOYMENT_CN.md` 第 7 节）：`pip download` 打包、预置 HF 缓存、`HF_HUB_OFFLINE=1`、校验命令
+- [x] 多 worker 约束表：FAISS 单写者、进程内缓存/任务/限流、指标按 instance 聚合
+- [x] 验收：README 链接到 QUICKSTART；`make doctor` 可确认环境
 
 #### 10.3.2 前端/服务端会话
 - [ ] 服务端会话存储（可选）：避免客户端全量回传 history；超窗口自动摘要
-- [ ] 外部前端 CORS 已在 10.1.2 覆盖
+- [x] 外部前端 CORS 已在 10.1.2 覆盖
 - [ ] 验收：连续 20 轮对话后请求体不再线性增长
 
 #### 10.3.3 解析增强
@@ -635,5 +632,19 @@ curl -s -X POST localhost:8000/chat -H 'Content-Type: application/json' \
 | 15 | `check_hybrid_milvus.py` | 19/19 |
 | 16 | `/health` | `ok`、26 chunks、`hybrid=milvus`、`maintenance=false` |
 
-说明：`doctor.py` 读取 `.env`（`VECTOR_STORE_TYPE=faiss`），而当前服务是用环境变量覆盖为 `milvus`，所以 doctor 显示 faiss / local hybrid 属正常；第 5 项的 503 降级用例要等 10.1.1 实现后再补。
+说明：`doctor.py` 读取 `.env`（`VECTOR_STORE_TYPE=faiss`），而当前服务是用环境变量覆盖为 `milvus`，所以 doctor 显示 faiss / local hybrid 属正常。
+
+#### 10.5.2 本日（2026-10-31）完成后的再回归
+
+| 检查 | 结果 |
+|---|---|
+| `pytest -q` | **287 passed** |
+| `ruff check` | 全绿 |
+| `test_agent.py` | 22/22（新增 LLM 降级用例） |
+| `check_hybrid.py` / `check_hybrid_milvus.py` | 69/69、19/19 |
+| `check_health.py --probe` | 14/14 |
+| `check_admin.py` / `check_loaders.py` | 通过 |
+| 两后端隔离 / 评测 | OK；18/18、MRR 0.89、0 泄漏 |
+| 降级实测 | LLM 不可达时 `/chat` 200 + 3 条摘录，`degraded=true`，`X-Cache: miss` |
+| CORS 实测 | 允许来源带 `Access-Control-Allow-Origin`；伪来源访问 `/admin/api` 403 |
 

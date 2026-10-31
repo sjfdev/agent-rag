@@ -15,7 +15,7 @@ def stub_engine(monkeypatch):
         def __init__(self):
             self.queries = []
 
-        def search(self, query, depts, k=4):
+        def search(self, query, depts, k=4, timings=None):
             self.queries.append((query, depts, k))
             return [
                 Document(

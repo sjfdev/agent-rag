@@ -32,6 +32,9 @@
 | 21 | Makefile / doctor / 限流 / 请求超时 | `f64aa29` | 完成 |
 | 22 | Quickstart + 计划校正 | `f8aa9c4` | 完成 |
 | 23 | 收尾与明日待办 | `60cdbee` | 完成 |
+| 24 | LLM 降级 + CORS（10.1） | 本轮 | 完成 |
+| 25 | 前端体验 + 引用质量 + rerank_ms（10.2） | 本轮 | 完成 |
+| 26 | README / 运维手册 / 离线安装（10.3） | 本轮 | 完成 |
 
 当前运行态：`vector_store=milvus`、`hybrid.engine=milvus`、Milvus `v2.5.4`、26 chunks / 4 部门。
 
@@ -406,6 +409,46 @@
 
 ---
 
+## 5.14 降级、CORS、引用质量与文档（2026-10-31）
+
+### LLM 失败降级
+
+`call_model` 在**已完成检索**且异常属于传输类（连接/超时/上游）时，不再抛错，而是用前 3 条 snippet + 来源拼确定性摘要：
+
+- `/chat` 仍返回 200，body 带 `degraded=true`、`degraded_reason=llm_unavailable`
+- 流式 `done` 事件带同样字段；UI 显示「降级回答」与提示
+- 降级答案**不写入** FAQ 缓存（调用点跳过 + `cache_store` 二次校验）
+- 开关 `LLM_FALLBACK_ENABLED`（默认开）；工具回路中的失败、无检索结果时仍按原错误返回
+
+实测（`LLM_API_BASE` 指向 `127.0.0.1:9`）：`/chat` 200、3 条来源、`timings.degraded=true`、`X-Cache: miss`、缓存条目 0；恢复真实 LLM 后 `degraded=false`。
+
+### CORS + 管理台防护
+
+- `CORS_ORIGINS`（逗号分隔，默认空=不启用）；`allow_headers` 含 `X-API-Key`，`expose_headers` 含 `X-Request-ID`/`X-Cache`
+- 管理台额外校验 `Origin`：既不在白名单又非同源时返回 403
+- 实测：允许来源预检通过；`https://evil.example.com` 访问 `/admin/api/meta` → 403
+
+### 引用质量
+
+- 同页/同 sheet 的多 chunk 合并为一条来源，取最高分与最长 snippet
+- 底层 `retrieval_score`：Milvus 稠密 L2→相似度、混合检索用融合分、FAISS `similarity_search_with_score`
+- 对外 `sources[].score` 用相对排序（1.0、0.667、0.333），避免不同引擎分数不可比
+- UI 显示分数并按分数排序
+
+### 可观测性
+
+`timings` 新增独立 `rerank_ms`（默认 0），`overhead_ms` 已扣除；UI 仅非零时显示。
+
+### 前端
+
+`localStorage` 保存会话（history + 部门/用户 + 已渲染对话），`?new=` 新窗口不恢复；复制回答；`AbortController` 停止生成；切换部门/清空时同步清理本地会话。
+
+### 文档
+
+`README.md`（定位/架构/能力表/接口/快速开始）、`AGENT_GUIDE.md` 第 12 节运维手册（新增部门/工具、重建、切换后端、升级、回滚、备份、多 worker）、`DEPLOYMENT_CN.md` 第 7 节离线/内网安装。
+
+---
+
 ## 6. Milvus 升级（2.4.0 → 2.5.4）
 
 - 升级前备份数据卷：`volumes/milvus` + `volumes/etcd` → `milvus-2.4-<时间戳>.tgz`
@@ -450,7 +493,7 @@
 | 检查 | 结果 |
 |---|---|
 | `python test_agent.py` | 20/20 通过（需服务 + LLM，含缓存断言） |
-| `pytest -q`（离线，含 CI） | 265/265，约 25s；覆盖率 92% |
+| `pytest -q`（离线，含 CI） | 287/287，约 26s；覆盖率 92% |
 | `ruff check src tests main.py run_ingestion.py` | 全绿 |
 | `python scripts/check_hybrid.py` | 69/69 |
 | `python scripts/check_hybrid_milvus.py` | 19/19（2.5+），低版本 SKIP |

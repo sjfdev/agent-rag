@@ -1,5 +1,9 @@
 """Exception classification shared by the chat service and the agent graph."""
 
+class ChatTimeout(Exception):
+    """The request exceeded CHAT_TIMEOUT before the agent finished."""
+
+
 # Vector-store connection failures (Milvus down, FAISS index unreadable).
 try:
     from pymilvus.exceptions import MilvusException
@@ -30,9 +34,30 @@ def is_store_error(exc: Exception) -> bool:
     return bool(names & {"ConnectionError", "ConnectionRefusedError", "MilvusException"})
 
 
+def is_transport_error(exc: Exception) -> bool:
+    """Any transport-level failure (used when the call target is already known).
+
+    `is_upstream_error` is tuned for the chat endpoint's shared classification;
+    inside `call_model` we know the call is to the LLM, so a bare
+    ConnectionError/TimeoutError also means "the model is unreachable".
+    """
+    return (
+        is_upstream_error(exc)
+        or is_timeout(exc)
+        or isinstance(exc, (ConnectionError, TimeoutError, OSError))
+    )
+
+
+def is_timeout(exc: Exception) -> bool:
+    return isinstance(exc, ChatTimeout) or type(exc).__name__ in {
+        "FutureTimeout",
+        "TimeoutError",
+    }
+
+
 def classify_error(exc: Exception):
     """Map an exception to (http_status, code, message)."""
-    if type(exc).__name__ in {"ChatTimeout", "FutureTimeout", "TimeoutError"}:
+    if is_timeout(exc):
         return 504, "timeout", "request timed out"
     if is_store_error(exc):
         return 503, "vector_store_unavailable", "vector store unavailable"

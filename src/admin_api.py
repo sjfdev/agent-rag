@@ -39,6 +39,18 @@ _MAX_JOBS = 20
 
 
 def require_admin(request: Request) -> None:
+    # The admin API is never meant to be called from a browser origin other
+    # than the console itself; CORS middleware does not cover this rule.
+    origin = request.headers.get("origin", "")
+    if origin:
+        allowed = {
+            item.strip()
+            for item in (getattr(settings, "CORS_ORIGINS", "") or "").split(",")
+            if item.strip()
+        }
+        host = request.headers.get("host", "")
+        if origin not in allowed and host and origin.split("://", 1)[-1] != host:
+            raise HTTPException(status_code=403, detail="cross-origin admin request")
     token = settings.ADMIN_TOKEN
     if token:
         provided = request.headers.get("X-Admin-Token", "")

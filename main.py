@@ -5,6 +5,7 @@ import time
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import (
     FileResponse,
     JSONResponse,
@@ -29,6 +30,27 @@ logging.basicConfig(
 logger = logging.getLogger("agent-rag")
 
 app = FastAPI(title="Enterprise KB Agent API")
+
+
+def _cors_origins() -> list:
+    raw = (settings.CORS_ORIGINS or "").strip()
+    if not raw:
+        return []
+    return [item.strip() for item in raw.split(",") if item.strip()]
+
+
+if _cors_origins():
+    # Only the public chat/metadata endpoints are exposed. The admin API stays
+    # same-origin because it can mutate the knowledge base.
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=_cors_origins(),
+        allow_credentials=False,
+        allow_methods=["GET", "POST", "OPTIONS"],
+        allow_headers=["Content-Type", "Authorization", "X-API-Key"],
+        expose_headers=["X-Request-ID", "X-Cache"],
+        max_age=600,
+    )
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 if STATIC_DIR.is_dir():

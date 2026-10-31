@@ -26,7 +26,7 @@ from src import metrics
 from src.agent import app as agent_app
 from src.cache import answer_cache
 from src.config import settings
-from src.errors import classify_error, is_store_error, is_upstream_error
+from src.errors import ChatTimeout, classify_error, is_store_error, is_upstream_error
 from src.ratelimit import RateLimiter
 from src.runtime import in_maintenance
 from src.schemas import ChatRequest, ChatResponse
@@ -36,6 +36,7 @@ logger = logging.getLogger("agent-rag.chat")
 
 __all__ = [
     "ChatFailure",
+    "ChatTimeout",
     "Prepared",
     "cache_bypassed",
     "cache_lookup",
@@ -50,10 +51,6 @@ __all__ = [
 ]
 
 _executor = ThreadPoolExecutor(max_workers=8, thread_name_prefix="chat-deadline")
-
-
-class ChatTimeout(Exception):
-    """The request exceeded CHAT_TIMEOUT before the agent finished."""
 
 
 # Per-caller limit; recreated if the configured value changes (tests).
@@ -200,11 +197,13 @@ def timings_from(final_state: Dict[str, Any], started: float) -> Dict[str, Any]:
         k: (int(v) if k.endswith("_calls") else round(float(v), 1))
         for k, v in (final_state.get("timings") or {}).items()
     }
+    timings.setdefault("rerank_ms", 0.0)
     timings["total_ms"] = round((time.perf_counter() - started) * 1000, 1)
     timings["overhead_ms"] = round(
         timings["total_ms"]
         - timings.get("retrieval_ms", 0.0)
-        - timings.get("llm_ms", 0.0),
+        - timings.get("llm_ms", 0.0)
+        - timings.get("rerank_ms", 0.0),
         1,
     )
     return timings
@@ -214,6 +213,7 @@ def cached_timings(started: float) -> Dict[str, Any]:
     elapsed = round((time.perf_counter() - started) * 1000, 1)
     return {
         "retrieval_ms": 0.0,
+        "rerank_ms": 0.0,
         "llm_ms": 0.0,
         "llm_calls": 0,
         "total_ms": elapsed,
@@ -259,6 +259,8 @@ def cache_store(
     if not _cache_enabled() or request.history or cache_bypassed(headers):
         return
     if int(timings.get("llm_calls") or 0) != 1:
+        return
+    if timings.get("degraded"):
         return
     messages = final_state.get("messages") or []
     if not messages:
@@ -326,7 +328,11 @@ def run(request: ChatRequest, headers: Any, endpoint: str = "chat") -> ChatRespo
         raise ChatFailure(prepared.request_id, exc) from exc
 
     timings = timings_from(final_state, started)
-    cache_store(request, headers, final_state, timings)
+    degraded = bool(final_state.get("degraded"))
+    if degraded:
+        timings["degraded"] = True
+    else:
+        cache_store(request, headers, final_state, timings)
     logger.info(
         "chat ok request_id=%s dept=%s total_ms=%s llm_ms=%s llm_calls=%s",
         prepared.request_id,
@@ -346,6 +352,8 @@ def run(request: ChatRequest, headers: Any, endpoint: str = "chat") -> ChatRespo
         sources=final_state.get("sources") or [],
         timings=timings,
         request_id=prepared.request_id,
+        degraded=degraded,
+        degraded_reason=(final_state.get("degraded_reason") or "") if degraded else "",
     )
 
 
@@ -457,7 +465,11 @@ def _stream(
                 final_state = payload
 
         timings = timings_from(final_state, started)
-        cache_store(request, headers, final_state, timings)
+        degraded = bool(final_state.get("degraded"))
+        if degraded:
+            timings["degraded"] = True
+        else:
+            cache_store(request, headers, final_state, timings)
         logger.info(
             "chat stream ok request_id=%s dept=%s total_ms=%s llm_ms=%s llm_calls=%s",
             request_id,
@@ -472,13 +484,15 @@ def _stream(
             elapsed_seconds=time.perf_counter() - started,
             timings=timings,
         )
-        yield sse(
-            {
-                "type": "done",
-                "sources": final_state.get("sources") or [],
-                "timings": timings,
-            }
-        )
+        done: Dict[str, Any] = {
+            "type": "done",
+            "sources": final_state.get("sources") or [],
+            "timings": timings,
+        }
+        if degraded:
+            done["degraded"] = True
+            done["degraded_reason"] = final_state.get("degraded_reason") or ""
+        yield sse(done)
     except Exception as exc:
         _record_failure(prepared, exc)
         _, code, message = classify_error(exc)

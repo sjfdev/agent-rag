@@ -99,7 +99,7 @@ agent-rag/
 ├── volumes/                 # Milvus/etcd 数据卷
 ├── eval/cases.jsonl         # 检索评测集（命中 + 泄漏用例）
 ├── config/acl.example.json  # 文档级 ACL 规则示例
-├── tests/                   # pytest 离线测试（265 项，覆盖率 92%）
+├── tests/                   # pytest 离线测试（287 项，覆盖率 92%）
 ├── Makefile                 # 常用命令（make help）
 ├── .github/workflows/ci.yml # ruff + pytest（CI）
 ├── WORKLOG.md               # 本轮迭代记录与验证矩阵
@@ -407,7 +407,7 @@ uvicorn main:app --host 0.0.0.0 --port 8000
 }
 ```
 
-时间单位均为**毫秒**，`*_calls` 为次数。`sources` 为本次回答实际使用的去重片段（文档 + 页码 + `snippet` 原文摘录），UI 中折叠为「来源」面板，可展开查看摘录；改用工具建单时仍保留首次检索到的来源。
+时间单位均为**毫秒**，`*_calls` 为次数。`sources` 为本次回答实际使用的去重片段（文档 + 页码 + `snippet` 原文摘录 + `score`）。同一页/同一 sheet 的多个 chunk 会合并为一条；`score` 是**相对排序**（第 1 名 1.0，依次递减），不同后端之间不可直接比较。UI 折叠为「来源」面板，可展开查看摘录；改用工具建单时仍保留首次检索到的来源。
 
 健康检查：
 
@@ -466,6 +466,8 @@ curl -s http://localhost:8000/metrics | grep '^agent_rag_'
 | 503 | 向量库不可达 | `{"detail":{"error":"vector_store_unavailable","request_id":"..."}}` |
 | 429 | 触发限流（`RATE_LIMIT_PER_MINUTE`） | `{"detail":{"error":"rate_limited","request_id":"..."}}` + `Retry-After` |
 | 504 | 超过 `CHAT_TIMEOUT` | `{"detail":{"error":"timeout","request_id":"..."}}` |
+
+> LLM 不可用但已检索到内容时，默认**不返回错误**：HTTP 200，响应带 `degraded: true`、`degraded_reason: "llm_unavailable"`，`response` 为知识库原文摘录。设置 `LLM_FALLBACK_ENABLED=false` 可恢复旧行为（503/504）。
 | 500 | 内部错误，不回传堆栈 | `{"detail":{"error":"internal error","request_id":"85c68605"}}` |
 
 服务端日志会打印完整堆栈与 `request_id`，响应头也带 `X-Request-ID`，便于对账。
@@ -546,7 +548,7 @@ python scripts/check_loaders.py      # 9 种格式解析（不写向量库）
 python scripts/check_admin.py        # 管理台上传→入库→删除冒烟
 python scripts/bench_retrieval.py    # embedding / FAISS / Milvus / LLM 延迟
 python scripts/generate_demo_files.py  # 重建 data/Demo 多格式样例
-pytest -q                            # 离线测试（265 项，~25s，覆盖率 92%，无需服务/LLM）
+pytest -q                            # 离线测试（287 项，~26s，覆盖率 92%，无需服务/LLM）
 ruff check src tests main.py run_ingestion.py   # 代码检查
 python test_agent.py                 # 端到端 18 项断言（需服务已启动）
 ```
@@ -636,6 +638,8 @@ python run_ingestion.py --no-prune # 不清理已删除文件
 | `CHAT_API_KEY` | 空 | 非空时 `/chat` 需要 `X-API-Key` 或 Bearer |
 | `RATE_LIMIT_PER_MINUTE` | `0` | 每调用方每分钟请求上限（0 关闭），超限 429 |
 | `CHAT_TIMEOUT` | `120` | 单次问答整体时限（秒），超时 504 `timeout` |
+| `LLM_FALLBACK_ENABLED` | `true` | LLM 不可用时用检索摘录作答（`degraded`），不写缓存 |
+| `CORS_ORIGINS` | 空 | 允许的浏览器来源（逗号分隔）；空=不启用 |
 | `ACL_ENABLED` | `false` | 是否启用文档级 ACL |
 | `ACL_FILE` | `./config/acl.json` | ACL 规则文件（见 `config/acl.example.json`） |
 | `FAQ_CACHE_ENABLED` | `true` | 是否启用 FAQ 答案缓存 |
@@ -866,3 +870,105 @@ python scripts/bench_retrieval.py
 ## 11. 许可证
 
 本项目采用 [MIT License](./LICENSE)，Copyright (c) 2026 sjfdev。可自由使用、修改、分发与商用，需保留版权与许可声明。
+
+---
+
+## 12. 运维手册
+
+面向日常操作。所有命令默认在仓库根目录、`agent-rag` 环境内执行。
+
+### 12.1 新增部门
+
+1. 建目录：`data/<部门名>/`（仅字母、数字、下划线、中划线、中文；≤64 字符）
+2. 放入文件（支持 PDF/DOCX/PPTX/XLSX/CSV/MD/TXT/HTML/JSON）
+3. 入库：`make ingest`，或只导这个部门：
+   `curl -X POST localhost:8000/admin/api/ingest -H 'Content-Type: application/json' -d '{"dept":"<部门名>"}'`
+4. 验证隔离：`python scripts/verify_retrieval.py`
+
+也可以用管理台 `/admin` →「创建部门」→ 上传 →「增量入库」。
+
+### 12.2 新增工具（给 Agent 用）
+
+1. 在 `src/tools.py` 用 `@tool` 定义函数；需要用户/部门时用 `InjectedState` 读取，**不要让 LLM 传**
+2. 加入 `agent_tools` 列表（当前只有 `create_support_ticket`）
+3. 同步更新 `SYSTEM_PROMPT` 的第 3 条（何时调用）
+4. 跑 `pytest -q` 与 `python test_agent.py`
+
+> 检索已前置到 `call_model`，不要再把检索包装成工具——只会多一次 LLM 回路。
+
+### 12.3 重建索引
+
+```bash
+# 增量（推荐，零停机：写影子索引后切换）
+make ingest
+
+# 全量重建（先备份！）
+tar -czf milvus-backup-$(date +%F).tgz volumes/milvus volumes/etcd   # Milvus 模式
+make reset-milvus     # 或 make reset-faiss
+```
+
+- 重建期间查询照常（影子索引），`/chat` 只在提交的毫秒级窗口可能返回 503
+- 重建完成后确认：`curl localhost:8000/health` 或 `GET /info` 的 `hybrid.engine`
+
+### 12.4 切换向量后端
+
+```bash
+# 必须重新入库：FAISS 与 Milvus 是两套独立存储
+export VECTOR_STORE_TYPE=milvus     # 或 faiss
+make reset-milvus                   # 或 make reset-faiss
+make run
+```
+
+切换后确认 `GET /info` 的 `vector_store` 与 `hybrid.engine`。
+
+### 12.5 升级 Milvus
+
+```bash
+# 1) 备份数据卷
+tar -czf milvus-backup.tgz volumes/milvus volumes/etcd
+# 2) 指定新镜像启动（不支持降级）
+MILVUS_IMAGE=milvusdb/milvus:v2.5.4 docker compose up -d
+# 3) 旧集合没有稀疏字段 → 全量重建
+make reset-milvus
+# 4) 验证服务端稀疏 BM25
+VECTOR_STORE_TYPE=milvus python scripts/check_hybrid_milvus.py
+```
+
+### 12.6 回滚
+
+| 场景 | 做法 |
+|---|---|
+| 改坏了代码 | `git revert <commit>` 或 `git checkout <tag> -- .`，重跑 `make test` |
+| 索引数据损坏 | 用 12.3 的备份恢复 `volumes/`，或 `make reset-*` 重建 |
+| Milvus 升级失败 | 停容器 → 还原备份卷 → 用旧 `MILVUS_IMAGE` 启动（Milvus 不支持降级，必须还原） |
+| 误删文档 | 从 `data/` 备份恢复文件 → `make ingest` |
+
+### 12.7 备份
+
+- **数据源**：`data/`（真正的原始文件）——优先备份它
+- **索引**：`db/vector_db/`（FAISS）或 `volumes/{milvus,etcd}`（Milvus）——可重建，非必须
+- **运行状态**：`logs/ingest_jobs.json`、`logs/admin_audit.log`
+- 建议每天备份 `data/` + 每周备份一次索引卷
+
+### 12.8 多 worker / 多副本约束
+
+| 组件 | 单进程前提 | 多副本方案 |
+|---|---|---|
+| FAISS 写入 | 只允许单写者 | 换 Milvus |
+| FAQ / 向量缓存 | 进程内，各存一份 | Redis |
+| 入库任务与锁 | 进程内 | Redis/RQ 等外部队列 |
+| 限流 | 进程内滑动窗口 | Redis 计数器 |
+| `/metrics` | 各进程独立 | Prometheus 按 instance 聚合 |
+
+`uvicorn --workers N` 在 FAISS 模式下会写冲突；Milvus 模式可多 worker，但上面四项仍各进程独立。
+
+### 12.9 常见运维动作速查
+
+```bash
+make doctor                      # 体检（Python/依赖/索引/LLM）
+curl localhost:8000/health       # 存活与就绪
+curl localhost:8000/metrics      # 指标
+curl localhost:8000/admin/api/audit?limit=20   # 最近操作
+python scripts/eval_retrieval.py # 检索质量
+python scripts/verify_retrieval.py  # 部门隔离
+```

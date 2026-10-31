@@ -34,3 +34,6 @@ class ChatResponse(BaseModel):
     sources: List[Dict[str, Any]] = []
     timings: Dict[str, Any] = {}
     request_id: str = ""
+    # True when the answer came from retrieval because the LLM failed.
+    degraded: bool = False
+    degraded_reason: str = ""

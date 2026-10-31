@@ -166,6 +166,7 @@
   <div class="row">
     <textarea id="input" rows="2" placeholder="输入问题，Enter 发送 / Shift+Enter 换行"></textarea>
     <button class="primary" id="send">发送</button>
+    <button class="ghost" id="stop" hidden>停止</button>
   </div>
 
   <div class="presets">
@@ -187,9 +188,55 @@ const sendBtn = document.getElementById("send");
 const resetBtn = document.getElementById("reset");
 const deptSel = document.getElementById("dept");
 const uidInput = document.getElementById("uid");
+const stopBtn = document.getElementById("stop");
 
 let history = [];
 let busy = false;
+let abortController = null;
+
+// --- session persistence ---------------------------------------------------
+const SESSION_KEY = "agent-rag-session-v1";
+
+function saveSession() {
+  try {
+    localStorage.setItem(
+      SESSION_KEY,
+      JSON.stringify({
+        history,
+        dept: deptSel.value,
+        uid: uidInput.value,
+        transcript: Array.from(chat.children)
+          .filter((el) => el.dataset.persist !== "0")
+          .map((el) => el.outerHTML),
+      })
+    );
+  } catch (e) {
+    /* private mode / quota: persistence is best-effort */
+  }
+}
+
+function loadSession() {
+  let saved = null;
+  try {
+    saved = JSON.parse(localStorage.getItem(SESSION_KEY) || "null");
+  } catch (e) {
+    saved = null;
+  }
+  if (!saved || !Array.isArray(saved.history)) return;
+  history = saved.history;
+  if (saved.dept && [...deptSel.options].some((o) => o.value === saved.dept)) {
+    deptSel.value = saved.dept;
+  }
+  if (saved.uid) uidInput.value = saved.uid;
+  if (Array.isArray(saved.transcript)) {
+    for (const html of saved.transcript) chat.insertAdjacentHTML("beforeend", html);
+  }
+  chat.scrollTop = chat.scrollHeight;
+}
+
+function clearSession() {
+  try { localStorage.removeItem(SESSION_KEY); } catch (e) {}
+}
 
 function esc(s) {
   return s.replace(/[&<>"']/g, c => ({
@@ -220,11 +267,13 @@ function attachSources(bubble, sources) {
 
     const path = document.createElement("div");
     path.className = "srcpath";
-    path.textContent = sourceLabel(src);
+    const score = typeof src.score === "number" ? ` · ${src.score.toFixed(2)}` : "";
+    path.textContent = sourceLabel(src) + score;
     const parts = [];
     if (src.dept) parts.push(`部门：${src.dept}`);
     if (src.kind) parts.push(`类型：${src.kind}`);
     if (src.title) parts.push(src.title);
+    if (typeof src.score === "number") parts.push("相关度（相对排序）");
     path.title = parts.join("\n");
     item.appendChild(path);
 
@@ -238,6 +287,23 @@ function attachSources(bubble, sources) {
   }
   box.appendChild(list);
   bubble.appendChild(box);
+}
+
+function addCopy(bubble, text) {
+  const button = document.createElement("button");
+  button.className = "ghost";
+  button.style.marginLeft = "10px";
+  button.textContent = "复制";
+  button.onclick = async () => {
+    try {
+      await navigator.clipboard.writeText(text);
+      button.textContent = "已复制";
+      setTimeout(() => { button.textContent = "复制"; }, 1200);
+    } catch (e) {
+      button.textContent = "复制失败";
+    }
+  };
+  bubble.appendChild(button);
 }
 
 function addRetry(bubble, text) {
@@ -269,12 +335,13 @@ function attachTimings(bubble, timings) {
   const order = [
     ["total_ms", "总计"],
     ["retrieval_ms", "检索"],
+    ["rerank_ms", "重排"],
     ["llm_ms", "LLM"],
     ["overhead_ms", "框架"],
   ];
   const parts = [];
   for (const [k, label] of order) {
-    if (timings[k] !== undefined) {
+    if (timings[k] !== undefined && !(k === "rerank_ms" && !timings[k])) {
       parts.push(`<span class="chip ${k === "total_ms" ? "total" : ""}">${label} ${timings[k]}ms</span>`);
     }
   }
@@ -286,6 +353,9 @@ function attachTimings(bubble, timings) {
   }
   if (timings.cached) {
     parts.push('<span class="chip total">缓存命中</span>');
+  }
+  if (timings.degraded) {
+    parts.push('<span class="chip total">降级回答</span>');
   }
   meta.innerHTML = parts.join("");
   bubble.appendChild(meta);
@@ -318,6 +388,7 @@ async function send() {
 
   busy = true;
   sendBtn.disabled = true;
+  stopBtn.hidden = false;
   input.value = "";
   addMsg("user", text);
 
@@ -328,10 +399,12 @@ async function send() {
   let timings = null;
   let sources = [];
 
+  abortController = new AbortController();
   try {
     const resp = await fetch("/chat/stream", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
+      signal: abortController.signal,
       body: JSON.stringify({
         user_id: uidInput.value.trim() || "u1",
         user_dept: deptSel.value,
@@ -387,6 +460,12 @@ async function send() {
         } else if (ev.type === "done") {
           timings = ev.timings;
           if (ev.sources) sources = ev.sources;
+          if (ev.degraded) {
+            const warn = document.createElement("div");
+            warn.className = "msg";
+            warn.textContent = "模型服务暂时不可用，以上为知识库原文摘录。";
+            bubble.appendChild(warn);
+          }
         } else if (ev.type === "error") {
           bubble.classList.remove("streaming");
           bubble.classList.add("error");
@@ -402,23 +481,35 @@ async function send() {
     if (answer) {
       attachSources(bubble, sources);
       attachTimings(bubble, timings);
+      addCopy(bubble, answer);
       history.push({ role: "user", content: text });
       history.push({ role: "assistant", content: answer });
+      saveSession();
     } else if (!bubble.classList.contains("error")) {
       bubble.textContent = "（没有返回内容）";
     }
   } catch (e) {
     bubble.classList.remove("streaming");
-    bubble.classList.add("error");
-    bubble.textContent = "网络错误：" + e.message;
+    if (e.name === "AbortError") {
+      bubble.classList.add("error");
+      bubble.textContent = answer ? answer + "（已停止生成）" : "已停止生成。";
+    } else {
+      bubble.classList.add("error");
+      bubble.textContent = "网络错误：" + e.message;
+    }
   } finally {
     busy = false;
     sendBtn.disabled = false;
+    stopBtn.hidden = true;
+    abortController = null;
     input.focus();
   }
 }
 
 sendBtn.onclick = send;
+stopBtn.onclick = () => {
+  if (abortController) abortController.abort();
+};
 input.addEventListener("keydown", e => {
   if (e.key === "Enter" && !e.shiftKey) {
     e.preventDefault();
@@ -431,6 +522,7 @@ input.addEventListener("keydown", e => {
 function startNewSession(reason) {
   history = [];
   chat.innerHTML = "";
+  clearSession();
   addMsg("bot", reason);
   input.focus();
 }
@@ -453,9 +545,15 @@ newChatBtn.onclick = () => {
 resetBtn.onclick = () => {
   history = [];
   chat.innerHTML = "";
+  clearSession();
   addMsg("bot", "已清空当前对话。");
   input.focus();
 };
+
+// Restore the previous conversation (best-effort; ignores corrupt state).
+if (!new URLSearchParams(location.search).get("new")) {
+  loadSession();
+}
 
 document.querySelectorAll(".presets button").forEach(b => {
   b.onclick = () => {

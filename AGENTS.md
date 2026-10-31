@@ -5,7 +5,9 @@
 - **RAG Pipeline**: LangGraph $\rightarrow$ Milvus $\rightarrow$ Cross-Encoder Reranker. Answers return `sources` (`source`+`page`) built from retrieval metadata; excerpts are wrapped in `<document>` tags and treated as untrusted data.
 - **Ingestion**: multi-format (`pdf/docx/pptx/xlsx/csv/md/txt/html/json`) via `src/loaders.py`; incremental — chunks carry `dept/source/page|slide|sheet/doc_id/doc_hash/kind/chunk_index`; unchanged files skipped by hash, changed files are written first and old versions deleted afterwards (crash-safe), removed ones pruned.
 - **Zero-downtime rebuild**: `--reset` / the admin console build into a shadow index (Milvus: temp collection + alias swap; FAISS: temp dir + `os.replace`). Queries keep hitting the live index; maintenance is only set during the millisecond alias swap. `count()` is the write target, `live_count()` is what queries see.
-- **Citations**: answers include `sources` (`source` + `page`/`slide`/`sheet` + `kind`) from retrieval metadata.
+- **Citations**: answers include `sources` (`source` + `page`/`slide`/`sheet` + `kind` + `snippet` + relative `score`); same-page chunks are merged, and `score` is a rank (1.0 for the top hit), not a cross-engine comparable value.
+- **Failure fallback**: when the LLM is unreachable/timeouts *after* retrieval, the graph answers with the top excerpts (`degraded=true`, `degraded_reason=llm_unavailable`); degraded answers are never cached. Toggle with `LLM_FALLBACK_ENABLED`.
+- **CORS**: `CORS_ORIGINS` (comma-separated) enables CORS for the public endpoints; the admin API also rejects foreign `Origin` headers.
 - **Permission Model**: Department-based isolation implemented via Milvus `expr` metadata filtering (`dept == 'dept_name'`, or `dept in [...]` for multi-department users; FAISS filters after retrieval). Optional document-level ACL lives in `src/acl.py` (`ACL_ENABLED`/`ACL_FILE`, user ids or `group:xxx`), applied after retrieval for both backends. `CHAT_API_KEY` optionally gates `/chat` and `/chat/stream`. Department names are validated/escaped in `src/validation.py` before being embedded in the expression; the API returns 400 for invalid values. The department is injected into tools from `AgentState` (`InjectedState`), never supplied by the LLM.
 - **State Management**: Handled by LangGraph `AgentState`, tracking `user_id` and `user_dept` per session.
 
@@ -27,7 +29,7 @@ All commands assume the conda env `agent-rag` is active (`conda activate agent-r
 - **Loader Check**: `python scripts/check_loaders.py` (extracts every supported format in /tmp, no vector store needed).
 - **Admin Check**: `python scripts/check_admin.py` (upload→ingest→delete smoke test; server must be running).
 - **Latency Benchmark**: `python scripts/bench_retrieval.py` (embedding vs FAISS vs Milvus vs LLM). `/chat` responses include `timings` (`retrieval_ms`, `llm_ms`, `llm_calls`, `overhead_ms`, `total_ms`).
-- **Tests (offline)**: `pytest -q` runs 265 unit/API/service tests with fake embeddings and a stubbed LLM (no network, ~25s, 92% coverage). `pytest --cov=src` for coverage. Lint with `ruff check src tests main.py run_ingestion.py`.
+- **Tests (offline)**: `pytest -q` runs 287 unit/API/service tests with fake embeddings and a stubbed LLM (no network, ~25s, 92% coverage). `pytest --cov=src` for coverage. Lint with `ruff check src tests main.py run_ingestion.py`.
 - **Verification (live)**: `python test_agent.py` (requires the API server + a working LLM endpoint).
 
 ## Critical Gotchas & Setup
