@@ -31,6 +31,7 @@
 | 20 | 测试覆盖率提升（73% → 92%） | `7fcc6a2` | 完成 |
 | 21 | Makefile / doctor / 限流 / 请求超时 | `f64aa29` | 完成 |
 | 22 | Quickstart + 计划校正 | `f8aa9c4` | 完成 |
+| 23 | 收尾与明日待办 | `60cdbee` | 完成 |
 
 当前运行态：`vector_store=milvus`、`hybrid.engine=milvus`、Milvus `v2.5.4`、26 chunks / 4 部门。
 
@@ -510,6 +511,12 @@
 5. 引用合并与 score
 6. README / 运维手册 / 离线安装
 7. 规模化（按需）：FAISS 按部门索引、批量 embedding、Redis
+
+### 当日回归（16 项，全部通过）
+
+`pytest` 265、`ruff` 全绿、`doctor`（含 LLM 探针）OK、`test_agent` 20/20、`check_hybrid` 69/69、`check_health --probe` 14/14、`check_admin`、`check_loaders`、两后端隔离、评测 18/18 / MRR 0.89 / 0 泄漏、`check_hybrid_milvus` 19/19、`/health` ok。
+
+明细见 `OPTIMIZATION_PLAN.md` 10.5.1。
 
 ---
 

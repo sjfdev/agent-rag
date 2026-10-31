@@ -614,3 +614,26 @@ curl -s -X POST localhost:8000/chat -H 'Content-Type: application/json' \
   -d '{"user_id":"u1","user_dept":"Tech","message":"What is the code review process?"}' | head -c 300
 ```
 
+#### 10.5.1 基线回归结果（2026-10-31 收尾时已跑）
+
+| # | 检查 | 结果 |
+|---|---|---|
+| 1 | `pytest -q` | **265 passed**（22s） |
+| 2 | `ruff check src tests main.py run_ingestion.py scripts` | All checks passed |
+| 3 | `scripts/doctor.py --no-llm` | OK（Python 3.11.13、12 包、NumPy 1.26.4、数据目录 4 部门、索引 26 chunks） |
+| 4 | `scripts/doctor.py`（含 LLM 探针） | OK（glm-4-flash 可达） |
+| 5 | `/chat` 正常问答 | 200，3 条来源带 snippet，llm_calls=1 |
+| 6 | `test_agent.py` | 20/20 |
+| 7 | `check_hybrid.py` | 69/69 |
+| 8 | `check_health.py --probe` | 14/14 |
+| 9 | `check_admin.py` | 通过 |
+| 10 | `check_loaders.py` | 通过 |
+| 11 | `verify_retrieval.py`（milvus） | isolation holds |
+| 12 | `verify_retrieval.py`（faiss） | isolation holds |
+| 13 | `eval_retrieval.py`（milvus） | hit@4 18/18、MRR 0.89、leaks 0、P50 20ms |
+| 14 | `eval_retrieval.py`（faiss） | hit@4 18/18、MRR 0.89、leaks 0、P50 13ms |
+| 15 | `check_hybrid_milvus.py` | 19/19 |
+| 16 | `/health` | `ok`、26 chunks、`hybrid=milvus`、`maintenance=false` |
+
+说明：`doctor.py` 读取 `.env`（`VECTOR_STORE_TYPE=faiss`），而当前服务是用环境变量覆盖为 `milvus`，所以 doctor 显示 faiss / local hybrid 属正常；第 5 项的 503 降级用例要等 10.1.1 实现后再补。
+
