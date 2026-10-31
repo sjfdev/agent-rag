@@ -677,7 +677,9 @@ curl -s -X POST localhost:8000/chat -H 'Content-Type: application/json' \
 - [x] 管理台：`admin: true` 的 token 可访问 `/admin/api`；`ADMIN_TOKEN` 保留应急后门；非管理员 403、无 token 401
 - [x] `scripts/mint_token.py` 签发/自测；`/chat` 与 `/chat/stream` 均已验证
 - [x] 验收（实测）：无 token 401；body 伪造 `Finance` 仍只能拿到 Tech 来源；跨部门缓存不共享；非管理员管理接口 403；`AUTH_MODE=none` 完全兼容（缺 `user_id` 时 400）
-- [ ] 接入具体 IdP（Keycloak/企业微信/飞书）：本实现是网关/IdP 签发 HS256 token 的接入点；如需 JWKS/RS256，替换 `decode_token`
+- [x] 接入具体 IdP：`AUTH_JWKS_URL` / `AUTH_JWKS_FILE` 用公钥校验（RS/ES），支持 `kid` 轮换与缓存；`AUTH_CLAIM_*`、`AUTH_ADMIN_ROLE`、`AUTH_ROLE_DEPT_PREFIX` 适配 Keycloak 等原生 claim
+- [x] 无账号验证：`scripts/check_oidc.py --self-test`（自签 RS256 走完整链路，5 项）；`--issuer/--jwks` 探测真实 IdP（已用 Microsoft common 端点验证）
+- [ ] 在真实租户上完成一次登录（需要 IdP 管理员创建 client 与角色）
 - [x] 管理台前端登录页：`/admin/api/session` 探测身份；JWT/管理令牌二选一登录；右上角显示身份与退出；401 自动回登录框；审计 actor 改为 `user:<sub>`
 
 #### 11.1.2 多租户（做 SaaS 才需要）

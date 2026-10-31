@@ -91,6 +91,24 @@ class Settings(BaseSettings):
     AUTH_JWT_AUDIENCE: str = ""
     # Lifetime of tokens minted by scripts/mint_token.py (seconds).
     AUTH_TOKEN_TTL: int = 43200
+    # OIDC / JWKS verification (Keycloak, Auth0, Entra ID, Feishu OIDC, ...).
+    # When either is set, tokens are verified with the provider's public keys
+    # instead of the shared secret; AUTH_JWT_SECRET is then only used by
+    # scripts/mint_token.py for local testing.
+    AUTH_JWKS_URL: str = ""
+    AUTH_JWKS_FILE: str = ""
+    AUTH_JWKS_CACHE_SECONDS: int = 300
+    # Algorithms accepted when verifying with a JWKS.
+    AUTH_JWT_ALGORITHMS: str = "RS256,RS384,RS512,ES256,ES384,ES512"
+    # Claim paths (dotted, e.g. "realm_access.roles") for identity data.
+    AUTH_CLAIM_DEPTS: str = "depts"
+    AUTH_CLAIM_GROUPS: str = "groups"
+    AUTH_CLAIM_ADMIN: str = "admin"
+    AUTH_CLAIM_ROLES: str = "roles"
+    # Role conventions: a role named AUTH_ADMIN_ROLE grants admin; roles with
+    # the AUTH_ROLE_DEPT_PREFIX (e.g. "kb:dept:Tech") add that department.
+    AUTH_ADMIN_ROLE: str = ""
+    AUTH_ROLE_DEPT_PREFIX: str = ""
     # Per-caller rate limit for /chat and /chat/stream (0 disables).
     # Requests are counted per user_id (or client IP when absent) in a sliding
     # window; with several workers each process enforces its own limit.

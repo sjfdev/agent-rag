@@ -8,15 +8,25 @@ Two modes, selected by `AUTH_MODE`:
   still contain user fields for older clients, but they are **ignored** — the
   token is the only source of `user_id`, departments, groups and admin rights.
 
-Tokens are verified locally with a shared secret (HS256), so any gateway or
-identity provider that can sign a JWT can be used without extra dependencies.
-`scripts/mint_token.py` issues tokens for operations and local testing.
+Two verification backends:
+
+- shared secret (HS256) — the default, used by `scripts/mint_token.py`, a
+  gateway, or any service that can sign a token;
+- a JWKS (Keycloak, Auth0, Entra ID, Feishu/OIDC, ...) — set
+  ``AUTH_JWKS_URL`` or ``AUTH_JWKS_FILE`` and tokens are verified with the
+  provider's public keys. Keys are cached and refreshed on unknown `kid`.
+
+Which claims carry the user, departments, groups and the admin flag is
+configurable (`AUTH_CLAIM_*`, `AUTH_ADMIN_ROLE`, `AUTH_ROLE_DEPT_PREFIX`), so a
+provider's native token can often be used without rewriting it.
 """
 
+import json
 import logging
+import threading
 import time
 from dataclasses import dataclass
-from typing import Any, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import jwt
 
@@ -27,6 +37,91 @@ logger = logging.getLogger("agent-rag.auth")
 
 class AuthError(Exception):
     """Raised when a token is missing, malformed, expired or wrongly signed."""
+
+
+# --- JWKS handling ---------------------------------------------------------
+_jwks_lock = threading.Lock()
+_jwks_cache: Dict[str, Any] = {"keys": None, "fetched": 0.0, "url": ""}
+
+
+def _jwks_configured() -> bool:
+    return bool((settings.AUTH_JWKS_URL or "").strip() or (settings.AUTH_JWKS_FILE or "").strip())
+
+
+def _fetch_jwks() -> Dict[str, Any]:
+    """Fetch the key set from the URL or file, with a short cache."""
+    url = (settings.AUTH_JWKS_URL or "").strip()
+    path = (settings.AUTH_JWKS_FILE or "").strip()
+    now = time.monotonic()
+    with _jwks_lock:
+        fresh = (
+            _jwks_cache["keys"] is not None
+            and now - _jwks_cache["fetched"] < settings.AUTH_JWKS_CACHE_SECONDS
+            and _jwks_cache["url"] == (url or path)
+        )
+        if fresh:
+            return _jwks_cache["keys"]
+
+    if path:
+        with open(path, "r", encoding="utf-8") as handle:
+            keys = json.load(handle)
+    else:
+        import requests
+
+        response = requests.get(url, timeout=5)
+        response.raise_for_status()
+        keys = response.json()
+
+    with _jwks_lock:
+        _jwks_cache["keys"] = keys
+        _jwks_cache["fetched"] = time.monotonic()
+        _jwks_cache["url"] = url or path
+    return keys
+
+
+def _signing_key(token: str):
+    """Resolve the verification key for a token (single key or a key set)."""
+    try:
+        header = jwt.get_unverified_header(token)
+    except Exception as exc:
+        raise AuthError(f"malformed token header: {exc}") from exc
+    kid = header.get("kid")
+    keys = _fetch_jwks().get("keys", [])
+    if not keys:
+        raise AuthError("JWKS contains no keys")
+    if kid:
+        for key in keys:
+            if key.get("kid") == kid:
+                return jwt.PyJWK(key).key
+        # A rotated key: refresh once so a new kid does not lock users out.
+        with _jwks_lock:
+            _jwks_cache["fetched"] = 0.0
+        keys = _fetch_jwks().get("keys", [])
+        for key in keys:
+            if key.get("kid") == kid:
+                return jwt.PyJWK(key).key
+        raise AuthError(f"no signing key for kid={kid}")
+    if len(keys) == 1:
+        return jwt.PyJWK(keys[0]).key
+    raise AuthError("token has no kid but the JWKS has multiple keys")
+
+
+def clear_jwks_cache() -> None:
+    """Force the next verification to refetch keys (tests / key rotation)."""
+    with _jwks_lock:
+        _jwks_cache.update({"keys": None, "fetched": 0.0, "url": ""})
+
+
+def _claim(claims: Dict[str, Any], path: str) -> Any:
+    """Read a potentially dotted claim (`realm_access.roles`)."""
+    if not path:
+        return None
+    current: Any = claims
+    for part in path.split("."):
+        if not isinstance(current, dict) or part not in current:
+            return None
+        current = current[part]
+    return current
 
 
 @dataclass(frozen=True)
@@ -52,10 +147,12 @@ def validate_config() -> None:
     """Fail fast on an insecure configuration (called at startup)."""
     if not auth_enabled():
         return
+    if _jwks_configured():
+        return
     secret = (settings.AUTH_JWT_SECRET or "").strip()
     if len(secret) < 32:
         raise RuntimeError(
-            "AUTH_MODE=jwt requires AUTH_JWT_SECRET with at least 32 characters"
+            "AUTH_MODE=jwt requires AUTH_JWT_SECRET (>=32 chars) or AUTH_JWKS_URL/FILE"
         )
 
 
@@ -88,13 +185,23 @@ def decode_token(token: str, *, now: Optional[float] = None) -> Identity:
     if not token:
         raise AuthError("missing token")
     options = {"require": ["exp", "sub"]}
-    kwargs: dict = {"algorithms": [settings.AUTH_JWT_ALGORITHM], "options": options}
+    algorithms = (
+        [item.strip() for item in settings.AUTH_JWT_ALGORITHMS.split(",") if item.strip()]
+        if _jwks_configured()
+        else [settings.AUTH_JWT_ALGORITHM]
+    )
+    kwargs: dict = {"algorithms": algorithms, "options": options}
     if settings.AUTH_JWT_ISSUER:
         kwargs["issuer"] = settings.AUTH_JWT_ISSUER
     if settings.AUTH_JWT_AUDIENCE:
         kwargs["audience"] = settings.AUTH_JWT_AUDIENCE
     try:
-        claims = jwt.decode(token, _secret(), **kwargs)
+        if _jwks_configured():
+            claims = jwt.decode(token, _signing_key(token), **kwargs)
+        else:
+            claims = jwt.decode(token, _secret(), **kwargs)
+    except AuthError:
+        raise
     except Exception as exc:
         raise AuthError(str(exc)) from exc
 
@@ -105,11 +212,25 @@ def decode_token(token: str, *, now: Optional[float] = None) -> Identity:
     if not user_id:
         raise AuthError("token has no subject")
 
+    roles = _clean_list(_claim(claims, settings.AUTH_CLAIM_ROLES))
+    departments = _clean_list(_claim(claims, settings.AUTH_CLAIM_DEPTS))
+    if settings.AUTH_ROLE_DEPT_PREFIX:
+        prefix = settings.AUTH_ROLE_DEPT_PREFIX
+        departments = tuple(
+            dict.fromkeys(
+                list(departments)
+                + [role[len(prefix):] for role in roles if role.startswith(prefix)]
+            )
+        )
+    admin = bool(_claim(claims, settings.AUTH_CLAIM_ADMIN))
+    if settings.AUTH_ADMIN_ROLE:
+        admin = admin or settings.AUTH_ADMIN_ROLE in roles
+
     return Identity(
         user_id=user_id,
-        departments=_clean_list(claims.get("depts")),
-        groups=_clean_list(claims.get("groups")),
-        is_admin=bool(claims.get("admin")),
+        departments=departments,
+        groups=_clean_list(_claim(claims, settings.AUTH_CLAIM_GROUPS)),
+        is_admin=admin,
     )
 
 

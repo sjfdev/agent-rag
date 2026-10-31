@@ -41,7 +41,8 @@
 | 30 | 产品化交付（Docker / 生产 compose / 路线图） | `63378ca` | 完成 |
 | 31 | 待办收敛到第 11 节 | `97769f5` | 完成 |
 | 32 | JWT 登录与身份来源（11.1.1） | `98c3cef` | 完成 |
-| 33 | 管理台登录页与身份展示 | 本轮 | 完成 |
+| 33 | 管理台登录页与身份展示 | `56d0732` | 完成 |
+| 34 | OIDC/JWKS 接入（无账号验证） | 本轮 | 完成 |
 
 当前运行态：`vector_store=milvus`、`hybrid.engine=milvus`、Milvus `v2.5.4`、26 chunks / 4 部门。
 
@@ -695,6 +696,32 @@ ResolutionImpossible
 - 右上角显示「用户 · 部门 · 管理员」和「退出」；任意接口 401 会自动回登录框并清空凭据
 - 审计 `actor` 改为 `user:<sub>`（token）或 `token:break-glass`（静态令牌）
 - `tests/test_admin_session.py`（7 项）覆盖 none/jwt/非管理员/break-glass/坏 token/审计 actor
+
+### OIDC / JWKS 接入
+
+现在有两种校验后端：
+
+| 方式 | 配置 | 适用 |
+|---|---|---|
+| 共享密钥 HS256 | `AUTH_JWT_SECRET` | 网关代理、脚本签发、内部服务 |
+| 公钥 JWKS | `AUTH_JWKS_URL` 或 `AUTH_JWKS_FILE` | Keycloak / Auth0 / Entra ID / 飞书 OIDC |
+
+JWKS 细节：
+
+- 按 `kid` 选公钥，未知 `kid` 自动刷新一次（密钥轮换不会锁死用户）
+- 公钥缓存 `AUTH_JWKS_CACHE_SECONDS`（默认 300s），失败时**拒绝**而不是放行
+- 接受 RS256/384/512、ES256/384/512；拒绝 `alg=none` 与 HS 混淆
+- claim 映射可配置：`AUTH_CLAIM_ROLES`（支持 `realm_access.roles` 点号路径）、`AUTH_ADMIN_ROLE`、`AUTH_ROLE_DEPT_PREFIX`（`kb:dept:Tech` → 部门 Tech）
+
+无账号验证：
+
+```
+python scripts/check_oidc.py --self-test     # 5/5：校验、角色→管理员、角色→部门、伪造 token 拒绝
+python scripts/check_oidc.py --issuer https://login.microsoftonline.com/common/v2.0
+                                              # 3/3：JWKS 可达、密钥列表、发现文档
+```
+
+本地真实链路：用临时 RSA 私钥签 RS256 token、JWKS 指向本地文件启动服务，`/admin/api/session` 返回 `is_admin=true, depts=["Tech"]`，`/admin/api/meta` 200，`/chat` 正常，篡改 token 401。验证后已清理临时文件并恢复 `AUTH_MODE=none`。
 
 ---
 

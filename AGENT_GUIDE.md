@@ -368,6 +368,44 @@ curl -H "Authorization: Bearer <token>" -X POST localhost:8000/chat \
 - `AUTH_JWT_SECRET` 少于 32 字符时服务**拒绝启动**（避免弱密钥）
 - 集成 OIDC 时，让网关把 IdP 的 token 换成这里约定的 HS256 token，或把 `decode_token` 换成 JWKS 校验
 
+### 4.4.4 接入 OIDC（Keycloak / 企业微信 / 飞书 / Entra ID）
+
+不需要真实账号也能先跑通链路：
+
+```bash
+# 1) 离线自检：临时生成 RSA 密钥 + JWKS，验证校验/角色映射逻辑
+python scripts/check_oidc.py --self-test
+
+# 2) 检查真实 IdP 是否可达、公钥与发现文档是否正常（无需登录）
+python scripts/check_oidc.py --issuer https://login.microsoftonline.com/<tenant>/v2.0
+python scripts/check_oidc.py --jwks https://idp.example.com/realms/kb/protocol/openid-connect/certs
+```
+
+确认后配置：
+
+```bash
+AUTH_MODE=jwt
+AUTH_JWKS_URL=https://idp.example.com/realms/kb/protocol/openid-connect/certs
+AUTH_JWT_ISSUER=https://idp.example.com/realms/kb
+AUTH_JWT_AUDIENCE=agent-rag                 # 你的 client id
+AUTH_CLAIM_ROLES=realm_access.roles         # Keycloak
+AUTH_ADMIN_ROLE=kb-admin
+AUTH_ROLE_DEPT_PREFIX=kb:dept:             # 角色 kb:dept:Tech → 部门 Tech
+```
+
+各 IdP 的差异：
+
+| IdP | 用户 | 部门/组 | 管理员 |
+|---|---|---|---|
+| Keycloak | `sub` | `realm_access.roles` 里的 `kb:dept:*` | `kb-admin` 角色 |
+| Auth0 | `sub` | 自定义 claim 或 `permissions` | 角色或 permission |
+| Entra ID | `oid`/`sub` | `groups`（对象 id，需映射） | app role |
+| 飞书 / 企微 | `open_id`/`userid` | 自定义 claim（需网关补充） | 自定义 claim |
+
+大多数情况下不用改代码，只改 `AUTH_CLAIM_*` / `AUTH_ADMIN_ROLE` / `AUTH_ROLE_DEPT_PREFIX`。如果 IdP 只给对象 id（Entra `groups`）或中文名（企微部门），建议在网关把 claim 映射成 `depts`，或扩展 `src/auth.py` 的 claim 解析。
+
+**没有账号时如何验证**：`--self-test` 会自签一个 RS256 token 走完整链路（JWKS → kid 选择 → 签名校验 → 角色映射 → 部门解析 → 伪造 token 拒绝），5 项全过即说明配置与代码正常；接入真实 IdP 后只需替换 `AUTH_JWKS_URL`。
+
 ### 4.5.0 常用命令（Makefile）
 
 ```bash
@@ -701,6 +739,16 @@ python run_ingestion.py --no-prune # 不清理已删除文件
 | `AUTH_JWT_ISSUER` | 空 | 非空时校验 `iss` |
 | `AUTH_JWT_AUDIENCE` | 空 | 非空时校验 `aud` |
 | `AUTH_TOKEN_TTL` | `43200` | 签发脚本给出的默认有效期（秒） |
+| `AUTH_JWKS_URL` | 空 | OIDC 公钥地址；设置后改用 RS/ES 公钥校验 |
+| `AUTH_JWKS_FILE` | 空 | 本地 JWKS 文件（内网/离线） |
+| `AUTH_JWKS_CACHE_SECONDS` | `300` | 公钥缓存时间，遇到未知 `kid` 会自动刷新 |
+| `AUTH_JWT_ALGORITHMS` | `RS256,...` | JWKS 模式下接受的算法 |
+| `AUTH_CLAIM_DEPTS` | `depts` | 部门 claim（支持点号路径） |
+| `AUTH_CLAIM_GROUPS` | `groups` | ACL 组 claim |
+| `AUTH_CLAIM_ADMIN` | `admin` | 管理员布尔 claim |
+| `AUTH_CLAIM_ROLES` | `roles` | 角色数组 claim（Keycloak 常用 `realm_access.roles`） |
+| `AUTH_ADMIN_ROLE` | 空 | 拥有该角色即视为管理员 |
+| `AUTH_ROLE_DEPT_PREFIX` | 空 | 角色前缀映射部门，如 `kb:dept:` |
 | `CHAT_API_KEY` | 空 | 非空时 `/chat` 需要 `X-API-Key` 或 Bearer（jwt 模式下忽略） |
 | `RATE_LIMIT_PER_MINUTE` | `0` | 每调用方每分钟请求上限（0 关闭），超限 429 |
 | `CHAT_TIMEOUT` | `120` | 单次问答整体时限（秒），超时 504 `timeout` |
