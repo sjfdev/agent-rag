@@ -469,6 +469,8 @@ ResolutionImpossible
 
 **本地复现**：新建干净 venv → 按 CI 步骤安装 → `ruff` 全绿、`pytest` **287 passed**、覆盖率 92%。
 
+**线上确认**：推送 `5799504` 后 run **#11 全部步骤成功**（装依赖 → ruff → pytest → 上传覆盖率）。
+
 ---
 
 ## 6. Milvus 升级（2.4.0 → 2.5.4）

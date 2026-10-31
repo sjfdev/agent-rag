@@ -544,7 +544,7 @@ VECTOR_STORE_TYPE=faiss  python scripts/eval_retrieval.py
 - [x] 第二个问题：`tests/test_reranker_runtime.py` 直接 `import sentence_transformers`，而 CI 不装 torch，即使依赖修好也会 4 个用例失败
 - [x] 修复：CI 改为 `pip install -r requirements-test.txt`（本地已验证的同一套 pin）；reranker 测试改为注入假的 `sentence_transformers` 模块
 - [x] 本地无网复现：用干净 venv 按 CI 步骤安装 → `ruff` 全绿、`pytest` **287 passed**、覆盖率 92%
-- [ ] 推送后确认 GitHub Actions 变绿（下一次 run）
+- [x] 推送后确认：run #11（`5799504`）**全部步骤成功**（装依赖 → ruff → pytest → 上传覆盖率）
 
 ### 10.2 P2 体验（预计 3 小时）
 
