@@ -678,7 +678,7 @@ curl -s -X POST localhost:8000/chat -H 'Content-Type: application/json' \
 - [x] `scripts/mint_token.py` 签发/自测；`/chat` 与 `/chat/stream` 均已验证
 - [x] 验收（实测）：无 token 401；body 伪造 `Finance` 仍只能拿到 Tech 来源；跨部门缓存不共享；非管理员管理接口 403；`AUTH_MODE=none` 完全兼容（缺 `user_id` 时 400）
 - [ ] 接入具体 IdP（Keycloak/企业微信/飞书）：本实现是网关/IdP 签发 HS256 token 的接入点；如需 JWKS/RS256，替换 `decode_token`
-- [ ] 管理台前端登录页（当前用 `X-Admin-Token` 或直接带 Bearer）
+- [x] 管理台前端登录页：`/admin/api/session` 探测身份；JWT/管理令牌二选一登录；右上角显示身份与退出；401 自动回登录框；审计 actor 改为 `user:<sub>`
 
 #### 11.1.2 多租户（做 SaaS 才需要）
 - [ ] chunk 增加 `tenant` 元数据；检索表达式 `tenant == 'x' and dept in [...]`

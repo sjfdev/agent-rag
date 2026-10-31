@@ -660,7 +660,9 @@ python run_ingestion.py --no-prune # 不清理已删除文件
 安全：
 
 - 未设置 `ADMIN_TOKEN` 时，管理 API 仅接受**本机回环**（127.0.0.1/::1），局域网访问返回 403
-- 设置后所有请求需带 `X-Admin-Token`（管理台右上角可保存到 sessionStorage）
+- 管理台首次打开会显示登录框：粘贴 **Bearer token**（`AUTH_MODE=jwt`，需 `admin: true`）或 **管理令牌**（`ADMIN_TOKEN`），凭据只存在当前标签页的 `sessionStorage`
+- 右上角显示当前身份（用户/部门/管理员）与「退出」按钮；任一请求返回 401 会自动回到登录框
+- 也可以直接调用 API：`Authorization: Bearer <token>` 或 `X-Admin-Token: <token>`
 - 上传会做扩展名白名单、大小限制、文件名与子目录净化；`../` 会被拒绝或剥离
 - 删除/重建会修改知识库，生产环境请配合反向代理鉴权与备份
 

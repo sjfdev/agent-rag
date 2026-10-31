@@ -87,6 +87,56 @@ router = APIRouter(
     prefix="/admin/api", tags=["admin"], dependencies=[Depends(require_admin)]
 )
 
+# The session probe has its own auth handling: it must answer 401 vs 403
+# precisely so the console can tell "no token" from "token but not an admin".
+session_router = APIRouter(prefix="/admin/api", tags=["admin"])
+
+
+@session_router.get("/session")
+def session_info(request: Request):
+    if not auth.auth_enabled():
+        return {
+            "auth_mode": "none",
+            "authenticated": True,
+            "is_admin": True,
+            "user_id": None,
+            "depts": [],
+            "groups": [],
+            "source": "none",
+        }
+
+    # Break-glass static token is accepted regardless of the bearer token.
+    token = settings.ADMIN_TOKEN
+    provided = request.headers.get("X-Admin-Token", "")
+    if token and secrets.compare_digest(provided, token):
+        return {
+            "auth_mode": "jwt",
+            "authenticated": True,
+            "is_admin": True,
+            "user_id": "admin-token",
+            "depts": [],
+            "groups": [],
+            "source": "admin_token",
+        }
+
+    try:
+        identity = auth.identity_from_headers(request.headers)
+    except auth.AuthError:
+        raise HTTPException(
+            status_code=401,
+            detail="invalid or missing token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return {
+        "auth_mode": "jwt",
+        "authenticated": True,
+        "is_admin": identity.is_admin,
+        "user_id": identity.user_id,
+        "depts": list(identity.departments),
+        "groups": list(identity.groups),
+        "source": "token",
+    }
+
 
 def _data_root() -> Path:
     return Path(settings.DATA_DIR)
@@ -225,7 +275,20 @@ def job_snapshot() -> Optional[Dict[str, Any]]:
 
 
 def _actor(request: Request) -> str:
-    return audit.actor_label(bool(settings.ADMIN_TOKEN), request.client.host if request.client else "")
+    """Who performed the action: the token subject when available, else host."""
+    if auth.auth_enabled():
+        try:
+            identity = auth.identity_from_headers(request.headers)
+        except auth.AuthError:
+            identity = None
+        if identity is not None:
+            return f"user:{identity.user_id}"
+        provided = request.headers.get("X-Admin-Token", "")
+        if settings.ADMIN_TOKEN and secrets.compare_digest(provided, settings.ADMIN_TOKEN):
+            return "token:break-glass"
+    return audit.actor_label(
+        bool(settings.ADMIN_TOKEN), request.client.host if request.client else ""
+    )
 
 
 def _run_job(job_id: str, dept: Optional[str], reset: bool) -> None:

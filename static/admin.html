@@ -83,6 +83,22 @@
   #jobStatus { margin-left: 6px; font-size: 12px; }
   .tokenRow { display: flex; gap: 8px; align-items: center; margin-top: 8px; }
   .tokenRow input { flex: 1; min-width: 180px; }
+  .identity { display: flex; gap: 8px; align-items: center; font-size: 12px; color: var(--muted); }
+  .identity b { color: var(--text); font-weight: 500; }
+  .gate {
+    position: fixed; inset: 0; z-index: 50; display: flex; align-items: center; justify-content: center;
+    background: rgba(7, 9, 13, .82); backdrop-filter: blur(3px); padding: 20px;
+  }
+  .gate[hidden] { display: none; }
+  .gateCard {
+    width: min(460px, 100%); background: var(--panel); border: 1px solid #232833;
+    border-radius: 12px; padding: 20px; display: grid; gap: 12px;
+  }
+  .gateCard h1 { font-size: 16px; margin: 0; }
+  .gateCard p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.6; }
+  .gateCard input { width: 100%; }
+  .gateFoot { display: flex; gap: 8px; align-items: center; justify-content: space-between; }
+  .gateErr { color: var(--bad); font-size: 12px; min-height: 16px; }
   .hint { font-size: 12px; color: var(--muted); }
   .dangerZone { border-color: #3a2529; }
 </style>
@@ -94,11 +110,29 @@
     <span>后端 <b id="store">-</b></span>
     <span>模型 <b id="model">-</b></span>
     <span>上传上限 <b id="maxMb">-</b></span>
+    <span class="identity" id="identity" hidden></span>
+    <button id="logout" class="tiny" hidden>退出</button>
     <a href="/ui/">返回对话</a>
   </div>
 </header>
 
-<main>
+<div class="gate" id="gate" hidden>
+  <form class="gateCard" id="loginForm">
+    <h1>登录知识库管理</h1>
+    <p id="gateHint">
+      粘贴管理员 Bearer token（JWT），或填写管理令牌（ADMIN_TOKEN）。
+      令牌只保存在当前标签页的 sessionStorage 中。
+    </p>
+    <input id="credential" type="password" placeholder="Bearer token 或管理令牌" autocomplete="off">
+    <div class="gateErr" id="gateErr"></div>
+    <div class="gateFoot">
+      <span class="hint">JWT 需带 <code>admin: true</code></span>
+      <button type="submit" class="primary" id="loginBtn">登录</button>
+    </div>
+  </form>
+</div>
+
+<main id="console" hidden>
   <section class="card">
     <h2>部门</h2>
     <div class="row">
@@ -108,11 +142,6 @@
       <button id="createDept">创建部门</button>
     </div>
     <div class="stats" id="stats"></div>
-    <div class="tokenRow">
-      <input id="token" type="password" placeholder="管理令牌（设置 ADMIN_TOKEN 后必填）">
-      <button id="saveToken" class="tiny">保存令牌</button>
-      <span class="hint">未设置 ADMIN_TOKEN 时仅本机可访问，可留空</span>
-    </div>
   </section>
 
   <section class="card">
@@ -170,17 +199,31 @@ const $ = (id) => document.getElementById(id);
 const deptSel = $("dept");
 const fileBody = $("fileBody");
 
-let token = sessionStorage.getItem("adminToken") || "";
+// The credential can be either a JWT bearer token (AUTH_MODE=jwt) or the
+// legacy ADMIN_TOKEN. It is stored per browser tab, never in a cookie.
+const TOKEN_KEY = "adminToken";
+const BEARER_KEY = "adminBearer";
+let token = sessionStorage.getItem(TOKEN_KEY) || "";
+let bearer = sessionStorage.getItem(BEARER_KEY) || "";
+let session = null;
 let currentDept = "";
 let jobId = null;
 let pollTimer = null;
 let pendingFiles = [];
 
-$("token").value = token;
+function authHeaders() {
+  const headers = {};
+  if (bearer) headers["Authorization"] = "Bearer " + bearer;
+  if (token) headers["X-Admin-Token"] = token;
+  return headers;
+}
+
+function hasCredential() {
+  return Boolean(bearer || token);
+}
 
 async function api(path, options = {}) {
-  const headers = Object.assign({}, options.headers || {});
-  if (token) headers["X-Admin-Token"] = token;
+  const headers = Object.assign(authHeaders(), options.headers || {});
   const res = await fetch(path, Object.assign({}, options, { headers }));
   const type = res.headers.get("content-type") || "";
   const data = type.includes("application/json") ? await res.json() : await res.text();
@@ -189,7 +232,15 @@ async function api(path, options = {}) {
     if (data && data.detail !== undefined) {
       detail = typeof data.detail === "string" ? data.detail : JSON.stringify(data.detail);
     }
-    throw new Error(detail);
+    const error = new Error(detail);
+    error.status = res.status;
+    // Any 401 means the credential is gone or rotated: return to the gate
+    // instead of leaving every panel showing "加载失败".
+    if (res.status === 401 && path !== "/admin/api/session") {
+      clearCredential();
+      showGate("登录已失效，请重新登录。");
+    }
+    throw error;
   }
   return data;
 }
@@ -218,6 +269,114 @@ function badge(status) {
   span.className = "badge b-" + status;
   span.textContent = STATUS_LABEL[status] || status;
   return span;
+}
+
+function showGate(message) {
+  $("gate").hidden = false;
+  $("console").hidden = true;
+  $("identity").hidden = true;
+  $("logout").hidden = true;
+  if (message) $("gateErr").textContent = message;
+}
+
+function hideGate() {
+  $("gate").hidden = true;
+  $("console").hidden = false;
+}
+
+function renderIdentity(info) {
+  session = info;
+  const el = $("identity");
+  if (!info || info.auth_mode === "none") {
+    el.hidden = true;
+    $("logout").hidden = true;
+    return;
+  }
+  const parts = [];
+  if (info.user_id) parts.push("用户 <b>" + info.user_id + "</b>");
+  if (info.depts && info.depts.length) parts.push("部门 <b>" + info.depts.join(", ") + "</b>");
+  if (info.source === "admin_token") parts.push("管理令牌");
+  if (info.is_admin) parts.push("管理员");
+  el.innerHTML = parts.join(" · ");
+  el.hidden = false;
+  $("logout").hidden = false;
+}
+
+// Ask the server who we are. 401 = need a credential; 403 = authenticated but
+// not an admin; 200 = enter the console.
+async function resolveSession() {
+  if (!hasCredential()) {
+    // In AUTH_MODE=none the server answers without any credential.
+    try {
+      const info = await api("/admin/api/session");
+      renderIdentity(info);
+      if (!info || info.auth_mode !== "none") {
+        showGate();
+        return false;
+      }
+      hideGate();
+      return true;
+    } catch (error) {
+      showGate();
+      return false;
+    }
+  }
+
+  try {
+    const info = await api("/admin/api/session");
+    renderIdentity(info);
+    if (!info.is_admin) {
+      showGate("该账号没有管理权限（token 需要 admin: true）。");
+      return false;
+    }
+    hideGate();
+    return true;
+  } catch (error) {
+    if (error.status === 401) {
+      clearCredential();
+      showGate("登录已失效，请重新登录。");
+    } else if (error.status === 403) {
+      showGate("该账号没有管理权限（token 需要 admin: true）。");
+    } else {
+      showGate("无法连接管理接口：" + error.message);
+    }
+    return false;
+  }
+}
+
+function clearCredential() {
+  bearer = "";
+  token = "";
+  sessionStorage.removeItem(TOKEN_KEY);
+  sessionStorage.removeItem(BEARER_KEY);
+  renderIdentity(null);
+}
+
+function looksLikeJwt(value) {
+  // Three dot-separated segments; avoids treating a short admin token as JWT.
+  return value.split(".").length === 3 && value.length > 40;
+}
+
+async function login(raw) {
+  const value = (raw || "").trim();
+  if (!value) {
+    $("gateErr").textContent = "请输入 token 或管理令牌。";
+    return false;
+  }
+  if (looksLikeJwt(value)) {
+    bearer = value;
+    token = "";
+  } else {
+    token = value;
+    bearer = "";
+  }
+  const ok = await resolveSession();
+  if (!ok) return false;
+  sessionStorage.setItem(TOKEN_KEY, token);
+  sessionStorage.setItem(BEARER_KEY, bearer);
+  $("credential").value = "";
+  await refreshAll();
+  return true;
 }
 
 async function loadMeta() {
@@ -518,13 +677,6 @@ $("createDept").onclick = async () => {
   }
 };
 
-$("saveToken").onclick = () => {
-  token = $("token").value.trim();
-  sessionStorage.setItem("adminToken", token);
-  setMsg($("uploadMsg"), token ? "令牌已保存" : "令牌已清空", "ok");
-  refreshAll();
-};
-
 $("upload").onclick = upload;
 
 $("file").onchange = () => {
@@ -570,7 +722,42 @@ drop.addEventListener("drop", (e) => {
   showPending();
 });
 
-refreshAll();
+$("loginForm").onsubmit = async (event) => {
+  event.preventDefault();
+  $("gateErr").textContent = "";
+  const btn = $("loginBtn");
+  btn.disabled = true;
+  try {
+    await login($("credential").value);
+  } finally {
+    btn.disabled = false;
+  }
+};
+
+$("logout").onclick = () => {
+  clearCredential();
+  stopPolling();
+  $("credential").value = "";
+  showGate();
+};
+
+// A 401 from any call means the credential expired/rotated: return to the gate.
+async function guarded(fn) {
+  try {
+    return await fn();
+  } catch (error) {
+    if (error.status === 401) {
+      clearCredential();
+      showGate("登录已失效，请重新登录。");
+    }
+    throw error;
+  }
+}
+
+(async function boot() {
+  const authed = await resolveSession();
+  if (authed) await refreshAll();
+})();
 </script>
 </body>
 </html>

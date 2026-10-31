@@ -40,7 +40,8 @@
 | 29 | 多轮上下文修复 + bench 重排对比 | `332567e` | 完成 |
 | 30 | 产品化交付（Docker / 生产 compose / 路线图） | `63378ca` | 完成 |
 | 31 | 待办收敛到第 11 节 | `97769f5` | 完成 |
-| 32 | JWT 登录与身份来源（11.1.1） | 本轮 | 完成 |
+| 32 | JWT 登录与身份来源（11.1.1） | `98c3cef` | 完成 |
+| 33 | 管理台登录页与身份展示 | 本轮 | 完成 |
 
 当前运行态：`vector_store=milvus`、`hybrid.engine=milvus`、Milvus `v2.5.4`、26 chunks / 4 部门。
 
@@ -686,6 +687,14 @@ ResolutionImpossible
 - alice/bob 同问题各自缓存（`cache_scope` 相同部门时共享，跨部门不共享）
 - admin token `/admin/api/meta` 200；普通 token 403；无 token 401
 - `/chat/stream` 带 token 正常 SSE
+
+### 管理台登录页
+
+- 新增 `GET /admin/api/session`：`none` 模式返回免登录；jwt 模式无凭据 401、普通 token 返回 `is_admin=false`（前端据此提示 403），管理令牌返回 `source=admin_token`
+- 管理台首次访问显示登录遮罩：JWT（按三段式识别）或管理令牌；凭据只存 `sessionStorage`
+- 右上角显示「用户 · 部门 · 管理员」和「退出」；任意接口 401 会自动回登录框并清空凭据
+- 审计 `actor` 改为 `user:<sub>`（token）或 `token:break-glass`（静态令牌）
+- `tests/test_admin_session.py`（7 项）覆盖 none/jwt/非管理员/break-glass/坏 token/审计 actor
 
 ---
 

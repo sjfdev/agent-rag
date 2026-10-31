@@ -17,6 +17,7 @@ from fastapi.staticfiles import StaticFiles
 from src import auth, chat_service, metrics
 from src.admin_api import _job_store
 from src.admin_api import router as admin_router
+from src.admin_api import session_router as admin_session_router
 from src.config import settings
 from src.engine import kb_engine
 from src.health import router as health_router
@@ -71,6 +72,7 @@ async def _invalid_department_handler(request: Request, exc: InvalidDepartment):
     )
 
 
+app.include_router(admin_session_router)
 app.include_router(admin_router)
 app.include_router(health_router)
 
