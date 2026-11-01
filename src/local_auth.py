@@ -248,7 +248,7 @@ def validate_username(username: str) -> str:
 
 def _clean_depts(depts: Any) -> List[str]:
     if depts is None:
-        return []
+        depts = []
     if isinstance(depts, str):
         depts = [depts]
     if not isinstance(depts, (list, tuple)):
@@ -263,7 +263,16 @@ def _clean_depts(depts: Any) -> List[str]:
             cleaned.append(validate_dept(str(dept).strip()))
         except InvalidDepartment as exc:
             raise LocalAuthError(f"invalid department: {dept}") from exc
-    return list(dict.fromkeys(cleaned))
+    cleaned = list(dict.fromkeys(cleaned))
+    if not cleaned and not (settings.AUTH_DEFAULT_DEPTS or "").strip():
+        # A token with no departments is rejected by /chat with a confusing
+        # "invalid department name". Catch it when the account is created or
+        # changed instead, so the operator fixes it here.
+        raise LocalAuthError(
+            "at least one department is required "
+            "(or set AUTH_DEFAULT_DEPTS to grant one to every account)"
+        )
+    return cleaned
 
 
 def _clean_groups(groups: Any) -> List[str]:

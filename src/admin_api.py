@@ -249,6 +249,8 @@ class IngestRequest(BaseModel):
 class UserCreateRequest(BaseModel):
     username: str = Field(min_length=1, max_length=64)
     password: str = Field(min_length=1, max_length=256)
+    # Required unless AUTH_DEFAULT_DEPTS supplies one; enforced in local_auth so
+    # both the API and the CLI share the rule.
     depts: List[str] = Field(default_factory=list, max_length=20)
     groups: List[str] = Field(default_factory=list, max_length=50)
     admin: bool = False
@@ -775,7 +777,13 @@ def delete_user(username: str, request: Request):
     record = local_auth.get_user(username)
     if record is None:
         raise HTTPException(status_code=404, detail="user not found")
-    if record.get("admin") and local_auth.admin_count() <= 1:
+    # Only an *enabled* admin counts towards the guard: deleting an already
+    # disabled one cannot lock anybody out.
+    if (
+        record.get("admin")
+        and not record.get("disabled")
+        and local_auth.admin_count() <= 1
+    ):
         raise HTTPException(
             status_code=409, detail="the last enabled administrator cannot be deleted"
         )

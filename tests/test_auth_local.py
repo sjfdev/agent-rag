@@ -603,3 +603,85 @@ def test_invalid_update_does_not_rotate_the_password(client, admin_headers):
     assert client.post(
         "/auth/login", json={"username": "bob", "password": "bob-password-2"}
     ).status_code == 401
+
+
+# --- departments are mandatory --------------------------------------------
+
+
+def test_create_user_requires_a_department(users_file):
+    with pytest.raises(local_auth.LocalAuthError, match="at least one department"):
+        local_auth.create_user("nodept", PASSWORD, depts=[])
+    with pytest.raises(local_auth.LocalAuthError, match="at least one department"):
+        local_auth.create_user("nodept", PASSWORD)
+    assert local_auth.list_users() == []
+
+
+def test_create_user_allows_empty_depts_with_default(users_file, monkeypatch):
+    monkeypatch.setattr(settings, "AUTH_DEFAULT_DEPTS", "Tech")
+    try:
+        created = local_auth.create_user("nodept", PASSWORD, depts=[])
+        assert created["depts"] == []
+    finally:
+        monkeypatch.setattr(settings, "AUTH_DEFAULT_DEPTS", "")
+
+
+def test_update_user_cannot_clear_all_departments(users_file):
+    local_auth.create_user("alice", PASSWORD, depts=["Tech"])
+    with pytest.raises(local_auth.LocalAuthError, match="at least one department"):
+        local_auth.update_user("alice", depts=[])
+    # The rejected update must not have been applied.
+    assert local_auth.get_user_public("alice")["depts"] == ["Tech"]
+
+
+def test_admin_api_rejects_a_user_without_departments(client, admin_headers):
+    resp = client.post(
+        "/admin/api/users",
+        headers=admin_headers,
+        json={"username": "nodept", "password": "nodept-password-1", "depts": []},
+    )
+    assert resp.status_code == 400
+    assert "at least one department" in resp.json()["detail"]
+
+
+def test_chat_reports_a_missing_department_distinctly(client):
+    """A token with no dept gets a clear error instead of 'invalid department'."""
+    from src import auth
+
+    token = auth.encode_token(
+        auth.Identity("nodept", (), (), False, token_version=None)
+    )
+    resp = client.post(
+        "/chat",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"message": "hi"},
+    )
+    assert resp.status_code == 400
+    detail = resp.json()["detail"]
+    assert detail["error"] == "missing_department"
+    assert "AUTH_DEFAULT_DEPTS" in detail["message"]
+
+
+def test_chat_still_reports_malformed_department(client):
+    from src import auth
+
+    token = auth.encode_token(auth.Identity("bad", ("bad dept",), (), False))
+    resp = client.post(
+        "/chat",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"message": "hi"},
+    )
+    assert resp.status_code == 400
+    assert resp.json()["detail"] == "invalid department name"
+
+
+def test_disabled_admin_can_be_deleted(client, admin_headers):
+    """A disabled admin is not the last enabled one, so deletion must work."""
+    client.post(
+        "/admin/api/users",
+        headers=admin_headers,
+        json={"username": "temp", "password": "temp-password-1", "depts": ["HR"], "admin": True},
+    )
+    client.patch("/admin/api/users/temp", headers=admin_headers, json={"disabled": True})
+    resp = client.delete("/admin/api/users/temp", headers=admin_headers)
+    assert resp.status_code == 200
+    assert resp.json()["deleted"] is True

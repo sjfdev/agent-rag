@@ -209,7 +209,7 @@
     <div class="row userRow">
       <input id="newUser" type="text" placeholder="用户名" maxlength="64" autocomplete="off">
       <input id="newPass" type="password" placeholder="密码（≥10 位）" maxlength="256" autocomplete="new-password">
-      <input id="newDepts" type="text" placeholder="部门，逗号分隔，如 Tech,HR" maxlength="200">
+      <input id="newDepts" type="text" placeholder="部门（必填），逗号分隔，如 Tech,HR" maxlength="200">
       <input id="newGroups" type="text" placeholder="组（可选）" maxlength="200">
       <label class="roleFlag"><input id="newAdmin" type="checkbox"> 管理员</label>
       <button id="createUser" class="primary">创建账号</button>
@@ -241,6 +241,18 @@
   <section class="card" id="jobCard" hidden>
     <h2>任务<span id="jobStatus"></span></h2>
     <pre id="jobLog"></pre>
+  </section>
+
+  <section class="card">
+    <h2>操作审计<span class="sub">最近 20 条</span></h2>
+    <table>
+      <thead>
+        <tr>
+          <th>时间</th><th>操作</th><th>操作者</th><th>对象</th><th>结果</th>
+        </tr>
+      </thead>
+      <tbody id="auditBody"></tbody>
+    </table>
   </section>
 </main>
 
@@ -805,8 +817,16 @@ async function deleteUser(username) {
 async function createUser() {
   const username = $("newUser").value.trim();
   const password = $("newPass").value;
+  const depts = splitList($("newDepts").value);
   if (!username || !password) {
     setMsg($("userMsg"), "请填写用户名和密码。", "error");
+    return;
+  }
+  if (!depts.length) {
+    // A token without departments cannot retrieve anything; the server rejects
+    // it too, but catching it here keeps the message next to the field.
+    setMsg($("userMsg"), "请至少填写一个部门（账号权限由部门决定）。", "error");
+    $("newDepts").focus();
     return;
   }
   try {
@@ -816,7 +836,7 @@ async function createUser() {
       body: JSON.stringify({
         username,
         password,
-        depts: splitList($("newDepts").value),
+        depts,
         groups: splitList($("newGroups").value),
         admin: $("newAdmin").checked,
       }),

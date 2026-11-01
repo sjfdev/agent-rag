@@ -208,7 +208,11 @@ def cmd_delete(args) -> int:
     if record is None:
         print(f"error: user {args.username!r} does not exist", file=sys.stderr)
         return 1
-    if record.get("admin") and local_auth.admin_count() <= 1:
+    if (
+        record.get("admin")
+        and not record.get("disabled")
+        and local_auth.admin_count() <= 1
+    ):
         print(
             "error: the last enabled administrator cannot be deleted",
             file=sys.stderr,

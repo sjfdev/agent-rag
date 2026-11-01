@@ -537,7 +537,10 @@ async function send() {
         bubble.textContent = errorMessage(code || "upstream_unavailable", detail && detail.request_id);
         addRetry(bubble, text);
       } else if (resp.status === 400) {
-        bubble.textContent = "部门名称不合法。";
+        bubble.textContent =
+          code === "missing_department"
+            ? "当前账号没有分配部门，无法检索。请联系管理员在「账号」里补上部门。"
+            : "部门名称不合法。";
       } else if (resp.status === 422) {
         bubble.textContent = "请求内容过长或历史消息过多，请点击「清空当前」后重试。";
       } else if (resp.status === 429) {

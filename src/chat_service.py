@@ -221,6 +221,20 @@ def prepare(
             status="rejected",
             elapsed_seconds=time.perf_counter() - started,
         )
+        # Distinguish "this identity has no department at all" (a provisioning
+        # problem: the account/token carries none) from a malformed value.
+        if not requested_depts:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": "missing_department",
+                    "message": (
+                        "the identity has no department; add one to the account "
+                        "or set AUTH_DEFAULT_DEPTS"
+                    ),
+                },
+                headers={"X-Request-ID": request_id},
+            )
         raise HTTPException(
             status_code=400,
             detail="invalid department name",

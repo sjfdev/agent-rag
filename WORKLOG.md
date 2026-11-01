@@ -47,6 +47,7 @@
 | 36 | 本地账号登录（scrypt + CLI + 管理台，不接 IdP） | 本轮 | 完成 |
 | 37 | 部署加固：ACL fail-closed + 账号库持久化 | 本轮 | 完成 |
 | 38 | 发布流程：版本号 / CHANGELOG / 发布闸门 | 本轮 | 完成 |
+| 39 | 手工测试修复：无部门账号 / 400 文案 / 审计表 | 本轮 | 完成 |
 
 当前运行态：`vector_store=milvus`、`hybrid.engine=milvus`、Milvus `v2.5.4`、26 chunks / 4 部门。
 
@@ -590,7 +591,7 @@ ResolutionImpossible
 | 检查 | 结果 |
 |---|---|
 | `python test_agent.py` | 20/20 通过（需服务 + LLM，含缓存断言） |
-| `pytest -q`（离线，含 CI） | 454/454，约 30s；覆盖率 92% |
+| `pytest -q`（离线，含 CI） | 461/461，约 30s；覆盖率 92% |
 | `ruff check src tests main.py run_ingestion.py` | 全绿 |
 | `python scripts/check_hybrid.py` | 69/69 |
 | `python scripts/check_hybrid_milvus.py` | 19/19（2.5+），低版本 SKIP |
@@ -765,7 +766,7 @@ python scripts/check_oidc.py --issuer https://login.microsoftonline.com/common/v
   - `Dockerfile` 增加 `/app/config`；`docker-compose.prod.yml` 挂 `./config:/app/config`（读写，因为运行时要写 users.json）并显式设 `AUTH_USERS_FILE`
 - `config/acl.json` 加入 `.gitignore`；`config/acl.example.json` 保持提交
 - `scripts/doctor.py` 新增 `Local accounts` 检查：启用但没有账号、或没有可用管理员时 FAIL
-- 测试：`tests/test_acl.py` 覆盖文件缺失/非法 JSON/非对象/规则值类型错误全部 fail-closed 以及修复后自动恢复；`tests/test_health.py` 覆盖 `/health` 的 acl 字段、不可用时 503、启动拒绝；`tests/test_doctor.py` 覆盖两项新检查。全套 **454 passed**，`ruff` 通过
+- 测试：`tests/test_acl.py` 覆盖文件缺失/非法 JSON/非对象/规则值类型错误全部 fail-closed 以及修复后自动恢复；`tests/test_health.py` 覆盖 `/health` 的 acl 字段、不可用时 503、启动拒绝；`tests/test_doctor.py` 覆盖两项新检查。全套 **461 passed**，`ruff` 通过
 
 ### 发布流程（11.1.3）
 
@@ -780,6 +781,16 @@ python scripts/check_oidc.py --issuer https://login.microsoftonline.com/common/v
   APP_TAG=v1.0.0 docker compose -f docker-compose.prod.yml build
   ```
 - 测试：`tests/test_release.py`（8 项）覆盖 semver 格式、CHANGELOG 中存在该版本号、缺失版本号能被识别、compose 使用 `APP_TAG`、脏工作区/标签不匹配会失败
+
+### 手工测试发现的三处问题
+
+按真实用户路径点了一遍管理台「账号」卡片（建号 → 勾管理员 → 改密码 → 停用 → 删除），发现三个问题：
+
+- **能建出没有部门的账号**：UI 和 API 都允许 `depts: []`，账号能登录，但 `/chat` 返回 `400 invalid department name` —— 文案完全误导（部门名没写错，是根本没有部门）。现在 `local_auth._clean_depts` 在创建/修改时直接拒绝（除非设置了 `AUTH_DEFAULT_DEPTS`），管理台也在提交前提示「请至少填写一个部门」；`/chat` 新增 `missing_department` 错误码，`/ui/` 显示「当前账号没有分配部门，请联系管理员补上」
+- **审计表根本不存在**：`renderAudit()` 一直在找 `#auditBody`，但 HTML 里从来没有这个表格（从 `63067f0` 起就缺失），所以管理操作一条都看不到。已补上「操作审计」卡片（时间/操作/操作者/对象/结果）
+- **停用的管理员无法删除**：`delete_user` 用 `admin_count()`（只统计启用中的管理员）判断，但条件却是"只要目标是 admin"，于是「唯一启用管理员之外的那个已停用管理员」也删不掉，返回 409。已改成只在目标**是启用中的管理员**且没有其他启用管理员时才拒绝；CLI 同步修正
+
+测试：新增 6 项（无部门被拒 / 有 `AUTH_DEFAULT_DEPTS` 时放行 / 清空部门被拒且不落盘 / API 400 / `missing_department` 与 `invalid department name` 区分 / 已停用管理员可删除），全套 **461 passed**，`ruff` 通过。
 
 ---
 
