@@ -663,7 +663,7 @@ curl -s -X POST localhost:8000/chat -H 'Content-Type: application/json' \
 
 ## 11. 后续待办（按优先级，2026-11-01 之后）
 
-> 当前基线：**468 项测试、92% 覆盖率、CI 全绿**；`milvus 2.5.4 + 服务端稀疏 BM25`；28 chunks；`/health=ok`。
+> 当前基线：**485 项测试、92% 覆盖率、CI 全绿**；`milvus 2.5.4 + 服务端稀疏 BM25`；28 chunks；`/health=ok`。
 > 容器化交付已完成（`Dockerfile` / `docker-compose.prod.yml` / `PRODUCTIZATION.md`）。
 > 下面按「对外发布必须先做 → 产品化 → 规模化」排序，每项都有落点与验收方式。
 
@@ -723,7 +723,7 @@ curl -s -X POST localhost:8000/chat -H 'Content-Type: application/json' \
 - [ ] 只对成功完成的 LLM 调用计费（失败/降级不计）
 
 #### 11.2.3 前端产品化
-- [ ] Markdown 渲染（安全子集：粗体/列表/代码块，禁 HTML）
+- [x] Markdown 渲染（安全子集：粗体/斜体/列表/表格/代码块/引用/链接，禁 HTML）：`static/markdown.js` 先转义再产标签，链接仅放行 `http(s)`/`mailto`，`javascript:`/`data:`/相对路径保持为纯文本；流式期间仍用纯文本，结束后一次性渲染；`tests/test_markdown_js.py`（17 项）用 Node 断言转义与链接白名单
 - [ ] 服务端会话列表与历史（配合 11.2.4）
 - [ ] 引用点击预览原文；移动端适配
 

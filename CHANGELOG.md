@@ -33,8 +33,13 @@ API surface below is what operators can rely on.
   answers from the top excerpts (`degraded=true`) and never caches it.
 - **Retrieval evaluation**: `scripts/eval_retrieval.py` reports hit@k, MRR and
   cross-department leakage from `eval/cases.jsonl`.
+- **Safe Markdown replies** in the chat UI (`static/markdown.js`): bold/italic,
+  inline and fenced code, tables, lists, quotes and links, rendered from an
+  escaped allowlist so model output can never inject HTML; raw HTML is shown as
+  text and only `http(s)`/`mailto` links become clickable.
 - **Admin console** `/admin`: upload, list, delete, incremental/full ingestion,
-  background jobs persisted to disk, audit log, upload quotas.
+  background jobs persisted to disk, audit log, upload quotas, account card for
+  local users.
 - **Authentication** `AUTH_MODE=none|jwt`: the bearer token is the only source of
   user/departments/groups/admin; body identity is ignored, the cache scope is
   derived from the token, and a secret shorter than 32 characters refuses
