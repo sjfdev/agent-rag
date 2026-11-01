@@ -94,6 +94,20 @@ def main() -> int:
     else:
         check("Data directory", FAIL, f"{data_dir} does not exist")
 
+    from src.health import storage_report
+
+    storage = storage_report()
+    disk_detail = (
+        f"{storage['free_mb']} MB free at {storage['path']} "
+        f"(min {storage['min_free_mb']} MB)"
+    )
+    if storage["ok"]:
+        check("Disk space", OK, disk_detail)
+    else:
+        # A full disk does not fail queries; it silently breaks ingestion, and
+        # Milvus caches the first ENOSPC until restarted. Catch it here.
+        check("Disk space", FAIL, disk_detail)
+
     # --- access control ---------------------------------------------------
     from src import acl, local_auth
 

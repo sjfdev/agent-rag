@@ -593,7 +593,7 @@ ResolutionImpossible
 | 检查 | 结果 |
 |---|---|
 | `python test_agent.py` | 20/20 通过（需服务 + LLM，含缓存断言） |
-| `pytest -q`（离线，含 CI） | 485/485，约 30s；覆盖率 92% |
+| `pytest -q`（离线，含 CI） | 490/490，约 30s；覆盖率 92% |
 | `ruff check src tests main.py run_ingestion.py` | 全绿 |
 | `python scripts/check_hybrid.py` | 69/69 |
 | `python scripts/check_hybrid_milvus.py` | 19/19（2.5+），低版本 SKIP |
@@ -768,7 +768,7 @@ python scripts/check_oidc.py --issuer https://login.microsoftonline.com/common/v
   - `Dockerfile` 增加 `/app/config`；`docker-compose.prod.yml` 挂 `./config:/app/config`（读写，因为运行时要写 users.json）并显式设 `AUTH_USERS_FILE`
 - `config/acl.json` 加入 `.gitignore`；`config/acl.example.json` 保持提交
 - `scripts/doctor.py` 新增 `Local accounts` 检查：启用但没有账号、或没有可用管理员时 FAIL
-- 测试：`tests/test_acl.py` 覆盖文件缺失/非法 JSON/非对象/规则值类型错误全部 fail-closed 以及修复后自动恢复；`tests/test_health.py` 覆盖 `/health` 的 acl 字段、不可用时 503、启动拒绝；`tests/test_doctor.py` 覆盖两项新检查。全套 **485 passed**，`ruff` 通过
+- 测试：`tests/test_acl.py` 覆盖文件缺失/非法 JSON/非对象/规则值类型错误全部 fail-closed 以及修复后自动恢复；`tests/test_health.py` 覆盖 `/health` 的 acl 字段、不可用时 503、启动拒绝；`tests/test_doctor.py` 覆盖两项新检查。全套 **490 passed**，`ruff` 通过
 
 ### 发布流程（11.1.3）
 
@@ -792,7 +792,7 @@ python scripts/check_oidc.py --issuer https://login.microsoftonline.com/common/v
 - **审计表根本不存在**：`renderAudit()` 一直在找 `#auditBody`，但 HTML 里从来没有这个表格（从 `63067f0` 起就缺失），所以管理操作一条都看不到。已补上「操作审计」卡片（时间/操作/操作者/对象/结果）
 - **停用的管理员无法删除**：`delete_user` 用 `admin_count()`（只统计启用中的管理员）判断，但条件却是"只要目标是 admin"，于是「唯一启用管理员之外的那个已停用管理员」也删不掉，返回 409。已改成只在目标**是启用中的管理员**且没有其他启用管理员时才拒绝；CLI 同步修正
 
-测试：新增 6 项（无部门被拒 / 有 `AUTH_DEFAULT_DEPTS` 时放行 / 清空部门被拒且不落盘 / API 400 / `missing_department` 与 `invalid department name` 区分 / 已停用管理员可删除），全套 **485 passed**，`ruff` 通过。
+测试：新增 6 项（无部门被拒 / 有 `AUTH_DEFAULT_DEPTS` 时放行 / 清空部门被拒且不落盘 / API 400 / `missing_department` 与 `invalid department name` 区分 / 已停用管理员可删除），全套 **490 passed**，`ruff` 通过。
 
 ### Milvus 卡死不再拖垮控制台
 
@@ -808,7 +808,7 @@ python scripts/check_oidc.py --issuer https://login.microsoftonline.com/common/v
 
 实测（磁盘释放出 9.5G 后）：`/admin/api/meta` 79ms、`/admin/api/files` 16ms、`/admin/api/audit` 13ms、`/admin/api/users` 10ms，全部 200。
 
-测试：新增 7 项（多页分页、行数上限、超时参数透传、`doc_summary` 失败抛出、`/meta` 与 `/files` 的 503、`/health` 在 `live_count` 抛错时 down），全套 **485 passed**，`ruff` 通过。
+测试：新增 7 项（多页分页、行数上限、超时参数透传、`doc_summary` 失败抛出、`/meta` 与 `/files` 的 503、`/health` 在 `live_count` 抛错时 down），全套 **490 passed**，`ruff` 通过。
 
 ### 聊天页安全 Markdown 渲染（11.2.3）
 
@@ -836,7 +836,7 @@ python scripts/check_oidc.py --issuer https://login.microsoftonline.com/common/v
 安全验证（`tests/test_markdown_js.py`，17 项，Node 驱动）：
 `<script>` / `<img onerror>` 转义、`javascript:`/`data:`/`vbscript:`/`//evil` 不生成 `<a>`、链接 label 也转义、代码块内不解析 Markdown、嵌套强调、标题降级、不重复转义。
 
-实测：带表格的回答渲染成 `<table>` + `<strong>`，`R&D` 正确变成 `R&amp;D`。全套 **485 passed**，`ruff` 通过。
+实测：带表格的回答渲染成 `<table>` + `<strong>`，`R&D` 正确变成 `R&amp;D`。全套 **490 passed**，`ruff` 通过。
 
 ---
 

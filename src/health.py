@@ -6,9 +6,11 @@ completion endpoint; successful probes are cached for a few seconds so a
 frequent monitor does not spend tokens on every request.
 """
 
+import shutil
 import threading
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Dict
 
 from fastapi import APIRouter, Query
@@ -61,6 +63,52 @@ def _probe_llm() -> Dict[str, Any]:
         _probe_cache["at"] = time.monotonic()
         _probe_cache["result"] = dict(result)
     return result
+
+
+_DISK_PATHS = (
+    ("data", "DATA_DIR"),
+    ("index", "DB_PATH"),
+    ("jobs", "JOBS_PATH"),
+    ("audit", "AUDIT_LOG_PATH"),
+)
+
+
+def _free_mb(path: str) -> float | None:
+    """Free space for `path`, falling back to its nearest existing ancestor."""
+    probe = Path(path)
+    while not probe.exists() and probe != probe.parent:
+        probe = probe.parent
+    try:
+        return round(shutil.disk_usage(probe).free / (1024 * 1024), 1)
+    except OSError:
+        return None
+
+
+def storage_report() -> Dict[str, Any]:
+    """Flag the directories this process writes to when they run low.
+
+    A full disk does not fail queries, so /health used to stay green while
+    ingestion silently broke. Milvus is worse: the first ENOSPC is cached in
+    RocksDB, so writes keep failing after space is freed until the server is
+    restarted. Reporting the tightest directory makes that state visible.
+    """
+    limiting = None
+    paths: list[Dict[str, Any]] = []
+    for label, attr in _DISK_PATHS:
+        free = _free_mb(getattr(settings, attr))
+        paths.append({"name": label, "path": getattr(settings, attr), "free_mb": free})
+        if free is not None and (limiting is None or free < limiting["free_mb"]):
+            limiting = paths[-1]
+
+    min_free = settings.HEALTH_MIN_FREE_MB
+    ok = limiting is None or min_free <= 0 or limiting["free_mb"] >= min_free
+    return {
+        "ok": ok,
+        "min_free_mb": min_free,
+        "free_mb": None if limiting is None else limiting["free_mb"],
+        "path": None if limiting is None else limiting["path"],
+        "paths": paths,
+    }
 
 
 @router.get("/health")
@@ -120,6 +168,11 @@ def health(probe: bool = Query(False, description="also call the LLM endpoint"))
         if result["status"] != "ok":
             degraded = True
     checks["llm"] = llm
+
+    storage = storage_report()
+    checks["storage"] = storage
+    if not storage["ok"]:
+        degraded = True
 
     from src import acl
 

@@ -30,7 +30,7 @@
 | 缓存 | FAQ 答案缓存（4ms 命中）+ 查询向量缓存 |
 | 治理 | `/health`、Prometheus `/metrics`、操作审计、任务持久化、限流、请求超时 |
 | 安全 | 部门名校验、JWT 登录（`AUTH_MODE=jwt`）或可选 API Key、OIDC 浏览器登录、管理台令牌或仅回环 |
-| 质量保障 | 485 项离线测试、92% 覆盖率、ruff、GitHub Actions |
+| 质量保障 | 490 项离线测试、92% 覆盖率、ruff、GitHub Actions |
 
 ## 快速开始
 

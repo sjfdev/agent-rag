@@ -663,7 +663,7 @@ curl -s -X POST localhost:8000/chat -H 'Content-Type: application/json' \
 
 ## 11. 后续待办（按优先级，2026-11-01 之后）
 
-> 当前基线：**485 项测试、92% 覆盖率、CI 全绿**；`milvus 2.5.4 + 服务端稀疏 BM25`；28 chunks；`/health=ok`。
+> 当前基线：**490 项测试、92% 覆盖率、CI 全绿**；`milvus 2.5.4 + 服务端稀疏 BM25`；28 chunks；`/health=ok`。
 > 容器化交付已完成（`Dockerfile` / `docker-compose.prod.yml` / `PRODUCTIZATION.md`）。
 > 下面按「对外发布必须先做 → 产品化 → 规模化」排序，每项都有落点与验收方式。
 
@@ -709,6 +709,7 @@ curl -s -X POST localhost:8000/chat -H 'Content-Type: application/json' \
 - [x] `config/acl.json` 加入 `.gitignore`（真实规则可能含人名/文档路径），示例仍为 `config/acl.example.json`
 - [x] `scripts/doctor.py` 增加 `Local accounts` 检查（启用但无账号 / 无可用管理员 → FAIL）
 - [ ] 备份 `config/`（账号库与 ACL）纳入例行流程——见 11.1.4
+- [x] **磁盘余量哨兵**：`/health` 增加 `storage` 块（`DATA_DIR`/`DB_PATH`/任务与审计日志取最小余量，低于 `HEALTH_MIN_FREE_MB` → `degraded`），`scripts/doctor.py` 增加 `Disk space` 检查。起因：磁盘写满时 `/health` 全程 `ok`，Milvus 把首次 ENOSPC 缓存进 RocksDB，释放空间后仍拒绝写入，必须重启容器才恢复（实测 `docker restart milvus-standalone` 后 19/19 hybrid 检查通过）
 
 ### 11.2 P1 产品化与稳定性
 

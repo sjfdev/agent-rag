@@ -54,6 +54,11 @@ class Settings(BaseSettings):
     # /health reports "down" when fewer chunks than this are indexed, which
     # makes a load balancer stop routing to an empty instance.
     HEALTH_MIN_CHUNKS: int = 1
+    # /health reports "degraded" when any directory the app writes to has less
+    # free space than this. A full disk does not break queries immediately: it
+    # breaks writes (ingestion, job state), and Milvus turns the first ENOSPC
+    # into a sticky RocksDB error that survives freeing space until a restart.
+    HEALTH_MIN_FREE_MB: int = 512
     # Hybrid retrieval: fuse vector and BM25 results with reciprocal rank
     # fusion before optional reranking.
     HYBRID_ENABLED: bool = True

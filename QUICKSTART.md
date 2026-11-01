@@ -78,5 +78,7 @@ Milvus 2.5+ 会自动启用服务端稀疏 BM25；用 `GET /info` 的 `hybrid.en
 | `/chat` 返回 429 `rate_limited` | 触发了 `RATE_LIMIT_PER_MINUTE`，看 `Retry-After` |
 | 检索不到刚上传的文件 | 上传后需要点「增量入库」或 `make ingest` |
 | 切换后端后检索为空 | 新后端尚未入库，执行对应的 `reset-*` |
+| `/health` 显示 `storage.ok=false` | 磁盘余量低于 `HEALTH_MIN_FREE_MB`（默认 512MB）。清理后重启服务；Milvus 还必须 `docker restart milvus-standalone`，否则 RocksDB 会一直用缓存里的 ENOSPC 拒绝写入 |
+| Milvus 建集合失败 `No space left on device`，但 `df -h` 还有空间 | 磁盘曾经写满过。RocksDB 把第一次 ENOSPC 固化成后台错误，释放空间后仍然失败，重启容器才能清除：`docker restart milvus-standalone` |
 
 更多见 `AGENT_GUIDE.md`、`WORKLOG.md`、`OPTIMIZATION_PLAN.md`。

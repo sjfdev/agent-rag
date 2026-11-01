@@ -199,3 +199,57 @@ def test_health_reports_a_stalled_store(client, monkeypatch):
     assert body["status"] == "down"
     assert body["vector_store"]["ok"] is False
     assert body["vector_store"]["error"] == "RuntimeError"
+
+
+def test_health_reports_storage(client):
+    _seed(count=1)
+    body = client.get("/health").json()
+    storage = body["storage"]
+    assert storage["ok"] is True
+    assert storage["min_free_mb"] == settings.HEALTH_MIN_FREE_MB
+    assert {p["name"] for p in storage["paths"]} == {"data", "index", "jobs", "audit"}
+    assert body["status"] in {"ok", "degraded"}
+
+
+def test_low_disk_degrades_health(client, monkeypatch):
+    """A full disk breaks writes, not queries, so /health must say degraded."""
+
+    class _Usage:
+        free = 10 * 1024 * 1024  # 10 MB, below the 512 MB floor
+
+    monkeypatch.setattr(health.shutil, "disk_usage", lambda _path: _Usage)
+    _seed(count=1)
+    resp = client.get("/health")
+    body = resp.json()
+    assert resp.status_code == 200
+    assert body["status"] == "degraded"
+    assert body["storage"]["ok"] is False
+    assert body["storage"]["free_mb"] == 10.0
+
+
+def test_storage_picks_the_tightest_directory(client, monkeypatch):
+    sizes = {"data": 900, "db": 20, "logs": 400}
+
+    def fake_free(path):
+        for name, value in sizes.items():
+            if name in str(path):
+                return float(value)
+        return 1000.0
+
+    monkeypatch.setattr(health, "_free_mb", fake_free)
+    report = health.storage_report()
+    assert report["free_mb"] == 20.0
+    assert "db" in report["path"]
+
+
+def test_storage_threshold_can_be_disabled(client, monkeypatch):
+    monkeypatch.setattr(settings, "HEALTH_MIN_FREE_MB", 0)
+    monkeypatch.setattr(health, "_free_mb", lambda _path: 1.0)
+    assert health.storage_report()["ok"] is True
+
+
+def test_storage_tolerates_unreadable_paths(client, monkeypatch):
+    monkeypatch.setattr(health, "_free_mb", lambda _path: None)
+    report = health.storage_report()
+    assert report["ok"] is True
+    assert report["free_mb"] is None

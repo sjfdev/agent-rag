@@ -10,6 +10,16 @@ three agree before you push a tag.
 
 ## [Unreleased]
 
+### Added
+
+- **Disk headroom in `/health` and `doctor`**: every directory the app writes to
+  (`DATA_DIR`, `DB_PATH`, the job and audit logs) is checked against
+  `HEALTH_MIN_FREE_MB` (default 512). A full disk never fails queries, so the
+  endpoint stayed green while ingestion broke; Milvus is worse because it caches
+  the first ENOSPC in RocksDB and keeps refusing writes after space is freed
+  until the container is restarted. `/health` now returns `degraded` with a
+  `storage` block, and `scripts/doctor.py` fails with the tightest path.
+
 ## [1.0.0] - 2026-11-01
 
 First version cut from a green CI run and a repeatable release checklist. The
