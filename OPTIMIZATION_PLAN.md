@@ -681,6 +681,8 @@ curl -s -X POST localhost:8000/chat -H 'Content-Type: application/json' \
 - [x] 无账号验证：`scripts/check_oidc.py --self-test`（自签 RS256 走完整链路，5 项）；`--issuer/--jwks` 探测真实 IdP（已用 Microsoft common 端点验证）
 - [ ] 在真实租户上完成一次登录（需要 IdP 管理员创建 client 与角色）
 - [x] 管理台前端登录页：`/admin/api/session` 探测身份；JWT/管理令牌二选一登录；右上角显示身份与退出；401 自动回登录框；审计 actor 改为 `user:<sub>`
+- [x] 离线登录（不接 IdP）：`AUTH_LOCAL_LOGIN_ENABLED` + `src/local_auth.py`（`hashlib.scrypt`，无新依赖），`POST /auth/login` 签普通 bearer token，token 带 `ver` 支持禁用/改密即时吊销；`scripts/manage_users.py` CLI 与管理台「账号」卡片均可建号；登录按 IP 限流并写审计；`/ui/` 补登录框与 `Authorization` 头（此前 jwt 模式下必然 401）；`tests/test_auth_local.py`（55 项）
+- [x] 浏览器 OIDC 登录：`/auth/login`（HMAC 签名 `state`）→ `/auth/callback`（code 换 token，校验 `id_token`）→ `/admin#token=...`；JWKS 模式复用 provider `id_token`，共享密钥模式重新签发；管理台读取 fragment 后立即清理地址栏，`next` 只接受站内路径；`/info.oidc_login` 控制 SSO 按钮，`tests/test_auth_oidc.py` 覆盖状态篡改、跨站 `next`、脚本转义、token 交换失败
 
 #### 11.1.2 多租户（做 SaaS 才需要）
 - [ ] chunk 增加 `tenant` 元数据；检索表达式 `tenant == 'x' and dept in [...]`

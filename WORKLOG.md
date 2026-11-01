@@ -43,6 +43,8 @@
 | 32 | JWT 登录与身份来源（11.1.1） | `98c3cef` | 完成 |
 | 33 | 管理台登录页与身份展示 | `56d0732` | 完成 |
 | 34 | OIDC/JWKS 接入（无账号验证） | 本轮 | 完成 |
+| 35 | 浏览器 OIDC 登录（`/auth/login` → `/auth/callback`） | 本轮 | 完成 |
+| 36 | 本地账号登录（scrypt + CLI + 管理台，不接 IdP） | 本轮 | 完成 |
 
 当前运行态：`vector_store=milvus`、`hybrid.engine=milvus`、Milvus `v2.5.4`、26 chunks / 4 部门。
 
@@ -586,7 +588,7 @@ ResolutionImpossible
 | 检查 | 结果 |
 |---|---|
 | `python test_agent.py` | 20/20 通过（需服务 + LLM，含缓存断言） |
-| `pytest -q`（离线，含 CI） | 309/309，约 24s；覆盖率 92% |
+| `pytest -q`（离线，含 CI） | 432/432，约 35s；覆盖率 92% |
 | `ruff check src tests main.py run_ingestion.py` | 全绿 |
 | `python scripts/check_hybrid.py` | 69/69 |
 | `python scripts/check_hybrid_milvus.py` | 19/19（2.5+），低版本 SKIP |
@@ -722,6 +724,32 @@ python scripts/check_oidc.py --issuer https://login.microsoftonline.com/common/v
 ```
 
 本地真实链路：用临时 RSA 私钥签 RS256 token、JWKS 指向本地文件启动服务，`/admin/api/session` 返回 `is_admin=true, depts=["Tech"]`，`/admin/api/meta` 200，`/chat` 正常，篡改 token 401。验证后已清理临时文件并恢复 `AUTH_MODE=none`。
+
+### 浏览器 OIDC 登录（authorization-code flow）
+
+配置 `AUTH_OIDC_CLIENT_ID` / `AUTH_OIDC_CLIENT_SECRET` / `AUTH_OIDC_AUTHORIZE_URL` / `AUTH_OIDC_TOKEN_URL` / `AUTH_OIDC_REDIRECT_URI` 后：
+
+- `GET /auth/login?next=/admin`：生成 `nonce|target` 并用 HMAC-SHA256 签名（`AUTH_JWT_SECRET`，缺省用 client secret），302 到 IdP 授权页；同时写入 `HttpOnly; SameSite=Lax; Path=/auth` 的 10 分钟 state cookie
+- `GET /auth/callback`：校验 `state` 签名**且**必须与 state cookie 一致（防 login CSRF）→ 用 code 换 token → `decode_token(id_token)`；JWKS 模式把 provider 的 `id_token` 直接交给前端，共享密钥模式用同一身份重新签发 HS256（有效期上限 1h）；成功时清除 state cookie
+- 回调页用 `location.replace(target + '#token=' + token)` 返回 `/admin`，`Cache-Control: no-store`；token 用 JSON 编码并转义 `<>&'`，防止 `</script>` 逃逸
+- 管理台启动时读取 `#token=`，写入 `sessionStorage` 后 `history.replaceState` 清掉 fragment；`/info.oidc_login` 为真时显示「使用企业账号登录」
+- 安全：`next` 仅接受站内绝对路径（`//host`、带空白字符的一律回退 `/admin`）；未配置 client 时两个路由 404；交换失败（网络/4xx/无 `id_token`/签名不通过）统一 401 并记录日志
+- 新增 `AUTH_DEFAULT_DEPTS`（无 dept claim 时兜底）与 `AUTH_DENY_ROLE`（命中即拒绝）
+- 测试：`tests/test_auth_oidc.py`（34 项）覆盖登录跳转、state cookie 绑定与跨会话拒绝、TLS 代理下的 `Secure`、state 篡改/缺失、code 缺失、交换失败（HTTP 错误/无 id_token/网络异常/非 JSON/坏签名）、两种模式的 token 返回、`next` 净化、脚本转义、默认部门与拒绝角色
+
+### 本地账号登录（不接 IdP）
+
+`11.1.1` 里"在真实租户上完成一次登录"需要 IdP 管理员，这里给出完全离线的等价能力：账号密码登录，签出来的仍是普通 bearer token。
+
+- `src/local_auth.py`：`hashlib.scrypt`（n=2^14，约 150 ms/次，标准库无新依赖），编码 `scrypt$n$r$p$salt$hash`；未知用户也跑一次等价计算，避免用响应时间枚举账号
+- 账号库 `AUTH_USERS_FILE`（默认 `./config/users.json`，已 gitignore）：原子写入 + 0600 权限 + 按 mtime 缓存，手工编辑无需重启；文件损坏时记日志并按空库处理，服务不崩
+- `POST /auth/login`（JSON 或表单）→ 校验 → 签发 HS256，token 带 `ver`；按 IP 限流（`AUTH_LOGIN_RATE_LIMIT`，429 + `Retry-After`），成功/失败都写 `auth.login` 审计；失败响应统一 `invalid username or password`
+- 吊销：改密码、改部门/组/管理员、停用、删除都会 bump `token_version`，`auth.identity_from_headers` 比对失败即 401。**没有 `ver` 的 IdP/网关 token 不受影响**，两种方式共存
+- 管理台新增「账号」卡片（`/admin/api/users`）：创建、改密码、勾选管理员、停用、删除；只剩一个启用管理员时，降级/停用/删除返回 409
+- 命令行 `scripts/manage_users.py add|list|show|set|passwd|disable|enable|delete`，密码从终端读（不进 shell 历史），无 TTY 时从 stdin 读
+- `/ui/` 修复：jwt 模式下原本只发 body 身份、必然 401；现在有登录框、`Authorization` 头、401 自动回登录框、退出按钮，部门/用户字段在 jwt 模式下隐藏
+- 实测（uvicorn + 真实 HTTP）：登录 200 → `/admin/api/session` 返回 `user:alice / Tech,HR / admin`；bob（仅 Finance）登录后 `/admin/api/meta` 403、body 伪造 `user_dept=Tech` 仍只能用 Finance；改密码后旧 token 401；停用后登录 401；降级唯一管理员 409
+- 测试：`tests/test_auth_local.py`（55 项）覆盖哈希/盐/篡改参数、用户名与部门校验、原子写与 0600、缓存失效、吊销（禁用/删除/改密/改权限）、外部 token 不受影响、登录限流与审计、管理台 CRUD、最后管理员保护；全套 **432 passed**，`ruff` 通过
 
 ---
 

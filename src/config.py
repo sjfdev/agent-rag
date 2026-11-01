@@ -109,6 +109,31 @@ class Settings(BaseSettings):
     # the AUTH_ROLE_DEPT_PREFIX (e.g. "kb:dept:Tech") add that department.
     AUTH_ADMIN_ROLE: str = ""
     AUTH_ROLE_DEPT_PREFIX: str = ""
+    # OIDC client credentials for the optional code-flow callback. Feishu (and
+    # most OIDC providers) require the app secret to exchange a code for tokens.
+    AUTH_OIDC_CLIENT_ID: str = ""
+    AUTH_OIDC_CLIENT_SECRET: str = ""
+    AUTH_OIDC_AUTHORIZE_URL: str = ""
+    AUTH_OIDC_TOKEN_URL: str = ""
+    AUTH_OIDC_REDIRECT_URI: str = ""
+    AUTH_OIDC_SCOPE: str = "openid profile"
+    # Comma-separated departments granted to any authenticated user when the
+    # token carries no dept claim (Feishu user_access_token is a bare identity).
+    AUTH_DEFAULT_DEPTS: str = ""
+    # Role names can be denied explicitly (e.g. "guest").
+    AUTH_DENY_ROLE: str = ""
+    # Local accounts: username/password login without any external IdP.
+    # Users live in AUTH_USERS_FILE (JSON, managed with scripts/manage_users.py
+    # or the admin console). Requires AUTH_MODE=jwt because the login endpoint
+    # mints an ordinary bearer token; nothing else in the request path changes.
+    AUTH_LOCAL_LOGIN_ENABLED: bool = False
+    AUTH_USERS_FILE: str = "./config/users.json"
+    # Lifetime of a token obtained from the username/password login (seconds).
+    # Shorter than AUTH_TOKEN_TTL so a revoked account stops working quickly.
+    AUTH_LOCAL_TOKEN_TTL: int = 28800
+    # Login attempts allowed per client IP per minute (0 disables). The
+    # password hash is deliberately slow, so this also caps CPU abuse.
+    AUTH_LOGIN_RATE_LIMIT: int = 10
     # Per-caller rate limit for /chat and /chat/stream (0 disables).
     # Requests are counted per user_id (or client IP when absent) in a sliding
     # window; with several workers each process enforces its own limit.

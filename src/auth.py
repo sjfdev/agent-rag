@@ -23,6 +23,7 @@ provider's native token can often be used without rewriting it.
 
 import json
 import logging
+import re
 import threading
 import time
 from dataclasses import dataclass
@@ -130,6 +131,10 @@ class Identity:
     departments: Tuple[str, ...] = ()
     groups: Tuple[str, ...] = ()
     is_admin: bool = False
+    # Set only for tokens minted by the local login endpoint. Absent (None) means
+    # the token came from an external issuer (gateway/IdP), which has its own
+    # revocation mechanism, so the local users file is not consulted.
+    token_version: Optional[int] = None
 
 
 def auth_enabled() -> bool:
@@ -177,6 +182,10 @@ def encode_token(
         claims["iss"] = settings.AUTH_JWT_ISSUER
     if settings.AUTH_JWT_AUDIENCE:
         claims["aud"] = settings.AUTH_JWT_AUDIENCE
+    if identity.token_version is not None:
+        # Marks a locally issued token so the callback path can bind it to the
+        # account version in AUTH_USERS_FILE (revocation on disable/password change).
+        claims["ver"] = int(identity.token_version)
     return jwt.encode(claims, _secret(), algorithm=settings.AUTH_JWT_ALGORITHM)
 
 
@@ -213,6 +222,9 @@ def decode_token(token: str, *, now: Optional[float] = None) -> Identity:
         raise AuthError("token has no subject")
 
     roles = _clean_list(_claim(claims, settings.AUTH_CLAIM_ROLES))
+    deny = (settings.AUTH_DENY_ROLE or "").strip()
+    if deny and deny in roles:
+        raise AuthError(f"role {deny!r} is not allowed to use this service")
     departments = _clean_list(_claim(claims, settings.AUTH_CLAIM_DEPTS))
     if settings.AUTH_ROLE_DEPT_PREFIX:
         prefix = settings.AUTH_ROLE_DEPT_PREFIX
@@ -226,11 +238,23 @@ def decode_token(token: str, *, now: Optional[float] = None) -> Identity:
     if settings.AUTH_ADMIN_ROLE:
         admin = admin or settings.AUTH_ADMIN_ROLE in roles
 
+    if not departments:
+        departments = _clean_list((settings.AUTH_DEFAULT_DEPTS or "").split(","))
+
+    version = claims.get("ver")
+    token_version: Optional[int] = None
+    if version is not None:
+        try:
+            token_version = int(version)
+        except (TypeError, ValueError) as exc:
+            raise AuthError("token has an invalid version claim") from exc
+
     return Identity(
         user_id=user_id,
         departments=departments,
         groups=_clean_list(_claim(claims, settings.AUTH_CLAIM_GROUPS)),
         is_admin=admin,
+        token_version=token_version,
     )
 
 
@@ -266,7 +290,80 @@ def identity_from_headers(headers: Any) -> Optional[Identity]:
     token = bearer_token(headers)
     if not token:
         raise AuthError("missing bearer token")
-    return decode_token(token)
+    identity = decode_token(token)
+    _check_local_account(identity)
+    return identity
+
+
+def _check_local_account(identity: Identity) -> None:
+    """Enforce local-account revocation on tokens minted by /auth/login.
+
+    Only tokens carrying a `ver` claim are bound to ``AUTH_USERS_FILE``: an IdP
+    or gateway token has no such claim and keeps working unchanged, so enabling
+    local login can never invalidate externally issued tokens.
+    """
+    if identity.token_version is None:
+        return
+    from src import local_auth
+
+    try:
+        local_auth.assert_user_active(identity.user_id, identity.token_version)
+    except local_auth.LocalAuthError as exc:
+        raise AuthError(str(exc)) from exc
+
+
+def oidc_login_configured() -> bool:
+    return bool(
+        (settings.AUTH_OIDC_CLIENT_ID or "").strip()
+        and (settings.AUTH_OIDC_CLIENT_SECRET or "").strip()
+        and (settings.AUTH_OIDC_AUTHORIZE_URL or "").strip()
+        and (settings.AUTH_OIDC_TOKEN_URL or "").strip()
+        and (settings.AUTH_OIDC_REDIRECT_URI or "").strip()
+    )
+
+
+def build_authorize_url(state: str) -> str:
+    """Authorization URL for the provider's login page."""
+    from urllib.parse import urlencode
+
+    params = {
+        "response_type": "code",
+        "client_id": settings.AUTH_OIDC_CLIENT_ID,
+        "redirect_uri": settings.AUTH_OIDC_REDIRECT_URI,
+        "scope": settings.AUTH_OIDC_SCOPE,
+        "state": state,
+    }
+    return f"{settings.AUTH_OIDC_AUTHORIZE_URL}?{urlencode(params)}"
+
+
+def exchange_code(code: str) -> Dict[str, Any]:
+    """Exchange an authorization code for tokens, then verify the id_token."""
+    import requests
+
+    try:
+        response = requests.post(
+            settings.AUTH_OIDC_TOKEN_URL,
+            data={
+                "grant_type": "authorization_code",
+                "code": code,
+                "client_id": settings.AUTH_OIDC_CLIENT_ID,
+                "client_secret": settings.AUTH_OIDC_CLIENT_SECRET,
+                "redirect_uri": settings.AUTH_OIDC_REDIRECT_URI,
+            },
+            timeout=10,
+        )
+        if response.status_code >= 400:
+            raise AuthError(f"token exchange failed: HTTP {response.status_code}")
+        payload = response.json()
+    except AuthError:
+        raise
+    except Exception as exc:
+        raise AuthError(f"token exchange failed: {exc}") from exc
+    id_token = payload.get("id_token")
+    if not id_token:
+        raise AuthError("provider response has no id_token")
+    identity = decode_token(id_token)
+    return {"identity": identity, "id_token": id_token, "raw": payload}
 
 
 def apply_identity(identity: Optional[Identity], departments: List[str],
@@ -279,3 +376,142 @@ def apply_identity(identity: Optional[Identity], departments: List[str],
     if identity is None:
         return departments, groups, ""
     return list(identity.departments), list(identity.groups), identity.user_id
+
+
+# --- auth routes (mounted by main.py) --------------------------------------
+
+_NEXT_TARGET = re.compile(r"^/[^\s\\]*$")
+_STATE_COOKIE = "agent_rag_oidc_state"
+_STATE_TTL = 600
+
+
+def _safe_next(target: str) -> str:
+    """Only allow same-origin absolute paths (no scheme-relative ``//host``)."""
+    target = (target or "").strip()
+    # The callback appends its own #token= fragment; drop any pre-existing one.
+    target = target.split("#", 1)[0]
+    if not target.startswith("/") or target.startswith("//"):
+        return "/admin"
+    if not _NEXT_TARGET.fullmatch(target):
+        return "/admin"
+    return target
+
+
+def _js_string(value: str) -> str:
+    """Encode a Python string as a JS literal that is safe inside <script>."""
+    encoded = json.dumps(value)
+    return (
+        encoded.replace("<", "\\u003c")
+        .replace(">", "\\u003e")
+        .replace("&", "\\u0026")
+        .replace("'", "\\u0027")
+    )
+
+
+def _sign_callback_token(identity: Identity) -> str:
+    """Callback returns a token the console stores as its bearer credential."""
+    if _jwks_configured():
+        # With a JWKS the app cannot mint provider-signed tokens; hand back the
+        # provider's id_token instead (handled by the caller).
+        raise AuthError("token minting is unavailable in JWKS mode")
+    return encode_token(identity, ttl_seconds=min(settings.AUTH_TOKEN_TTL, 3600))
+
+
+def register_routes(app) -> None:
+    """Add /auth/login and /auth/callback (only when an OIDC client is set)."""
+    import base64
+    import hashlib
+    import hmac
+    import secrets
+
+    from fastapi import HTTPException, Query, Request
+    from fastapi.responses import HTMLResponse, RedirectResponse
+
+    def _state_secret() -> bytes:
+        # AUTH_JWT_SECRET is preferred; the client secret is a reasonable
+        # fallback because it is required for the code flow anyway.
+        raw = (settings.AUTH_JWT_SECRET or settings.AUTH_OIDC_CLIENT_SECRET or "").strip()
+        return raw.encode()
+
+    def _sign_state(value: str) -> str:
+        # Base64url keeps the state cookie/query free of characters that would
+        # need quoting (the payload contains ``|`` and a URL path).
+        payload = base64.urlsafe_b64encode(value.encode()).decode().rstrip("=")
+        digest = hmac.new(_state_secret(), payload.encode(), hashlib.sha256).hexdigest()
+        return f"{payload}.{digest}"
+
+    def _verify_state(value: str) -> str:
+        if "." not in value:
+            raise HTTPException(status_code=400, detail="invalid state")
+        payload, digest = value.rsplit(".", 1)
+        expected = hmac.new(_state_secret(), payload.encode(), hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(digest, expected):
+            raise HTTPException(status_code=400, detail="invalid state")
+        try:
+            padded = payload + "=" * (-len(payload) % 4)
+            return base64.urlsafe_b64decode(padded.encode()).decode()
+        except Exception:
+            raise HTTPException(status_code=400, detail="invalid state")
+
+    def _secure_request(request: Request) -> bool:
+        # Behind a TLS-terminating proxy the scheme is only in X-Forwarded-Proto.
+        proto = request.headers.get("x-forwarded-proto", request.url.scheme)
+        return proto.split(",", 1)[0].strip().lower() == "https"
+
+    @app.get("/auth/login", include_in_schema=False)
+    def auth_login(request: Request):
+        if not auth_enabled() or not oidc_login_configured():
+            raise HTTPException(status_code=404, detail="OIDC login is not configured")
+        # The console returns to its own page with the token in the fragment.
+        target = _safe_next(request.query_params.get("next", "/admin"))
+        state = _sign_state(f"{secrets.token_urlsafe(16)}|{target}")
+        response = RedirectResponse(build_authorize_url(state))
+        # Bind the state to this browser: the callback must present the same
+        # value, which blocks login-CSRF (an attacker's code replayed into a
+        # victim's browser). SameSite=Lax survives the provider redirect.
+        response.set_cookie(
+            _STATE_COOKIE,
+            state,
+            max_age=_STATE_TTL,
+            httponly=True,
+            samesite="lax",
+            secure=_secure_request(request),
+            path="/auth",
+        )
+        return response
+
+    @app.get("/auth/callback", include_in_schema=False)
+    def auth_callback(
+        request: Request,
+        code: str = Query(""),
+        state: str = Query(""),
+    ):
+        if not auth_enabled() or not oidc_login_configured():
+            raise HTTPException(status_code=404, detail="OIDC login is not configured")
+        raw = _verify_state(state)
+        bound = request.cookies.get(_STATE_COOKIE, "")
+        if not bound or not hmac.compare_digest(bound, state):
+            raise HTTPException(status_code=400, detail="invalid state")
+        target = _safe_next(raw.split("|", 1)[1] if "|" in raw else "/admin")
+        if not code:
+            raise HTTPException(status_code=400, detail="missing authorization code")
+        try:
+            result = exchange_code(code)
+        except AuthError as exc:
+            logger.warning("OIDC callback failed: %s", exc)
+            raise HTTPException(status_code=401, detail="login failed")
+
+        identity: Identity = result["identity"]
+        # In JWKS mode the provider id_token is itself a valid bearer token.
+        token = result["id_token"] if _jwks_configured() else _sign_callback_token(identity)
+
+        html = (
+            "<!doctype html><meta charset=utf-8><title>登录成功</title>"
+            "<script>"
+            f"location.replace({_js_string(target)} + '#token=' + {_js_string(token)});"
+            "</script>"
+            "<p>登录成功，正在返回管理台…</p>"
+        )
+        response = HTMLResponse(html, headers={"Cache-Control": "no-store"})
+        response.delete_cookie(_STATE_COOKIE, path="/auth")
+        return response

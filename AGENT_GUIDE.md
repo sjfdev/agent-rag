@@ -99,7 +99,7 @@ agent-rag/
 ├── volumes/                 # Milvus/etcd 数据卷
 ├── eval/cases.jsonl         # 检索评测集（命中 + 泄漏用例）
 ├── config/acl.example.json  # 文档级 ACL 规则示例
-├── tests/                   # pytest 离线测试（309 项，覆盖率 92%）
+├── tests/                   # pytest 离线测试（432 项，覆盖率 92%）
 ├── Makefile                 # 常用命令（make help）
 ├── .github/workflows/ci.yml # ruff + pytest（CI）
 ├── WORKLOG.md               # 本轮迭代记录与验证矩阵
@@ -406,6 +406,85 @@ AUTH_ROLE_DEPT_PREFIX=kb:dept:             # 角色 kb:dept:Tech → 部门 Tech
 
 **没有账号时如何验证**：`--self-test` 会自签一个 RS256 token 走完整链路（JWKS → kid 选择 → 签名校验 → 角色映射 → 部门解析 → 伪造 token 拒绝），5 项全过即说明配置与代码正常；接入真实 IdP 后只需替换 `AUTH_JWKS_URL`。
 
+### 4.4.5 浏览器登录（`/auth/login` → `/auth/callback`）
+
+配上 OIDC client 后，管理台登录框会出现「使用企业账号登录」，走标准 authorization-code 流程，用户不必手工粘贴 token：
+
+```bash
+AUTH_MODE=jwt
+AUTH_JWKS_URL=https://idp.example.com/realms/kb/protocol/openid-connect/certs
+AUTH_OIDC_CLIENT_ID=agent-rag
+AUTH_OIDC_CLIENT_SECRET=<client secret>      # 用于 code → token 交换（不会下发到浏览器）
+AUTH_OIDC_AUTHORIZE_URL=https://idp.example.com/realms/kb/protocol/openid-connect/auth
+AUTH_OIDC_TOKEN_URL=https://idp.example.com/realms/kb/protocol/openid-connect/token
+AUTH_OIDC_REDIRECT_URI=https://kb.example.com/auth/callback
+AUTH_OIDC_SCOPE=openid profile
+```
+
+- 在 IdP 里把 `AUTH_OIDC_REDIRECT_URI` 原样登记为回调地址；`AUTH_JWT_AUDIENCE` 一般填 client id
+- `GET /auth/login?next=/admin` 生成带 HMAC 签名的 `state` 后 302 到 IdP；`state` 用 `AUTH_JWT_SECRET`（缺失时用 client secret）签名，回调时校验，防 CSRF
+- `state` 同时写入 `HttpOnly; SameSite=Lax; Path=/auth` 的短期 cookie（10 分钟，HTTPS 下带 `Secure`），回调必须与 cookie 完全一致，否则 400：他人的授权码无法被塞进你的浏览器（login CSRF）；成功后立即清除 cookie，失败时 cookie 最多残留 10 分钟
+- `GET /auth/callback` 用 code 换 token 并校验 `id_token`：JWKS 模式直接把 provider 的 `id_token` 交给管理台；共享密钥模式则用校验后的身份重新签发一个 HS256 token（有效期上限 1 小时）
+- 回调页只把 token 放进 URL fragment（`/admin#token=...`），管理台读取后立即写入 `sessionStorage` 并用 `history.replaceState` 清掉地址栏；`next` 只接受站内绝对路径，跨站地址回退到 `/admin`
+- 未配置 client 时两个路由都返回 404；`GET /info` 的 `oidc_login` 字段告诉前端是否显示登录按钮
+- 换 token 失败（网络、4xx、无 `id_token`、签名不通过）统一返回 401，日志里有具体原因
+
+> 飞书等 provider 的 `user_access_token` 只有身份、不带部门 claim 时，可用 `AUTH_DEFAULT_DEPTS` 给所有已认证用户兜底部门，或用 `AUTH_DENY_ROLE` 拒绝访客角色。
+
+### 4.4.6 本地账号（不接 IdP）
+
+没有任何 IdP 也能用账号密码登录。原则：**本地登录只是"领取 token 的方式"，不是新的信任模型**——`AUTH_MODE=jwt` 保持不变，签出来的就是普通的 HS256 bearer token，部门/组/管理员、缓存隔离、限流、审计全部沿用原有逻辑。
+
+```bash
+# .env
+AUTH_MODE=jwt
+AUTH_JWT_SECRET='至少32字符的随机串'      # 不能再用 AUTH_MODE=none
+AUTH_LOCAL_LOGIN_ENABLED=true
+AUTH_USERS_FILE=./config/users.json       # 已在 .gitignore 中
+AUTH_LOCAL_TOKEN_TTL=28800                # 8 小时
+AUTH_LOGIN_RATE_LIMIT=10                  # 每 IP 每分钟尝试次数
+```
+
+建账号（命令行，密码从终端读，不进 shell 历史）：
+
+```bash
+python scripts/manage_users.py add alice --dept Tech --dept HR --group exec --admin
+python scripts/manage_users.py list
+python scripts/manage_users.py set alice --dept Finance --no-admin
+python scripts/manage_users.py passwd alice       # 旧 token 立即失效
+python scripts/manage_users.py disable alice      # 立即禁止登录并吊销 token
+python scripts/manage_users.py delete alice
+```
+
+也可以直接在管理台 `/admin` 的「账号」卡片里创建账号、改密码、勾选管理员、停用、删除。
+
+登录：
+
+```bash
+curl -X POST localhost:8000/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"alice","password":"..."}'
+# {"token":"<jwt>","token_type":"Bearer","expires_in":28800,"user":{...}}
+
+curl -H "Authorization: Bearer <token>" localhost:8000/admin/api/session
+# {"auth_mode":"jwt","user_id":"alice","depts":["Tech","HR"],"is_admin":true,...}
+```
+
+`/ui/` 和 `/admin` 都会显示登录框（`GET /info` 的 `local_login` 决定是否显示账号密码输入）。
+
+要点：
+
+- 密码用 `hashlib.scrypt`（标准库，无需 argon2/bcrypt 依赖），编码为 `scrypt$n$r$p$salt$hash`；验证约 140 ms，未知用户也会做一次等价计算，避免用响应时间枚举账号
+- 用户文件原子写入（临时文件 + `os.replace`，权限 600），按 mtime 缓存，手工编辑后无需重启；文件损坏时记日志并按"无账号"处理，不会让服务崩溃
+- token 带 `ver`（账号版本）：改密码、改部门/组/管理员、停用都会 +1，**已签发的 token 立即失效**；删除账号同理
+- 没有 `ver` 的 token（IdP / 网关签发）不受用户文件影响，两种方式可以共存
+- 登录失败与非管理员访问一样返回 401，但失败原因只写审计和日志，响应统一为 `invalid username or password`
+- 管理台不能把自己锁死：只剩一个启用中的管理员时，降级/停用/删除该账号返回 409
+- 密码策略：≥10 位；用户名只允许字母、数字和 `. _ - @`
+- 登录限流按客户端 IP（`X-Forwarded-For` / `X-Real-IP` 优先），超限 429 + `Retry-After`
+
+> 这是**离线登录**，不替代 SSO。真要做企业单点，参考 §4.4.4/§4.4.5 接 OIDC；两者可以同时开启，`/ui/` 会优先显示账号密码，管理台会额外显示「使用企业账号登录」。
+
 ### 4.5.0 常用命令（Makefile）
 
 ```bash
@@ -644,7 +723,7 @@ python scripts/check_loaders.py      # 9 种格式解析（不写向量库）
 python scripts/check_admin.py        # 管理台上传→入库→删除冒烟
 python scripts/bench_retrieval.py    # embedding / FAISS / Milvus / LLM 延迟
 python scripts/generate_demo_files.py  # 重建 data/Demo 多格式样例
-pytest -q                            # 离线测试（309 项，~24s，覆盖率 92%，无需服务/LLM）
+pytest -q                            # 离线测试（432 项，~35s，覆盖率 92%，无需服务/LLM）
 ruff check src tests main.py run_ingestion.py   # 代码检查
 python test_agent.py                 # 端到端 18 项断言（需服务已启动）
 ```
@@ -698,7 +777,9 @@ python run_ingestion.py --no-prune # 不清理已删除文件
 安全：
 
 - 未设置 `ADMIN_TOKEN` 时，管理 API 仅接受**本机回环**（127.0.0.1/::1），局域网访问返回 403
-- 管理台首次打开会显示登录框：粘贴 **Bearer token**（`AUTH_MODE=jwt`，需 `admin: true`）或 **管理令牌**（`ADMIN_TOKEN`），凭据只存在当前标签页的 `sessionStorage`
+- 管理台首次打开会显示登录框：用**账号密码**登录（`AUTH_LOCAL_LOGIN_ENABLED=true`），或粘贴 **Bearer token**（`AUTH_MODE=jwt`，需 `admin: true`）／**管理令牌**（`ADMIN_TOKEN`）；凭据只存在当前标签页的 `sessionStorage`
+- 配置了 OIDC client 时，登录框还会显示「使用企业账号登录」，点击后跳转 IdP，回调成功自动带回 token（见 §4.4.5）
+- 启用本地账号后，管理台多出「账号」卡片：创建/删除账号、改密码、勾选管理员、停用（见 §4.4.6）
 - 右上角显示当前身份（用户/部门/管理员）与「退出」按钮；任一请求返回 401 会自动回到登录框
 - 也可以直接调用 API：`Authorization: Bearer <token>` 或 `X-Admin-Token: <token>`
 - 上传会做扩展名白名单、大小限制、文件名与子目录净化；`../` 会被拒绝或剥离
@@ -749,6 +830,18 @@ python run_ingestion.py --no-prune # 不清理已删除文件
 | `AUTH_CLAIM_ROLES` | `roles` | 角色数组 claim（Keycloak 常用 `realm_access.roles`） |
 | `AUTH_ADMIN_ROLE` | 空 | 拥有该角色即视为管理员 |
 | `AUTH_ROLE_DEPT_PREFIX` | 空 | 角色前缀映射部门，如 `kb:dept:` |
+| `AUTH_DENY_ROLE` | 空 | 显式拒绝的角色（如 `guest`），命中即 401 |
+| `AUTH_DEFAULT_DEPTS` | 空 | token 无部门 claim 时授予的兜底部门（逗号分隔） |
+| `AUTH_OIDC_CLIENT_ID` | 空 | 浏览器登录的 OIDC client id；与下面几项一起配置后启用 `/auth/login` |
+| `AUTH_OIDC_CLIENT_SECRET` | 空 | code 换 token 的 client secret（仅服务端保存） |
+| `AUTH_OIDC_AUTHORIZE_URL` | 空 | IdP 授权端点 |
+| `AUTH_OIDC_TOKEN_URL` | 空 | IdP token 端点 |
+| `AUTH_OIDC_REDIRECT_URI` | 空 | 回调地址，需在 IdP 原样登记 |
+| `AUTH_OIDC_SCOPE` | `openid profile` | 授权 scope |
+| `AUTH_LOCAL_LOGIN_ENABLED` | `false` | 启用账号密码登录（`AUTH_MODE=jwt` 下有效） |
+| `AUTH_USERS_FILE` | `./config/users.json` | 账号库（scrypt 哈希，已 gitignore） |
+| `AUTH_LOCAL_TOKEN_TTL` | `28800` | 本地登录签发的 token 有效期（秒） |
+| `AUTH_LOGIN_RATE_LIMIT` | `10` | 每 IP 每分钟登录尝试上限（0 关闭） |
 | `CHAT_API_KEY` | 空 | 非空时 `/chat` 需要 `X-API-Key` 或 Bearer（jwt 模式下忽略） |
 | `RATE_LIMIT_PER_MINUTE` | `0` | 每调用方每分钟请求上限（0 关闭），超限 429 |
 | `CHAT_TIMEOUT` | `120` | 单次问答整体时限（秒），超时 504 `timeout` |

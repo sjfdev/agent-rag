@@ -90,6 +90,12 @@
     background: rgba(7, 9, 13, .82); backdrop-filter: blur(3px); padding: 20px;
   }
   .gate[hidden] { display: none; }
+  .gateSso {
+    display: block; text-align: center; margin-top: 10px; padding: 8px 12px;
+    border-radius: 8px; background: var(--accent); color: #fff; text-decoration: none;
+  }
+  .gateSso:hover { filter: brightness(1.08); }
+  .gateSso[hidden] { display: none; }
   .gateCard {
     width: min(460px, 100%); background: var(--panel); border: 1px solid #232833;
     border-radius: 12px; padding: 20px; display: grid; gap: 12px;
@@ -97,6 +103,17 @@
   .gateCard h1 { font-size: 16px; margin: 0; }
   .gateCard p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.6; }
   .gateCard input { width: 100%; }
+  #passwordFields { display: grid; gap: 8px; }
+  #passwordFields[hidden] { display: none; }
+  #tokenFallback summary {
+    cursor: pointer; color: var(--muted); font-size: 12px; padding: 2px 0;
+  }
+  #tokenFallback[open] summary { margin-bottom: 6px; }
+  .userRow { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .userRow input[type=text], .userRow input[type=password] { min-width: 120px; flex: 1; }
+  .roleFlag { font-size: 12px; color: var(--muted); display: flex; gap: 4px; align-items: center; }
+  td.actions { display: flex; gap: 6px; }
+  .off { opacity: .5; }
   .gateFoot { display: flex; gap: 8px; align-items: center; justify-content: space-between; }
   .gateErr { color: var(--bad); font-size: 12px; min-height: 16px; }
   .hint { font-size: 12px; color: var(--muted); }
@@ -120,15 +137,23 @@
   <form class="gateCard" id="loginForm">
     <h1>登录知识库管理</h1>
     <p id="gateHint">
-      粘贴管理员 Bearer token（JWT），或填写管理令牌（ADMIN_TOKEN）。
-      令牌只保存在当前标签页的 sessionStorage 中。
+      用账号密码登录，或直接粘贴管理员 Bearer token／管理令牌（ADMIN_TOKEN）。
+      凭据只保存在当前标签页的 sessionStorage 中。
     </p>
-    <input id="credential" type="password" placeholder="Bearer token 或管理令牌" autocomplete="off">
+    <div id="passwordFields" hidden>
+      <input id="username" type="text" placeholder="用户名" autocomplete="username">
+      <input id="password" type="password" placeholder="密码" autocomplete="current-password">
+    </div>
+    <details id="tokenFallback" open>
+      <summary>使用 token / 管理令牌</summary>
+      <input id="credential" type="password" placeholder="Bearer token 或管理令牌" autocomplete="off">
+    </details>
     <div class="gateErr" id="gateErr"></div>
     <div class="gateFoot">
       <span class="hint">JWT 需带 <code>admin: true</code></span>
       <button type="submit" class="primary" id="loginBtn">登录</button>
     </div>
+    <a class="gateSso" id="ssoLogin" href="/auth/login?next=/admin" hidden>使用企业账号登录</a>
   </form>
 </div>
 
@@ -173,6 +198,31 @@
       <tbody id="fileBody"></tbody>
     </table>
     <div class="msg" id="fileMsg"></div>
+  </section>
+
+  <section class="card" id="usersCard" hidden>
+    <h2>账号<span class="sub" id="userCount"></span></h2>
+    <p class="hint" style="margin:0 0 10px">
+      仅 <code>AUTH_LOCAL_LOGIN_ENABLED=true</code> 时可用。密码用 scrypt 哈希保存在
+      <code id="usersPath">config/users.json</code>，改密码或停用会立即使该账号的旧 token 失效。
+    </p>
+    <div class="row userRow">
+      <input id="newUser" type="text" placeholder="用户名" maxlength="64" autocomplete="off">
+      <input id="newPass" type="password" placeholder="密码（≥10 位）" maxlength="256" autocomplete="new-password">
+      <input id="newDepts" type="text" placeholder="部门，逗号分隔，如 Tech,HR" maxlength="200">
+      <input id="newGroups" type="text" placeholder="组（可选）" maxlength="200">
+      <label class="roleFlag"><input id="newAdmin" type="checkbox"> 管理员</label>
+      <button id="createUser" class="primary">创建账号</button>
+    </div>
+    <table>
+      <thead>
+        <tr>
+          <th>用户</th><th>部门 / 组</th><th>管理员</th><th>状态</th><th></th>
+        </tr>
+      </thead>
+      <tbody id="userBody"></tbody>
+    </table>
+    <div class="msg" id="userMsg"></div>
   </section>
 
   <section class="card dangerZone">
@@ -357,6 +407,58 @@ function looksLikeJwt(value) {
   return value.split(".").length === 3 && value.length > 40;
 }
 
+// The OIDC callback redirects to /admin#token=<jwt>. Read it once, keep it in
+// sessionStorage and strip it from the address bar so it is not left in
+// history or a shared link.
+function consumeTokenFragment() {
+  const hash = location.hash || "";
+  if (!hash.startsWith("#token=")) return "";
+  let value = "";
+  try {
+    value = decodeURIComponent(hash.slice("#token=".length));
+  } catch (error) {
+    value = "";
+  }
+  history.replaceState(null, "", location.pathname + location.search);
+  if (!value) return "";
+  if (looksLikeJwt(value)) {
+    bearer = value;
+    token = "";
+  } else {
+    token = value;
+    bearer = "";
+  }
+  sessionStorage.setItem(TOKEN_KEY, token);
+  sessionStorage.setItem(BEARER_KEY, bearer);
+  return value;
+}
+
+// Offer "log in with the company IdP" only when the server has a client set.
+async function loadLoginOptions() {
+  const sso = $("ssoLogin");
+  try {
+    const res = await fetch("/info");
+    if (!res.ok) return;
+    const info = await res.json();
+    if (info.local_login) {
+      $("passwordFields").hidden = false;
+      $("tokenFallback").open = false;
+    } else {
+      $("passwordFields").hidden = true;
+      $("tokenFallback").open = true;
+    }
+    if (!info.oidc_login) {
+      sso.hidden = true;
+      return;
+    }
+    const target = location.pathname + location.search;
+    sso.href = "/auth/login?next=" + encodeURIComponent(target || "/admin");
+    sso.hidden = false;
+  } catch (error) {
+    sso.hidden = true;
+  }
+}
+
 async function login(raw) {
   const value = (raw || "").trim();
   if (!value) {
@@ -375,6 +477,38 @@ async function login(raw) {
   sessionStorage.setItem(TOKEN_KEY, token);
   sessionStorage.setItem(BEARER_KEY, bearer);
   $("credential").value = "";
+  await refreshAll();
+  return true;
+}
+
+// Username/password login. The server mints an ordinary bearer token, so the
+// rest of the console keeps working exactly as with a pasted token.
+async function passwordLogin(username, password) {
+  const res = await fetch("/auth/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username, password }),
+  });
+  if (!res.ok) {
+    if (res.status === 429) {
+      $("gateErr").textContent = "尝试次数过多，请稍后再试。";
+    } else {
+      $("gateErr").textContent = "用户名或密码错误。";
+    }
+    return false;
+  }
+  const data = await res.json();
+  if (!data.token) {
+    $("gateErr").textContent = "登录失败：服务端没有返回 token。";
+    return false;
+  }
+  bearer = data.token;
+  token = "";
+  sessionStorage.setItem(TOKEN_KEY, token);
+  sessionStorage.setItem(BEARER_KEY, bearer);
+  $("password").value = "";
+  const ok = await resolveSession();
+  if (!ok) return false;
   await refreshAll();
   return true;
 }
@@ -530,9 +664,173 @@ async function refreshAll() {
     await loadMeta();
     await loadFiles();
     await loadAudit();
+    await loadUsers();
   } catch (error) {
     setMsg($("fileMsg"), "加载失败：" + error.message, "error");
   }
+}
+
+// --- accounts --------------------------------------------------------------
+// Only shown when the server has AUTH_LOCAL_LOGIN_ENABLED; /admin/api/users
+// answers 404 otherwise, in which case the whole card stays hidden.
+
+function splitList(value) {
+  return (value || "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function userCell(text, mono) {
+  const td = document.createElement("td");
+  td.textContent = text;
+  if (mono) td.className = "mono";
+  return td;
+}
+
+function renderUsers(data) {
+  const card = $("usersCard");
+  if (!card) return;
+  const users = data.users || [];
+  $("userCount").textContent = "（" + users.length + "）";
+  if (data.path) $("usersPath").textContent = data.path;
+  const body = $("userBody");
+  body.innerHTML = "";
+  for (const user of users) {
+    const tr = document.createElement("tr");
+    if (user.disabled) tr.className = "off";
+
+    const name = document.createElement("td");
+    name.textContent = user.username;
+    tr.appendChild(name);
+
+    const scope = [user.depts.join(", "), user.groups.map((g) => "group:" + g).join(", ")]
+      .filter(Boolean)
+      .join(" · ");
+    tr.appendChild(userCell(scope || "（无部门）"));
+
+    const adminCell = document.createElement("td");
+    const adminBox = document.createElement("input");
+    adminBox.type = "checkbox";
+    adminBox.checked = !!user.admin;
+    adminBox.onchange = () =>
+      patchUser(user.username, { admin: adminBox.checked }, "权限已更新");
+    adminCell.appendChild(adminBox);
+    tr.appendChild(adminCell);
+
+    const statusCell = document.createElement("td");
+    const disableBox = document.createElement("input");
+    disableBox.type = "checkbox";
+    disableBox.checked = !!user.disabled;
+    disableBox.onchange = () =>
+      patchUser(
+        user.username,
+        { disabled: disableBox.checked },
+        disableBox.checked ? "账号已停用" : "账号已启用"
+      );
+    const statusLabel = document.createElement("label");
+    statusLabel.className = "roleFlag";
+    statusLabel.appendChild(disableBox);
+    statusLabel.appendChild(document.createTextNode("停用"));
+    statusCell.appendChild(statusLabel);
+    tr.appendChild(statusCell);
+
+    const actions = document.createElement("td");
+    actions.className = "actions";
+    const reset = document.createElement("button");
+    reset.className = "tiny";
+    reset.textContent = "改密码";
+    reset.onclick = () => resetPassword(user.username);
+    actions.appendChild(reset);
+    const del = document.createElement("button");
+    del.className = "tiny danger";
+    del.textContent = "删除";
+    del.onclick = () => deleteUser(user.username);
+    actions.appendChild(del);
+    tr.appendChild(actions);
+
+    body.appendChild(tr);
+  }
+}
+
+async function loadUsers() {
+  const card = $("usersCard");
+  if (!card) return;
+  try {
+    const data = await api("/admin/api/users");
+    card.hidden = false;
+    renderUsers(data);
+  } catch (error) {
+    // 404 = local login disabled; any other failure is worth showing.
+    card.hidden = error.status === 404;
+    if (error.status !== 404) {
+      setMsg($("userMsg"), "账号列表加载失败：" + error.message, "error");
+    }
+  }
+}
+
+async function patchUser(username, changes, okMessage) {
+  try {
+    await api("/admin/api/users/" + encodeURIComponent(username), {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(changes),
+    });
+    setMsg($("userMsg"), okMessage, "ok");
+  } catch (error) {
+    setMsg($("userMsg"), "更新失败：" + error.message, "error");
+  }
+  await loadUsers();
+}
+
+async function resetPassword(username) {
+  const value = prompt(
+    "为 " + username + " 设置新密码（至少 10 位）。\n改密码后该账号已签发的 token 会立即失效。"
+  );
+  if (!value) return;
+  await patchUser(username, { password: value }, "密码已更新");
+}
+
+async function deleteUser(username) {
+  if (!confirm("删除账号 " + username + "？该账号将无法再登录。")) return;
+  try {
+    await api("/admin/api/users/" + encodeURIComponent(username), { method: "DELETE" });
+    setMsg($("userMsg"), "已删除 " + username, "ok");
+  } catch (error) {
+    setMsg($("userMsg"), "删除失败：" + error.message, "error");
+  }
+  await loadUsers();
+}
+
+async function createUser() {
+  const username = $("newUser").value.trim();
+  const password = $("newPass").value;
+  if (!username || !password) {
+    setMsg($("userMsg"), "请填写用户名和密码。", "error");
+    return;
+  }
+  try {
+    await api("/admin/api/users", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        username,
+        password,
+        depts: splitList($("newDepts").value),
+        groups: splitList($("newGroups").value),
+        admin: $("newAdmin").checked,
+      }),
+    });
+    $("newUser").value = "";
+    $("newPass").value = "";
+    $("newDepts").value = "";
+    $("newGroups").value = "";
+    $("newAdmin").checked = false;
+    setMsg($("userMsg"), "已创建账号 " + username, "ok");
+  } catch (error) {
+    setMsg($("userMsg"), "创建失败：" + error.message, "error");
+  }
+  await loadUsers();
 }
 
 async function removeFile(file) {
@@ -656,6 +954,10 @@ deptSel.onchange = () => {
 
 $("refresh").onclick = refreshAll;
 
+$("createUser").onclick = () => {
+  createUser().catch((e) => setMsg($("userMsg"), "创建失败：" + e.message, "error"));
+};
+
 $("createDept").onclick = async () => {
   const name = $("newDept").value.trim();
   if (!name) return;
@@ -728,7 +1030,15 @@ $("loginForm").onsubmit = async (event) => {
   const btn = $("loginBtn");
   btn.disabled = true;
   try {
-    await login($("credential").value);
+    const username = $("username").value.trim();
+    const password = $("password").value;
+    if (username && password) {
+      await passwordLogin(username, password);
+    } else {
+      await login($("credential").value);
+    }
+  } catch (error) {
+    $("gateErr").textContent = "登录失败：" + error.message;
   } finally {
     btn.disabled = false;
   }
@@ -755,8 +1065,11 @@ async function guarded(fn) {
 }
 
 (async function boot() {
+  const fromSso = consumeTokenFragment();
+  await loadLoginOptions();
   const authed = await resolveSession();
   if (authed) await refreshAll();
+  else if (fromSso) showGate("登录凭据无效或该账号没有管理权限。");
 })();
 </script>
 </body>

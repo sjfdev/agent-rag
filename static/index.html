@@ -124,6 +124,20 @@
   .presets button:hover { color: var(--text); border-color: #3a4150; }
   .hint { font-size: 11px; color: var(--muted); margin-top: 8px; }
   .error { color: #ff6b6b; }
+  .gate {
+    position: fixed; inset: 0; z-index: 50; display: flex; align-items: center;
+    justify-content: center; background: rgba(7, 9, 13, .85); padding: 20px;
+  }
+  .gate[hidden] { display: none; }
+  .gateCard {
+    width: min(400px, 100%); background: var(--panel); border: 1px solid var(--border);
+    border-radius: 12px; padding: 20px; display: grid; gap: 10px;
+  }
+  .gateCard h2 { font-size: 15px; margin: 0; font-weight: 600; }
+  .gateCard p { margin: 0; font-size: 12px; color: var(--muted); line-height: 1.6; }
+  .gateCard input { width: 100%; }
+  .gateCard button.primary { width: 100%; }
+  .gateErr { color: #ff6b6b; font-size: 12px; min-height: 16px; }
   .sources { margin-top: 10px; font-size: 12px; color: var(--muted); }
   .sources summary { cursor: pointer; color: var(--accent); outline: none; }
   .sources ul { margin: 8px 0 0; padding-left: 16px; }
@@ -148,10 +162,27 @@
   </div>
 </main>
 
+<div class="gate" id="gate" hidden>
+  <form class="gateCard" id="loginForm">
+    <h2>登录知识库</h2>
+    <p id="gateHint">
+      使用账号密码登录；部门与权限由账号决定，无需手工填写。
+    </p>
+    <input id="username" type="text" placeholder="用户名" autocomplete="username">
+    <input id="password" type="password" placeholder="密码" autocomplete="current-password">
+    <details id="tokenFallback">
+      <summary>使用 Bearer token 登录</summary>
+      <input id="credential" type="password" placeholder="粘贴 token" autocomplete="off">
+    </details>
+    <div class="gateErr" id="gateErr"></div>
+    <button type="submit" class="primary" id="loginBtn">登录</button>
+  </form>
+</div>
+
 <footer>
   <div class="controls">
-    <label>用户 <input id="uid" value="u1" /></label>
-    <label>部门
+    <label id="uidLabel">用户 <input id="uid" value="u1" /></label>
+    <label id="deptLabel">部门
       <select id="dept">
         <option>Tech</option>
         <option>HR</option>
@@ -161,6 +192,7 @@
     </label>
     <button class="ghost" id="newchat" title="在新标签页打开一个全新会话">新对话（新窗口）</button>
     <button class="ghost" id="reset">清空当前</button>
+    <button class="ghost" id="logout" hidden>退出登录</button>
   </div>
 
   <div class="row">
@@ -193,6 +225,68 @@ const stopBtn = document.getElementById("stop");
 let history = [];
 let busy = false;
 let abortController = null;
+
+// --- authentication --------------------------------------------------------
+// AUTH_MODE=none: the identity fields stay visible and are sent in the body.
+// AUTH_MODE=jwt: the server ignores them and only trusts the bearer token, so
+// they are hidden and a login gate is shown instead.
+const TOKEN_KEY = "chatToken";
+const BEARER_KEY = "chatBearer";
+let token = sessionStorage.getItem(TOKEN_KEY) || "";
+let bearer = sessionStorage.getItem(BEARER_KEY) || "";
+let authMode = "none";
+let localLogin = false;
+
+function hasCredential() {
+  return Boolean(bearer || token);
+}
+
+function authHeaders(extra) {
+  const headers = Object.assign({}, extra || {});
+  if (bearer) headers["Authorization"] = "Bearer " + bearer;
+  if (token) headers["X-API-Key"] = token;
+  return headers;
+}
+
+function clearCredential() {
+  bearer = "";
+  token = "";
+  sessionStorage.removeItem(TOKEN_KEY);
+  sessionStorage.removeItem(BEARER_KEY);
+}
+
+function showGate(message) {
+  const gate = document.getElementById("gate");
+  if (!gate) return;
+  gate.hidden = false;
+  if (message) document.getElementById("gateErr").textContent = message;
+}
+
+function hideGate() {
+  const gate = document.getElementById("gate");
+  if (gate) gate.hidden = true;
+}
+
+// The OIDC callback lands on a page with #token=<jwt>; keep it and strip the
+// fragment so it is not left in the address bar or a shared link.
+function consumeTokenFragment() {
+  const hash = location.hash || "";
+  if (!hash.startsWith("#token=")) return "";
+  let value = "";
+  try {
+    value = decodeURIComponent(hash.slice("#token=".length));
+  } catch (error) {
+    value = "";
+  }
+  // NB: `history` below is the chat transcript, so use window.history here.
+  window.history.replaceState(null, "", location.pathname + location.search);
+  if (!value) return "";
+  bearer = value;
+  token = "";
+  sessionStorage.setItem(TOKEN_KEY, token);
+  sessionStorage.setItem(BEARER_KEY, bearer);
+  return value;
+}
 
 // Keep in sync with the backend's HISTORY_MAX_MESSAGES (default 20).
 const HISTORY_MAX_MESSAGES = 20;
@@ -418,7 +512,7 @@ async function send() {
   try {
     const resp = await fetch("/chat/stream", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: authHeaders({ "Content-Type": "application/json" }),
       signal: abortController.signal,
       body: JSON.stringify({
         user_id: uidInput.value.trim() || "u1",
@@ -433,6 +527,11 @@ async function send() {
       try { detail = (await resp.json()).detail || detail; } catch (e) {}
       bubble.classList.remove("streaming");
       bubble.classList.add("error");
+      if (resp.status === 401) {
+        // The token expired or the account was disabled: back to the gate.
+        clearCredential();
+        showGate("登录已失效，请重新登录。");
+      }
       const code = typeof detail === "object" && detail ? detail.error : null;
       if (resp.status === 503 || code === "maintenance") {
         bubble.textContent = errorMessage(code || "upstream_unavailable", detail && detail.request_id);
@@ -571,11 +670,6 @@ resetBtn.onclick = () => {
   input.focus();
 };
 
-// Restore the previous conversation (best-effort; ignores corrupt state).
-if (!new URLSearchParams(location.search).get("new")) {
-  loadSession();
-}
-
 document.querySelectorAll(".presets button").forEach(b => {
   b.onclick = () => {
     if (b.dataset.dept && deptSel.value !== b.dataset.dept) {
@@ -587,10 +681,138 @@ document.querySelectorAll(".presets button").forEach(b => {
   };
 });
 
-fetch("/info").then(r => r.json()).then(d => {
-  document.getElementById("store").textContent = d.vector_store || "-";
-  document.getElementById("model").textContent = d.llm_model || "-";
-}).catch(() => {});
+// --- login -----------------------------------------------------------------
+
+async function passwordLogin(username, password) {
+  const res = await fetch("/auth/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username, password }),
+  });
+  if (!res.ok) {
+    document.getElementById("gateErr").textContent =
+      res.status === 429 ? "尝试次数过多，请稍后再试。" : "用户名或密码错误。";
+    return false;
+  }
+  const data = await res.json();
+  if (!data.token) return false;
+  bearer = data.token;
+  token = "";
+  sessionStorage.setItem(TOKEN_KEY, token);
+  sessionStorage.setItem(BEARER_KEY, bearer);
+  document.getElementById("password").value = "";
+  if (data.user && data.user.username) uidInput.value = data.user.username;
+  if (data.user && data.user.depts && data.user.depts.length) {
+    const dept = data.user.depts[0];
+    if (![...deptSel.options].some((o) => o.value === dept)) {
+      const option = document.createElement("option");
+      option.value = dept;
+      option.textContent = dept;
+      deptSel.appendChild(option);
+    }
+    deptSel.value = dept;
+  }
+  return true;
+}
+
+// Who are we? In jwt mode the answer decides whether the gate is shown.
+async function resolveAuth() {
+  const fields = [document.getElementById("uidLabel"), document.getElementById("deptLabel")];
+  if (authMode !== "jwt") {
+    fields.forEach((el) => { if (el) el.hidden = false; });
+    hideGate();
+    return true;
+  }
+  fields.forEach((el) => { if (el) el.hidden = true; });
+  const logout = document.getElementById("logout");
+  if (logout) logout.hidden = false;
+  if (!hasCredential()) {
+    showGate();
+    return false;
+  }
+  try {
+    const res = await fetch("/admin/api/session", { headers: authHeaders() });
+    if (!res.ok) {
+      clearCredential();
+      showGate("登录已失效，请重新登录。");
+      return false;
+    }
+    const info = await res.json();
+    if (info.user_id) uidInput.value = info.user_id;
+    if (info.depts && info.depts.length) {
+      const dept = info.depts[0];
+      if (![...deptSel.options].some((o) => o.value === dept)) {
+        const option = document.createElement("option");
+        option.value = dept;
+        option.textContent = dept;
+        deptSel.appendChild(option);
+      }
+      deptSel.value = dept;
+    }
+    hideGate();
+    return true;
+  } catch (error) {
+    showGate("无法连接服务：" + error.message);
+    return false;
+  }
+}
+
+document.getElementById("loginForm").onsubmit = async (event) => {
+  event.preventDefault();
+  document.getElementById("gateErr").textContent = "";
+  const username = document.getElementById("username").value.trim();
+  const password = document.getElementById("password").value;
+  const pasted = document.getElementById("credential").value.trim();
+  if (pasted) {
+    bearer = pasted;
+    token = "";
+    sessionStorage.setItem(TOKEN_KEY, token);
+    sessionStorage.setItem(BEARER_KEY, bearer);
+    document.getElementById("credential").value = "";
+  } else if (username && password) {
+    if (!(await passwordLogin(username, password))) return;
+  } else {
+    document.getElementById("gateErr").textContent = "请输入用户名和密码，或粘贴 token。";
+    return;
+  }
+  if (!(await resolveAuth())) return;
+  startNewSession("已登录，开始新的对话。");
+};
+
+document.getElementById("logout").onclick = () => {
+  clearCredential();
+  startNewSession("已退出登录。");
+  showGate();
+};
+
+(async function boot() {
+  const fromSso = consumeTokenFragment();
+  const store = document.getElementById("store");
+  const model = document.getElementById("model");
+  try {
+    const info = await fetch("/info").then((r) => r.json());
+    authMode = info.auth_mode || "none";
+    localLogin = Boolean(info.local_login);
+    store.textContent = info.vector_store || "-";
+    model.textContent = info.llm_model || "-";
+  } catch (error) {
+    // Keep working in "none" mode if /info is unreachable.
+  }
+  if (authMode === "jwt" && !localLogin) {
+    // No account store: only a pasted token can log in.
+    document.getElementById("username").hidden = true;
+    document.getElementById("password").hidden = true;
+    document.getElementById("tokenFallback").open = true;
+  }
+  if (authMode === "jwt") document.getElementById("tokenFallback").open = !localLogin;
+  const authed = await resolveAuth();
+  if (authed) {
+    // Restore the previous conversation (best-effort; ignores corrupt state).
+    if (!new URLSearchParams(location.search).get("new")) loadSession();
+  } else if (fromSso) {
+    showGate("登录凭据无效或该账号没有使用权限。");
+  }
+})();
 </script>
 </body>
 </html>

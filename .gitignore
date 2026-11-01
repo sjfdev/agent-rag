@@ -17,3 +17,7 @@ logs/
 # OS / editor
 .DS_Store
 .idea/
+
+# Local account database (contains password hashes): never commit.
+config/users.json
+config/users.json.tmp

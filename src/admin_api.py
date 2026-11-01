@@ -18,7 +18,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from pydantic import BaseModel, Field
 
-from src import audit, auth
+from src import audit, auth, local_auth
 from src.config import settings
 from src.engine import kb_engine
 from src.etl import EnterpriseETL, doc_id_for
@@ -244,6 +244,24 @@ class DeptRequest(BaseModel):
 class IngestRequest(BaseModel):
     dept: Optional[str] = None
     reset: bool = False
+
+
+class UserCreateRequest(BaseModel):
+    username: str = Field(min_length=1, max_length=64)
+    password: str = Field(min_length=1, max_length=256)
+    depts: List[str] = Field(default_factory=list, max_length=20)
+    groups: List[str] = Field(default_factory=list, max_length=50)
+    admin: bool = False
+
+
+class UserUpdateRequest(BaseModel):
+    """Every field optional: only the ones present are applied."""
+
+    password: Optional[str] = Field(default=None, max_length=256)
+    depts: Optional[List[str]] = Field(default=None, max_length=20)
+    groups: Optional[List[str]] = Field(default=None, max_length=50)
+    admin: Optional[bool] = None
+    disabled: Optional[bool] = None
 
 
 _job_store = JobStore(max_jobs=_MAX_JOBS, max_log_lines=_MAX_LOG_LINES)
@@ -651,3 +669,119 @@ def list_jobs():
 def list_audit(limit: int = 50):
     limit = max(1, min(limit, 500))
     return {"records": audit.tail(limit)}
+
+# --- local accounts (AUTH_LOCAL_LOGIN_ENABLED) -----------------------------
+# Only mounted when local login is enabled; otherwise these answer 404, so an
+# IdP-only deployment exposes no account store at all.
+
+
+def _require_local_auth() -> None:
+    if not local_auth.enabled():
+        raise HTTPException(status_code=404, detail="local login is not configured")
+
+
+def _bad_request(exc: Exception) -> HTTPException:
+    return HTTPException(status_code=400, detail=str(exc))
+
+
+@router.get("/users")
+def list_users():
+    _require_local_auth()
+    return {"users": local_auth.list_users(), **local_auth.stats()}
+
+
+@router.post("/users")
+def create_user(req: UserCreateRequest, request: Request):
+    _require_local_auth()
+    try:
+        created = local_auth.create_user(
+            req.username,
+            req.password,
+            depts=req.depts,
+            groups=req.groups,
+            admin=req.admin,
+        )
+    except local_auth.LocalAuthError as exc:
+        raise _bad_request(exc)
+    audit.log_event(
+        "user.create",
+        _actor(request),
+        detail={
+            "username": created["username"],
+            "admin": created["admin"],
+            "depts": created["depts"],
+        },
+    )
+    return created
+
+
+@router.patch("/users/{username}")
+def update_user(username: str, req: UserUpdateRequest, request: Request):
+    _require_local_auth()
+    changes = req.model_dump(exclude_unset=True)
+    password = changes.pop("password", None)
+
+    existing = local_auth.get_user(username)
+    if existing is None:
+        raise HTTPException(status_code=404, detail="user not found")
+    _guard_last_admin(existing, changes)
+    # Validate everything before writing: a bad department must not leave the
+    # password already rotated.
+    try:
+        local_auth.validate_update(**changes)
+        if password:
+            local_auth.validate_password(password)
+    except local_auth.LocalAuthError as exc:
+        raise _bad_request(exc)
+
+    try:
+        if password:
+            local_auth.set_password(username, password)
+        if changes:
+            local_auth.update_user(username, **changes)
+    except local_auth.LocalAuthError as exc:
+        raise _bad_request(exc)
+    current = local_auth.get_user_public(username)
+    detail: Dict[str, Any] = {"username": username, **changes}
+    if password:
+        detail["password"] = "changed"
+    audit.log_event("user.update", _actor(request), detail=detail)
+    return current
+
+
+def _guard_last_admin(existing: Dict[str, Any], changes: Dict[str, Any]) -> None:
+    """Refuse a change that would leave no enabled administrator.
+
+    Checked *before* writing so a rejected request never leaves the store in a
+    half-applied state (the console would otherwise lock itself out).
+    """
+    was_active_admin = bool(existing.get("admin")) and not existing.get("disabled")
+    if not was_active_admin:
+        return
+    still_admin = changes.get("admin", existing.get("admin"))
+    still_enabled = not changes.get("disabled", existing.get("disabled"))
+    if still_admin and still_enabled:
+        return
+    if local_auth.admin_count() <= 1:
+        raise HTTPException(
+            status_code=409,
+            detail="the last enabled administrator cannot be demoted or disabled",
+        )
+
+
+@router.delete("/users/{username}")
+def delete_user(username: str, request: Request):
+    _require_local_auth()
+    record = local_auth.get_user(username)
+    if record is None:
+        raise HTTPException(status_code=404, detail="user not found")
+    if record.get("admin") and local_auth.admin_count() <= 1:
+        raise HTTPException(
+            status_code=409, detail="the last enabled administrator cannot be deleted"
+        )
+    try:
+        deleted = local_auth.delete_user(username)
+    except local_auth.LocalAuthError as exc:
+        raise _bad_request(exc)
+    audit.log_event("user.delete", _actor(request), detail={"username": username})
+    return {"deleted": deleted, "username": username}

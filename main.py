@@ -14,7 +14,7 @@ from fastapi.responses import (
 )
 from fastapi.staticfiles import StaticFiles
 
-from src import auth, chat_service, metrics
+from src import auth, chat_service, local_auth, metrics
 from src.admin_api import _job_store
 from src.admin_api import router as admin_router
 from src.admin_api import session_router as admin_session_router
@@ -75,6 +75,10 @@ async def _invalid_department_handler(request: Request, exc: InvalidDepartment):
 app.include_router(admin_session_router)
 app.include_router(admin_router)
 app.include_router(health_router)
+# /auth/login and /auth/callback answer 404 unless an OIDC client is configured.
+auth.register_routes(app)
+# POST /auth/login for username/password accounts (AUTH_LOCAL_LOGIN_ENABLED).
+local_auth.register_login_route(app)
 
 
 @app.get("/admin", include_in_schema=False)
@@ -92,6 +96,11 @@ def info():
         "llm_model": settings.LLM_MODEL,
         "embedding_backend": settings.EMBEDDING_BACKEND,
         "hybrid": kb_engine.hybrid_status(),
+        "auth_mode": settings.AUTH_MODE,
+        # Whether the console can offer "log in with the company IdP".
+        "oidc_login": auth.auth_enabled() and auth.oidc_login_configured(),
+        # Whether the console should offer username/password login.
+        "local_login": local_auth.enabled(),
     }
 
 
