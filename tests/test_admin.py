@@ -192,3 +192,29 @@ def test_job_history_survives_restart(client, tmp_path):
 
     store = JobStore()
     assert any(j["id"] == job["job_id"] for j in store.list(limit=20))
+
+
+def test_meta_returns_503_when_the_vector_store_stalls(client, monkeypatch):
+    """A stuck store must fail loudly rather than report every file as pending."""
+    from src.engine import kb_engine
+
+    http, data = client
+    (data / "Tech").mkdir()
+    monkeypatch.setattr(kb_engine, "doc_summary", lambda *a, **k: _boom())
+    resp = http.get("/admin/api/meta")
+    assert resp.status_code == 503
+    assert "vector store unavailable" in resp.json()["detail"]
+
+
+def test_files_returns_503_when_the_vector_store_stalls(client, monkeypatch):
+    from src.engine import kb_engine
+
+    http, data = client
+    (data / "Tech").mkdir()
+    monkeypatch.setattr(kb_engine, "doc_summary", lambda *a, **k: _boom())
+    resp = http.get("/admin/api/files")
+    assert resp.status_code == 503
+
+
+def _boom():
+    raise RuntimeError("stalled")

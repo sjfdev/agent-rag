@@ -284,9 +284,33 @@ function hasCredential() {
   return Boolean(bearer || token);
 }
 
+// Every admin call gets a deadline: when the vector store stalls (e.g. the
+// disk is full) a request can hang forever and the console would sit at
+// "加载中" with no explanation.
+const API_TIMEOUT_MS = 20000;
+
 async function api(path, options = {}) {
   const headers = Object.assign(authHeaders(), options.headers || {});
-  const res = await fetch(path, Object.assign({}, options, { headers }));
+  const timeoutMs = options.timeoutMs || API_TIMEOUT_MS;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  let res;
+  try {
+    res = await fetch(
+      path,
+      Object.assign({}, options, { headers, signal: controller.signal })
+    );
+  } catch (err) {
+    if (err.name === "AbortError") {
+      const timeout = new Error("请求超时（" + Math.round(timeoutMs / 1000) + " 秒无响应）");
+      timeout.status = 0;
+      timeout.timeout = true;
+      throw timeout;
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
   const type = res.headers.get("content-type") || "";
   const data = type.includes("application/json") ? await res.json() : await res.text();
   if (!res.ok) {
@@ -671,14 +695,33 @@ async function loadAudit() {
   }
 }
 
+// The four panels load independently. They used to run sequentially in one
+// try/catch, so a single slow endpoint (a stalled Milvus made /admin/api/meta
+// hang) left everything below it — including the account card — unrendered.
 async function refreshAll() {
-  try {
-    await loadMeta();
-    await loadFiles();
-    await loadAudit();
-    await loadUsers();
-  } catch (error) {
-    setMsg($("fileMsg"), "加载失败：" + error.message, "error");
+  const panels = [
+    { name: "概览", run: loadMeta, msg: null },
+    { name: "文件", run: loadFiles, msg: "fileMsg" },
+    { name: "审计", run: loadAudit, msg: null },
+    { name: "账号", run: loadUsers, msg: "userMsg" },
+  ];
+  const results = await Promise.allSettled(panels.map((panel) => panel.run()));
+  const failed = [];
+  results.forEach((result, index) => {
+    if (result.status === "fulfilled") return;
+    const panel = panels[index];
+    const error = result.reason || {};
+    failed.push(panel.name);
+    if (panel.msg) {
+      setMsg(
+        $(panel.msg),
+        panel.name + "加载失败：" + (error.message || error),
+        "error"
+      );
+    }
+  });
+  if (failed.length) {
+    console.warn("panels failed to load:", failed.join(", "));
   }
 }
 
@@ -778,6 +821,7 @@ async function loadUsers() {
     if (error.status !== 404) {
       setMsg($("userMsg"), "账号列表加载失败：" + error.message, "error");
     }
+    throw error;
   }
 }
 
@@ -792,7 +836,7 @@ async function patchUser(username, changes, okMessage) {
   } catch (error) {
     setMsg($("userMsg"), "更新失败：" + error.message, "error");
   }
-  await loadUsers();
+  await loadUsers().catch(() => {});
 }
 
 async function resetPassword(username) {
@@ -811,7 +855,7 @@ async function deleteUser(username) {
   } catch (error) {
     setMsg($("userMsg"), "删除失败：" + error.message, "error");
   }
-  await loadUsers();
+  await loadUsers().catch(() => {});
 }
 
 async function createUser() {
@@ -850,7 +894,7 @@ async function createUser() {
   } catch (error) {
     setMsg($("userMsg"), "创建失败：" + error.message, "error");
   }
-  await loadUsers();
+  await loadUsers().catch(() => {});
 }
 
 async function removeFile(file) {

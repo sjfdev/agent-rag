@@ -63,7 +63,15 @@ class FakeClient:
         pass
 
     # queries
-    def query(self, collection_name, filter="", output_fields=None, limit=None):
+    def query(
+        self,
+        collection_name,
+        filter="",
+        output_fields=None,
+        limit=None,
+        offset=0,
+        timeout=None,
+    ):
         if "count(*)" in (output_fields or []):
             picked = self.rows
             if filter and "doc_id ==" in filter:
@@ -71,13 +79,15 @@ class FakeClient:
                 picked = [r for r in picked if r.get("doc_id") == doc_id]
             return [{"count(*)": len(picked)}]
         picked = self.rows
-        if filter and "doc_id ==" in filter:
+        if filter and "dept ==" in filter:
+            dept = filter.split("'")[1]
+            picked = [r for r in picked if r.get("dept") == dept]
+        elif filter and "doc_id ==" in filter:
             doc_id = filter.split('"')[1]
-            picked = [r for r in self.rows if r.get("doc_id") == doc_id]
+            picked = [r for r in picked if r.get("doc_id") == doc_id]
+        # Pagination: the driver pages with limit/offset, so mimic that here.
+        picked = picked[offset:]
         return picked[: (limit or len(picked))]
-
-    def query_iterator(self, collection_name, batch_size=1000, filter="", output_fields=None):
-        return FakeIterator([list(self.rows)])
 
     # writes
     def delete(self, collection_name, expr=None, **kwargs):
@@ -274,9 +284,10 @@ def test_doc_summary_missing_collection_is_empty():
 
 def test_doc_summary_failure_is_empty():
     client = FakeClient()
-    client.query_iterator = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom"))
+    client.query = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom"))
     driver = make_driver(client)
-    assert driver.doc_summary() == {}
+    with pytest.raises(RuntimeError):
+        driver.doc_summary()
 
 
 def test_list_depts_ignores_errors():
@@ -366,7 +377,7 @@ def test_fetch_documents_filters_rows():
 
 def test_fetch_documents_failure_is_empty():
     client = FakeClient()
-    client.query_iterator = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom"))
+    client.query = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom"))
     driver = make_driver(client)
     assert driver.fetch_documents("Tech") == []
 
@@ -476,3 +487,47 @@ def test_decide_sparse_auto_logs_fallback(monkeypatch):
     monkeypatch.setattr(settings, "HYBRID_ENABLED", True)
     monkeypatch.setattr(settings, "HYBRID_ENGINE", "auto")
     assert driver._decide_sparse() is False
+
+
+# --- paged queries (replacing query_iterator) ------------------------------
+
+
+def test_paged_query_handles_multiple_pages():
+    rows = [{"doc_id": f"d{i}", "doc_hash": "h"} for i in range(1200)]
+    client = FakeClient(rows=rows)
+    driver = make_driver(client)
+    driver._PAGE_SIZE = 500
+    assert len(driver._paged_query("enterprise_kb", ["doc_id", "doc_hash"])) == 1200
+
+
+def test_paged_query_stops_at_the_row_cap():
+    rows = [{"doc_id": f"d{i}", "doc_hash": "h"} for i in range(50)]
+    client = FakeClient(rows=rows)
+    driver = make_driver(client)
+    driver._PAGE_SIZE = 10
+    driver._MAX_PAGED_ROWS = 25
+    assert len(driver._paged_query("enterprise_kb", ["doc_id"])) == 30
+
+
+def test_paged_query_passes_a_timeout():
+    """A stalled server must fail fast instead of blocking the request."""
+    seen = {}
+
+    class Client(FakeClient):
+        def query(self, *a, **kw):
+            seen["timeout"] = kw.get("timeout")
+            return super().query(*a, **kw)
+
+    client = Client(rows=[{"doc_id": "a", "doc_hash": "h"}])
+    driver = make_driver(client)
+    driver._paged_query("enterprise_kb", ["doc_id", "doc_hash"])
+    assert seen["timeout"] == driver._QUERY_TIMEOUT
+
+
+def test_doc_summary_propagates_store_failures():
+    """An empty summary would tell the console every file is pending; be loud."""
+    client = FakeClient()
+    client.query = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("stalled"))
+    driver = make_driver(client)
+    with pytest.raises(RuntimeError):
+        driver.doc_summary()

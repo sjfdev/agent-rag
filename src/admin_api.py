@@ -223,9 +223,14 @@ def _iter_files(dept: Optional[str] = None):
     depts = [dept] if dept else _list_depts()
     try:
         summary = kb_engine.doc_summary()
-    except Exception:
+    except Exception as exc:
+        # Failing loudly beats reporting every file as "pending": when Milvus
+        # cannot answer queries the console must say so, not look empty.
         logger.warning("could not load doc summary", exc_info=True)
-        summary = {}
+        raise HTTPException(
+            status_code=503,
+            detail=f"vector store unavailable: {type(exc).__name__}",
+        ) from exc
     for name in depts:
         folder = root / name
         if not folder.is_dir():

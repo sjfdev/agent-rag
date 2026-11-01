@@ -48,6 +48,7 @@
 | 37 | 部署加固：ACL fail-closed + 账号库持久化 | 本轮 | 完成 |
 | 38 | 发布流程：版本号 / CHANGELOG / 发布闸门 | 本轮 | 完成 |
 | 39 | 手工测试修复：无部门账号 / 400 文案 / 审计表 | 本轮 | 完成 |
+| 40 | 存储卡死不再拖垮控制台（分页查询 + 并行刷新 + 超时） | 本轮 | 完成 |
 
 当前运行态：`vector_store=milvus`、`hybrid.engine=milvus`、Milvus `v2.5.4`、26 chunks / 4 部门。
 
@@ -591,7 +592,7 @@ ResolutionImpossible
 | 检查 | 结果 |
 |---|---|
 | `python test_agent.py` | 20/20 通过（需服务 + LLM，含缓存断言） |
-| `pytest -q`（离线，含 CI） | 461/461，约 30s；覆盖率 92% |
+| `pytest -q`（离线，含 CI） | 468/468，约 30s；覆盖率 92% |
 | `ruff check src tests main.py run_ingestion.py` | 全绿 |
 | `python scripts/check_hybrid.py` | 69/69 |
 | `python scripts/check_hybrid_milvus.py` | 19/19（2.5+），低版本 SKIP |
@@ -766,7 +767,7 @@ python scripts/check_oidc.py --issuer https://login.microsoftonline.com/common/v
   - `Dockerfile` 增加 `/app/config`；`docker-compose.prod.yml` 挂 `./config:/app/config`（读写，因为运行时要写 users.json）并显式设 `AUTH_USERS_FILE`
 - `config/acl.json` 加入 `.gitignore`；`config/acl.example.json` 保持提交
 - `scripts/doctor.py` 新增 `Local accounts` 检查：启用但没有账号、或没有可用管理员时 FAIL
-- 测试：`tests/test_acl.py` 覆盖文件缺失/非法 JSON/非对象/规则值类型错误全部 fail-closed 以及修复后自动恢复；`tests/test_health.py` 覆盖 `/health` 的 acl 字段、不可用时 503、启动拒绝；`tests/test_doctor.py` 覆盖两项新检查。全套 **461 passed**，`ruff` 通过
+- 测试：`tests/test_acl.py` 覆盖文件缺失/非法 JSON/非对象/规则值类型错误全部 fail-closed 以及修复后自动恢复；`tests/test_health.py` 覆盖 `/health` 的 acl 字段、不可用时 503、启动拒绝；`tests/test_doctor.py` 覆盖两项新检查。全套 **468 passed**，`ruff` 通过
 
 ### 发布流程（11.1.3）
 
@@ -790,7 +791,23 @@ python scripts/check_oidc.py --issuer https://login.microsoftonline.com/common/v
 - **审计表根本不存在**：`renderAudit()` 一直在找 `#auditBody`，但 HTML 里从来没有这个表格（从 `63067f0` 起就缺失），所以管理操作一条都看不到。已补上「操作审计」卡片（时间/操作/操作者/对象/结果）
 - **停用的管理员无法删除**：`delete_user` 用 `admin_count()`（只统计启用中的管理员）判断，但条件却是"只要目标是 admin"，于是「唯一启用管理员之外的那个已停用管理员」也删不掉，返回 409。已改成只在目标**是启用中的管理员**且没有其他启用管理员时才拒绝；CLI 同步修正
 
-测试：新增 6 项（无部门被拒 / 有 `AUTH_DEFAULT_DEPTS` 时放行 / 清空部门被拒且不落盘 / API 400 / `missing_department` 与 `invalid department name` 区分 / 已停用管理员可删除），全套 **461 passed**，`ruff` 通过。
+测试：新增 6 项（无部门被拒 / 有 `AUTH_DEFAULT_DEPTS` 时放行 / 清空部门被拒且不落盘 / API 400 / `missing_department` 与 `invalid department name` 区分 / 已停用管理员可删除），全套 **468 passed**，`ruff` 通过。
+
+### Milvus 卡死不再拖垮控制台
+
+现象：管理台打开后「账号」卡片一直不出现，`/admin/api/meta` 和 `/admin/api/files` 请求挂住 120s+，但 `/admin/api/users`、`/admin/api/audit` 正常，`/health` 还是 200。
+
+根因是宿主机磁盘写满（`No space left on device`），Milvus 的 rootcoord 写不了 WAL，于是 **`query_iterator` 永远阻塞**；而 liveness 只看进程活着，所以健康检查全绿。
+
+三处修复：
+
+- **`src/engine.py`**：`doc_summary()` / `fetch_documents()` 改用带 `timeout` 的分页 `query`（每页 500，最多 10 万行），删掉两个 `query_iterator` 调用；`_count` / `_query` / `_query_in` 也补上超时。`doc_summary()` 失败时改为**抛出**而不是返回空字典——空字典会让界面把每个文件都显示成"待入库"，掩盖真实故障
+- **`src/admin_api.py`**：`_iter_files()` 在 `doc_summary()` 失败时返回 **503**「vector store unavailable」，不再假装索引为空；`/admin/api/meta` 与 `/admin/api/files` 因此能明确报错
+- **`static/admin.html`**：`refreshAll()` 从串行 `try/catch` 改成 `Promise.allSettled` 并行，四个面板各自独立成功/失败（以前 `loadMeta` 一挂，后面三个永远轮不到，账号卡片保持 `hidden`）；`api()` 增加 20s `AbortController` 超时，超时提示「请求超时（20 秒无响应）」；`loadUsers()` 重新抛出错误以便面板级提示
+
+实测（磁盘释放出 9.5G 后）：`/admin/api/meta` 79ms、`/admin/api/files` 16ms、`/admin/api/audit` 13ms、`/admin/api/users` 10ms，全部 200。
+
+测试：新增 7 项（多页分页、行数上限、超时参数透传、`doc_summary` 失败抛出、`/meta` 与 `/files` 的 503、`/health` 在 `live_count` 抛错时 down），全套 **468 passed**，`ruff` 通过。
 
 ---
 

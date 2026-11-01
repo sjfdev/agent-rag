@@ -663,7 +663,7 @@ curl -s -X POST localhost:8000/chat -H 'Content-Type: application/json' \
 
 ## 11. 后续待办（按优先级，2026-11-01 之后）
 
-> 当前基线：**461 项测试、92% 覆盖率、CI 全绿**；`milvus 2.5.4 + 服务端稀疏 BM25`；28 chunks；`/health=ok`。
+> 当前基线：**468 项测试、92% 覆盖率、CI 全绿**；`milvus 2.5.4 + 服务端稀疏 BM25`；28 chunks；`/health=ok`。
 > 容器化交付已完成（`Dockerfile` / `docker-compose.prod.yml` / `PRODUCTIZATION.md`）。
 > 下面按「对外发布必须先做 → 产品化 → 规模化」排序，每项都有落点与验收方式。
 

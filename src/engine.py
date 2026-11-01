@@ -434,15 +434,19 @@ class MilvusDriver(BaseVectorStore):
             filter=expr,
             output_fields=fields,
             limit=limit,
+            timeout=self._QUERY_TIMEOUT,
         )
 
     def _count(self, expr: str, allow_missing: bool = False) -> int:
-        # Milvus rejects count(*) when a pagination limit is present.
+        # Milvus rejects count(*) when a pagination limit is present. The
+        # timeout matters: a stalled server would otherwise hang /health and
+        # the whole admin console with it.
         try:
             res = self.vector_db.client.query(
                 collection_name=self.collection,
                 filter=expr,
                 output_fields=["count(*)"],
+                timeout=self._QUERY_TIMEOUT,
             )
         except Exception as exc:
             # Right after a reset the collection may not exist yet; that is an
@@ -514,27 +518,47 @@ class MilvusDriver(BaseVectorStore):
         "page", "slide", "sheet", "title", "chunk_index",
     ]
 
+    # `query_iterator` has no client-side deadline: when the server stalls
+    # (disk full, compaction backlog) the call blocks forever and takes the
+    # whole request with it. Paged `query` with an explicit timeout fails fast
+    # and is what the admin console relies on.
+    _PAGE_SIZE = 500
+    _QUERY_TIMEOUT = 10
+    # Hard cap so a runaway collection cannot make the console load forever.
+    _MAX_PAGED_ROWS = 100_000
+
+    def _paged_query(
+        self, collection: str, fields: List[str], expr: str = ""
+    ) -> List[Dict[str, Any]]:
+        client = self.vector_db.client
+        rows: List[Dict[str, Any]] = []
+        offset = 0
+        while offset < self._MAX_PAGED_ROWS:
+            page = client.query(
+                collection_name=collection,
+                filter=expr,
+                output_fields=fields,
+                limit=self._PAGE_SIZE,
+                offset=offset,
+                timeout=self._QUERY_TIMEOUT,
+            )
+            if not page:
+                break
+            rows.extend(page)
+            offset += len(page)
+        return rows
+
     def fetch_documents(self, dept: str) -> List[Document]:
         expr = dept_filter(dept)
         docs: List[Document] = []
         try:
-            iterator = self.vector_db.client.query_iterator(
-                collection_name=self.collection,
-                batch_size=1000,
-                filter=expr,
-                output_fields=self._FETCH_FIELDS,
-            )
-            while True:
-                rows = iterator.next()
-                if not rows:
-                    iterator.close()
-                    break
-                for row in rows:
-                    text = row.pop("text", "")
-                    docs.append(Document(page_content=text, metadata=row))
+            rows = self._paged_query(self.collection, self._FETCH_FIELDS, expr)
         except Exception:
             logger.warning("failed to fetch dept=%s from milvus", dept, exc_info=True)
             return []
+        for row in rows:
+            text = row.pop("text", "")
+            docs.append(Document(page_content=text, metadata=row))
         return docs
 
     def list_depts(self) -> Set[str]:
@@ -553,6 +577,7 @@ class MilvusDriver(BaseVectorStore):
             filter=expr,
             output_fields=fields,
             limit=limit,
+            timeout=self._QUERY_TIMEOUT,
         )
 
     def get_doc_hash(self, doc_id: str) -> Optional[str]:
@@ -621,27 +646,20 @@ class MilvusDriver(BaseVectorStore):
         if not client.has_collection(target):
             return summary
         try:
-            iterator = client.query_iterator(
-                collection_name=target,
-                batch_size=1000,
-                filter="",
-                output_fields=["doc_id", "doc_hash"],
-            )
-            while True:
-                rows = iterator.next()
-                if not rows:
-                    iterator.close()
-                    break
-                for row in rows:
-                    doc_id = row.get("doc_id")
-                    if not doc_id:
-                        continue
-                    entry = summary.setdefault(
-                        doc_id, {"doc_hash": row.get("doc_hash"), "chunks": 0}
-                    )
-                    entry["chunks"] += 1
+            rows = self._paged_query(target, ["doc_id", "doc_hash"])
         except Exception:
+            # Propagate: an empty summary would tell the console every file is
+            # "pending", which is misleading when the store is actually stuck.
             logger.warning("failed to build doc summary from milvus", exc_info=True)
+            raise
+        for row in rows:
+            doc_id = row.get("doc_id")
+            if not doc_id:
+                continue
+            entry = summary.setdefault(
+                doc_id, {"doc_hash": row.get("doc_hash"), "chunks": 0}
+            )
+            entry["chunks"] += 1
         return summary
 
     def delete_stale_versions(self, doc_id: str, keep_hash: str) -> int:

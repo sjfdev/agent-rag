@@ -183,3 +183,19 @@ def test_startup_refuses_broken_acl(tmp_path, monkeypatch):
         monkeypatch.setattr(settings, "ACL_ENABLED", False)
         acl.refresh()
         importlib.reload(main)
+
+
+def test_health_reports_a_stalled_store(client, monkeypatch):
+    """live_count raising must mark /health down, not silently return ok."""
+    from src.engine import kb_engine
+
+    def boom():
+        raise RuntimeError("stalled")
+
+    monkeypatch.setattr(kb_engine, "live_count", boom)
+    resp = client.get("/health")
+    body = resp.json()
+    assert resp.status_code == 503
+    assert body["status"] == "down"
+    assert body["vector_store"]["ok"] is False
+    assert body["vector_store"]["error"] == "RuntimeError"
