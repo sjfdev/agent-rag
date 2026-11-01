@@ -42,6 +42,11 @@ COPY eval ./eval
 # Embedding model is baked into the image so a cold start never downloads it.
 # Offline mode is turned off for this step only (the runtime keeps it on), and
 # the HF mirror is used by default for networks that cannot reach huggingface.co.
+#
+# Mirrors rot: if this step stalls with no progress, the endpoint is refusing the
+# model files (hf-mirror.com started returning 403 for them) rather than the
+# build being slow. Point it at a working one without editing this file:
+#   docker build --build-arg HF_ENDPOINT=https://hf-api.gitee.com -t agent-rag:dev .
 ARG EMBEDDING_MODEL=BAAI/bge-small-zh-v1.5
 ARG HF_ENDPOINT=https://hf-mirror.com
 RUN HF_HUB_OFFLINE=0 HF_ENDPOINT="${HF_ENDPOINT}" \
