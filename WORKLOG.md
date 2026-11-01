@@ -46,6 +46,7 @@
 | 35 | 浏览器 OIDC 登录（`/auth/login` → `/auth/callback`） | 本轮 | 完成 |
 | 36 | 本地账号登录（scrypt + CLI + 管理台，不接 IdP） | 本轮 | 完成 |
 | 37 | 部署加固：ACL fail-closed + 账号库持久化 | 本轮 | 完成 |
+| 38 | 发布流程：版本号 / CHANGELOG / 发布闸门 | 本轮 | 完成 |
 
 当前运行态：`vector_store=milvus`、`hybrid.engine=milvus`、Milvus `v2.5.4`、26 chunks / 4 部门。
 
@@ -589,7 +590,7 @@ ResolutionImpossible
 | 检查 | 结果 |
 |---|---|
 | `python test_agent.py` | 20/20 通过（需服务 + LLM，含缓存断言） |
-| `pytest -q`（离线，含 CI） | 444/444，约 30s；覆盖率 92% |
+| `pytest -q`（离线，含 CI） | 454/454，约 30s；覆盖率 92% |
 | `ruff check src tests main.py run_ingestion.py` | 全绿 |
 | `python scripts/check_hybrid.py` | 69/69 |
 | `python scripts/check_hybrid_milvus.py` | 19/19（2.5+），低版本 SKIP |
@@ -764,7 +765,21 @@ python scripts/check_oidc.py --issuer https://login.microsoftonline.com/common/v
   - `Dockerfile` 增加 `/app/config`；`docker-compose.prod.yml` 挂 `./config:/app/config`（读写，因为运行时要写 users.json）并显式设 `AUTH_USERS_FILE`
 - `config/acl.json` 加入 `.gitignore`；`config/acl.example.json` 保持提交
 - `scripts/doctor.py` 新增 `Local accounts` 检查：启用但没有账号、或没有可用管理员时 FAIL
-- 测试：`tests/test_acl.py` 覆盖文件缺失/非法 JSON/非对象/规则值类型错误全部 fail-closed 以及修复后自动恢复；`tests/test_health.py` 覆盖 `/health` 的 acl 字段、不可用时 503、启动拒绝；`tests/test_doctor.py` 覆盖两项新检查。全套 **444 passed**，`ruff` 通过
+- 测试：`tests/test_acl.py` 覆盖文件缺失/非法 JSON/非对象/规则值类型错误全部 fail-closed 以及修复后自动恢复；`tests/test_health.py` 覆盖 `/health` 的 acl 字段、不可用时 503、启动拒绝；`tests/test_doctor.py` 覆盖两项新检查。全套 **454 passed**，`ruff` 通过
+
+### 发布流程（11.1.3）
+
+- `src/version.py` 是版本号唯一来源（`1.0.0`）；`GET /info` 新增 `version`，`/metrics` 新增 `agent_rag_build_info{version=...}`，Prometheus 里能直接看出线上跑的是哪个版本
+- `CHANGELOG.md` 按 Keep a Changelog 编写，首个版本 `1.0.0` 记录了既有全部能力（含安全策略与已知限制），并留出 `[Unreleased]`
+- `scripts/check_release.py` 校验四处一致：`__version__`、`CHANGELOG` 的 `## [x.y.z]`、HEAD 上的 git tag、compose 的 `APP_TAG`；同时检查工作区干净，可选跑 lint + pytest。失败退出码非 0
+- `make release-check`（只做一致性）/ `make release`（含 lint + 测试）
+- 发布步骤：
+  ```bash
+  make release                                   # 一致性 + lint + pytest
+  git tag -a v1.0.0 -m "release 1.0.0" && git push origin v1.0.0
+  APP_TAG=v1.0.0 docker compose -f docker-compose.prod.yml build
+  ```
+- 测试：`tests/test_release.py`（8 项）覆盖 semver 格式、CHANGELOG 中存在该版本号、缺失版本号能被识别、compose 使用 `APP_TAG`、脏工作区/标签不匹配会失败
 
 ---
 

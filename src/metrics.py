@@ -95,6 +95,17 @@ _HYBRID_SPARSE_READY = Gauge(
     "1 when the vector store can serve server-side BM25 sparse search.",
     registry=REGISTRY,
 )
+_VERSION = Gauge(
+    "agent_rag_build_info",
+    "Constant 1 with the application version as a label (query for deploys).",
+    ["version"],
+    registry=REGISTRY,
+)
+
+
+def set_build_info(version: str) -> None:
+    """Expose the running version so dashboards can tell releases apart."""
+    _VERSION.labels(version=version).set(1.0)
 
 
 def set_hybrid(engine: str, sparse_ready: bool) -> None:
@@ -175,8 +186,10 @@ def render() -> bytes:
     from src.cache import answer_cache
     from src.engine import kb_engine
     from src.runtime import in_maintenance
+    from src.version import __version__
 
     _MAINTENANCE.set(1 if in_maintenance() else 0)
+    set_build_info(__version__)
     try:
         status = kb_engine.hybrid_status()
         set_hybrid(status["engine"], status["sparse_ready"])

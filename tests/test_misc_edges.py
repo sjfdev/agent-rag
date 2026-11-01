@@ -131,3 +131,32 @@ def test_chat_service_dunder_attribute_guard():
     with pytest.raises(AttributeError):
         # Frameworks probe dunder attributes during introspection.
         proxy.__wrapped__  # noqa: B018
+
+
+@pytest.fixture()
+def api_client(tmp_path, monkeypatch):
+    import importlib
+
+    from fastapi.testclient import TestClient
+
+    monkeypatch.setattr(settings, "DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setattr(settings, "DB_PATH", str(tmp_path / "db"))
+    (tmp_path / "data").mkdir()
+    import main
+
+    importlib.reload(main)
+    with TestClient(main.app) as test_client:
+        yield test_client
+
+
+def test_info_reports_version(api_client):
+    from src.version import __version__
+
+    assert api_client.get("/info").json()["version"] == __version__
+
+
+def test_metrics_expose_build_info(api_client):
+    from src.version import __version__
+
+    text = api_client.get("/metrics").text
+    assert f'agent_rag_build_info{{version="{__version__}"}} 1.0' in text

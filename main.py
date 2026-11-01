@@ -23,6 +23,7 @@ from src.engine import kb_engine
 from src.health import router as health_router
 from src.schemas import ChatRequest, ChatResponse
 from src.validation import InvalidDepartment
+from src.version import __version__
 
 logging.basicConfig(
     level=logging.INFO,
@@ -92,6 +93,7 @@ def admin_page():
 @app.get("/info")
 def info():
     return {
+        "version": __version__,
         "vector_store": settings.VECTOR_STORE_TYPE,
         "llm_model": settings.LLM_MODEL,
         "embedding_backend": settings.EMBEDDING_BACKEND,

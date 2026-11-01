@@ -663,7 +663,7 @@ curl -s -X POST localhost:8000/chat -H 'Content-Type: application/json' \
 
 ## 11. 后续待办（按优先级，2026-11-01 之后）
 
-> 当前基线：**444 项测试、92% 覆盖率、CI 全绿**；`milvus 2.5.4 + 服务端稀疏 BM25`；28 chunks；`/health=ok`。
+> 当前基线：**454 项测试、92% 覆盖率、CI 全绿**；`milvus 2.5.4 + 服务端稀疏 BM25`；28 chunks；`/health=ok`。
 > 容器化交付已完成（`Dockerfile` / `docker-compose.prod.yml` / `PRODUCTIZATION.md`）。
 > 下面按「对外发布必须先做 → 产品化 → 规模化」排序，每项都有落点与验收方式。
 
@@ -691,10 +691,12 @@ curl -s -X POST localhost:8000/chat -H 'Content-Type: application/json' \
 - [ ] 验收：跨租户检索 0 泄漏；管理台按租户隔离
 
 #### 11.1.3 发布流程
-- [ ] `CHANGELOG.md`（按版本记录行为变更）
-- [ ] `git tag` 与镜像 tag 对齐（`APP_TAG`）
-- [ ] 发布前清单：`make check` + `make doctor` + 两后端 `eval_retrieval.py`
+- [x] `CHANGELOG.md`（Keep a Changelog 格式，`1.0.0` 已记录全部既有能力）
+- [x] 版本号单一来源 `src/version.py`；`GET /info` 与 `agent_rag_build_info{version}` 暴露运行版本
+- [x] `git tag` 与镜像 tag 对齐：`scripts/check_release.py` 校验 `__version__` / `CHANGELOG` / 标签 / `APP_TAG` 四处一致，`make release` 一并跑 lint + 测试
+- [ ] 发布前清单：`make release` + `make doctor` + 两后端 `eval_retrieval.py`
 - [ ] schema 变更写迁移说明（当前只有 `--reset`）
+- [ ] 首次打 tag：`v1.0.0`（`git tag -a v1.0.0 -m "release 1.0.0" && git push origin v1.0.0`）
 
 #### 11.1.4 备份与恢复演练
 - [ ] 备份 `data/` + `volumes-prod/` + `logs/` + `config/`（账号库与 ACL 规则）

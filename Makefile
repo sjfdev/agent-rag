@@ -6,7 +6,7 @@ PYTHON := $(CONDA_PY)
 endif
 
 .PHONY: help install data ingest run test lint cov milvus-up milvus-down milvus-logs \
-        reset-faiss reset-milvus doctor check eval clean
+        reset-faiss reset-milvus doctor check eval clean release release-check
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | \
@@ -58,6 +58,12 @@ check: lint test ## Lint + tests
 
 eval: ## Retrieval evaluation (hit@k / MRR / leakage)
 	$(PYTHON) scripts/eval_retrieval.py
+
+release-check: ## Verify version/CHANGELOG/compose agree (no tests)
+	$(PYTHON) scripts/check_release.py --no-tests
+
+release: ## Full release gate: consistency + lint + tests
+	$(PYTHON) scripts/check_release.py
 
 clean: ## Remove caches and coverage artefacts
 	rm -rf .pytest_cache .ruff_cache .coverage htmlcov
