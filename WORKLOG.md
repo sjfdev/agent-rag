@@ -48,8 +48,10 @@
 | 37 | 部署加固：ACL fail-closed + 账号库持久化 | 本轮 | 完成 |
 | 38 | 发布流程：版本号 / CHANGELOG / 发布闸门 | 本轮 | 完成 |
 | 39 | 手工测试修复：无部门账号 / 400 文案 / 审计表 | 本轮 | 完成 |
-| 40 | 存储卡死不再拖垮控制台（分页查询 + 并行刷新 + 超时） | 本轮 | 完成 |
-| 41 | 聊天页安全 Markdown 渲染 | 本轮 | 完成 |
+| 40 | 存储卡死不再拖垮控制台（分页查询 + 并行刷新 + 超时） | `051980c` | 完成 |
+| 41 | 聊天页安全 Markdown 渲染 | `3ad6819` | 完成 |
+| 42 | Milvus 写路径事故定位 + 磁盘余量哨兵 | `d8f65e7` | 完成 |
+| 43 | schema 迁移说明 + 发布前清单收尾 | 本次（纯文档） | 完成 |
 
 当前运行态：`vector_store=milvus`、`hybrid.engine=milvus`、Milvus `v2.5.4`、26 chunks / 4 部门。
 
@@ -837,6 +839,44 @@ python scripts/check_oidc.py --issuer https://login.microsoftonline.com/common/v
 `<script>` / `<img onerror>` 转义、`javascript:`/`data:`/`vbscript:`/`//evil` 不生成 `<a>`、链接 label 也转义、代码块内不解析 Markdown、嵌套强调、标题降级、不重复转义。
 
 实测：带表格的回答渲染成 `<table>` + `<strong>`，`R&D` 正确变成 `R&amp;D`。全套 **490 passed**，`ruff` 通过。
+
+### Milvus 写路径事故与磁盘哨兵（2026-11-01）
+
+`create_collection` 突然全线失败：
+
+```
+MilvusException(65535): IO error: No space left on device:
+While open a file for appending: /var/lib/milvus/rdb_data/000463.log
+```
+
+排查过程与结论：
+
+| 检查 | 结果 |
+|---|---|
+| 宿主机 `df -h` | 11G 可用（磁盘先前被写满过一次，已清理） |
+| 容器内写 20MB 新文件 | 成功，241 MB/s |
+| 容器内往同一目录 append 8MB | 成功，235 MB/s |
+| `rdb_data/000463.log` | **已不存在**（早已轮转） |
+| `docker restart milvus-standalone` 后重试 | 立即可写 |
+
+所以这不是磁盘问题，而是 **RocksDB 把第一次 ENOSPC 固化成了后台错误**：错误信息是缓存的，空间释放后仍然拒绝写入，直到重新打开 DB。读路径全程正常（28 rows，alias 可解析），所以服务看起来还是好的 —— 只有写入（首次入库、`--reset`、零停机重建的临时集合）悄悄失效。
+
+恢复后实测：
+
+```
+check_hybrid_milvus.py        19/19 PASS（含 shadow 重建 + alias 交换）
+run_ingestion.py --reset      28 chunks
+真实 /chat                    "15 days of paid annual leave" + 3 条引用
+```
+
+**真正的缺陷是 `/health` 全程 `ok`。** 补上的东西：
+
+- `/health` 新增 `storage` 块：`DATA_DIR` / `DB_PATH` / 任务与审计日志取最小余量，低于 `HEALTH_MIN_FREE_MB`（默认 512，0 关闭）→ `degraded`，并指出最紧的路径
+- `scripts/doctor.py` 新增 `Disk space` 检查（FAIL 时给出路径与余量）
+- `QUICKSTART.md` 写明处置顺序：清空间 **并且** `docker restart milvus-standalone`，只清空间没用
+- 5 项新测试（阈值、取最紧目录、可关闭、路径不可读不误报）
+
+同期把发布闸门补全：`make release` + `doctor` + 双后端 eval 全部跑通，`v1.0.0` tag 与 `agent-rag:v1.0.0` 镜像落地；镜像构建时发现 `hf-mirror.com` 对模型文件返回 403（宿主机有缓存所以本地无感），已把 `--build-arg HF_ENDPOINT=...` 的处置写进 `Dockerfile`。
 
 ---
 

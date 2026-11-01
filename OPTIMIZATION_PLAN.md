@@ -694,8 +694,8 @@ curl -s -X POST localhost:8000/chat -H 'Content-Type: application/json' \
 - [x] `CHANGELOG.md`（Keep a Changelog 格式，`1.0.0` 已记录全部既有能力）
 - [x] 版本号单一来源 `src/version.py`；`GET /info` 与 `agent_rag_build_info{version}` 暴露运行版本
 - [x] `git tag` 与镜像 tag 对齐：`scripts/check_release.py` 校验 `__version__` / `CHANGELOG` / 标签 / `APP_TAG` 四处一致，`make release` 一并跑 lint + 测试
-- [ ] 发布前清单：`make release` + `make doctor` + 两后端 `eval_retrieval.py`（`make release` 与 tag 已完成，`doctor` 与双后端 eval 未跑）
-- [ ] schema 变更写迁移说明（当前只有 `--reset`）
+- [x] 发布前清单：`make release`（490 项测试 + lint）、`make doctor`（12 项 OK）、双后端 `eval_retrieval.py`。实测 2026-11-01：Milvus 与 FAISS 均 `hit@4=18/18 (100%)`、`MRR=0.89`、`leaks=0`；Milvus p50 293ms / FAISS p50 107ms
+- [x] schema 变更写迁移说明：`AGENT_GUIDE.md` §5.5.1 列出固定字段集、必须 `--reset` 与不需要 `--reset` 的变更、零停机迁移步骤（备份 → `--reset` 写影子集合 → 切别名 → verify + eval），并说明不要手工 `drop_collection`
 - [x] 首次打 tag：`v1.0.0`（已推送，`check_release.py` 五项通过；CI 在 tag 指向的 `3ad6819` 上 success）
 
 #### 11.1.4 备份与恢复演练

@@ -754,6 +754,48 @@ python run_ingestion.py --no-prune # 不清理已删除文件
 
 > FAISS 与 Milvus 索引互相独立；切换 `VECTOR_STORE_TYPE` 后需对目标后端单独入库。也可以在 `/admin` 中点击「重建索引」。
 
+#### 5.5.1 索引结构变更（schema 迁移）
+
+Milvus 的 collection 字段在创建时固定，不能原地加列。当前字段集是：
+
+```
+text, source, dept, doc_id, doc_hash, kind,
+page, slide, sheet, title, chunk_index, vector, sparse
+```
+
+**必须 `--reset`** 的变更：
+
+| 变更 | 原因 |
+|---|---|
+| 新增/删除/重命名元数据键 | `chunk_index`、`title` 之类字段写在 schema 里，旧集合没有该列 |
+| 换 `LOCAL_EMBEDDING_MODEL` 或改向量维度 | `vector` 的 `dim` 在 schema 里固定 |
+| 切换 `VECTOR_STORE_TYPE` | FAISS 与 Milvus 是两个独立索引 |
+| 从 Milvus 2.4 升级到 2.5 并启用服务端稀疏 BM25 | 需要新增 `sparse` 字段与索引 |
+| 改 `HYBRID_ENABLED`/稀疏检索方式但保留旧集合 | 旧集合没有 `sparse`，`hybrid.engine` 会退回 `local` |
+
+**不需要 `--reset`** 的变更（增量入库会自动按 `doc_id` 替换）：
+
+- 改 `XLSX_ROWS_PER_CHUNK` / `CSV_ROWS_PER_CHUNK`、chunk 切分参数
+- 改解析开关（`PDF_TABLES_ENABLED` / `OCR_ENABLED`）——内容变化会让 `doc_hash` 变，触发替换
+- 改 `data/` 下的文件内容或目录结构
+
+**迁移步骤**（零停机，查询全程可用）：
+
+```bash
+# 1. 先备份，再动索引
+python -c "import shutil; shutil.make_archive('backup-data','gztar','data')"
+cp -a config backup-config            # 账号库与 ACL；丢了无法重建
+
+# 2. 重建：写入影子集合，最后毫秒级切别名
+python run_ingestion.py --reset
+
+# 3. 验收：部门隔离 + 检索质量
+python scripts/verify_retrieval.py
+VECTOR_STORE_TYPE=milvus python scripts/eval_retrieval.py
+```
+
+`--reset` 不会先删旧集合：它在旁边建临时 collection 写完再交换别名；FAISS 则是写临时目录后 `os.replace`。所以重建失败时旧索引仍然可用，不会出现「查不到」的窗口。**不要手工 `drop_collection`** —— 别名才是切换点，直接删会让服务指向不存在的集合。
+
 ### 5.6 入库管理台 `/admin`
 
 打开 `http://localhost:8000/admin`（对话页左下角也有入口）：
