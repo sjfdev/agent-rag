@@ -128,3 +128,58 @@ def test_health_probe_http_error(client, monkeypatch):
     body = client.get("/health?probe=1").json()
     assert body["llm"]["probe"] == "failed"
     assert body["llm"]["error"] == "HTTP 429"
+
+
+def test_health_reports_acl_state(client, monkeypatch):
+    from src import acl
+
+    monkeypatch.setattr(settings, "ACL_ENABLED", False)
+    acl.refresh()
+    body = client.get("/health").json()
+    assert body["acl"] == {"enabled": False, "ok": True, "rules": 0, "error": None}
+
+
+def test_health_is_down_when_acl_is_broken(client, tmp_path, monkeypatch):
+    from src import acl
+
+    _seed(count=2)
+    monkeypatch.setattr(settings, "ACL_ENABLED", True)
+    monkeypatch.setattr(settings, "ACL_FILE", str(tmp_path / "missing-acl.json"))
+    acl.refresh()
+    try:
+        resp = client.get("/health")
+        body = resp.json()
+        # A broken ACL hides every document, so readiness must not say "ok".
+        assert resp.status_code == 503
+        assert body["status"] == "down"
+        assert body["acl"]["enabled"] is True
+        assert body["acl"]["ok"] is False
+        assert "does not exist" in body["acl"]["error"]
+    finally:
+        monkeypatch.setattr(settings, "ACL_ENABLED", False)
+        acl.refresh()
+
+
+def test_startup_refuses_broken_acl(tmp_path, monkeypatch):
+    """A deployment with ACL_ENABLED=true and no file must not start."""
+    import importlib
+
+    from src import acl
+
+    monkeypatch.setattr(settings, "DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setattr(settings, "DB_PATH", str(tmp_path / "db"))
+    monkeypatch.setattr(settings, "ACL_ENABLED", True)
+    monkeypatch.setattr(settings, "ACL_FILE", str(tmp_path / "missing-acl.json"))
+    (tmp_path / "data").mkdir()
+    acl.refresh()
+    import main
+
+    importlib.reload(main)
+    try:
+        with pytest.raises(RuntimeError, match="document ACL misconfigured"):
+            with TestClient(main.app):
+                pass
+    finally:
+        monkeypatch.setattr(settings, "ACL_ENABLED", False)
+        acl.refresh()
+        importlib.reload(main)

@@ -33,7 +33,7 @@ Container build: `docker build -t agent-rag:dev .` (CPU-only torch, embedding mo
 - **Loader Check**: `python scripts/check_loaders.py` (extracts every supported format in /tmp, no vector store needed).
 - **Admin Check**: `python scripts/check_admin.py` (upload→ingest→delete smoke test; server must be running).
 - **Latency Benchmark**: `python scripts/bench_retrieval.py` (embedding vs FAISS vs Milvus vs LLM). `/chat` responses include `timings` (`retrieval_ms`, `llm_ms`, `llm_calls`, `overhead_ms`, `total_ms`).
-- **Tests (offline)**: `pytest -q` runs 432 unit/API/service tests with fake embeddings and a stubbed LLM (no network, ~25s, 92% coverage). `pytest --cov=src` for coverage. Lint with `ruff check src tests main.py run_ingestion.py`.
+- **Tests (offline)**: `pytest -q` runs 444 unit/API/service tests with fake embeddings and a stubbed LLM (no network, ~25s, 92% coverage). `pytest --cov=src` for coverage. Lint with `ruff check src tests main.py run_ingestion.py`.
 - **Verification (live)**: `python test_agent.py` (requires the API server + a working LLM endpoint).
 
 ## Critical Gotchas & Setup

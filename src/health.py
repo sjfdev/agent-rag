@@ -121,6 +121,15 @@ def health(probe: bool = Query(False, description="also call the LLM endpoint"))
             degraded = True
     checks["llm"] = llm
 
+    from src import acl
+
+    acl_state = acl.status()
+    checks["acl"] = acl_state
+    if acl_state["enabled"] and not acl_state["ok"]:
+        # Documents would be filtered out (or the app refused to start); make
+        # the readiness probe say so instead of looking healthy.
+        down = True
+
     status = "down" if down else ("degraded" if degraded else "ok")
     checks["status"] = status
     checks["maintenance"] = maintenance

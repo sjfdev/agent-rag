@@ -163,7 +163,7 @@ git push origin v1.2.0
 
 ### 2.8 备份与恢复演练（P1）
 
-- 备份 `data/`（原始文件）+ `volumes/`（索引）+ `logs/`
+- 备份 `data/`（原始文件）+ `volumes/`（索引）+ `logs/` + `config/`（`users.json` 账号库与 `acl.json` 规则）
 - 每季度做一次「删库 → 恢复 → 验证」演练
 - 恢复后跑 `scripts/verify_retrieval.py` 与 `eval_retrieval.py` 确认数据完整
 

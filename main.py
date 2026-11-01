@@ -14,7 +14,7 @@ from fastapi.responses import (
 )
 from fastapi.staticfiles import StaticFiles
 
-from src import auth, chat_service, local_auth, metrics
+from src import acl, auth, chat_service, local_auth, metrics
 from src.admin_api import _job_store
 from src.admin_api import router as admin_router
 from src.admin_api import session_router as admin_session_router
@@ -112,6 +112,14 @@ async def startup_event():
         # A misconfigured auth setup must not start silently open.
         logger.error("authentication misconfigured: %s", exc)
         raise
+
+    try:
+        acl.validate_config()
+    except acl.ACLConfigError as exc:
+        # ACL_ENABLED=true with a missing/unreadable file would otherwise serve
+        # every document. Refuse to start instead of leaking silently.
+        logger.error("document ACL misconfigured: %s", exc)
+        raise RuntimeError(f"document ACL misconfigured: {exc}") from exc
 
     # Jobs that were mid-flight when the process died are marked failed so the
     # console does not show a permanently "running" task after a restart.

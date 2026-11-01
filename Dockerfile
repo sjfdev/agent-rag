@@ -48,8 +48,11 @@ RUN HF_HUB_OFFLINE=0 HF_ENDPOINT="${HF_ENDPOINT}" \
     python -c "from sentence_transformers import SentenceTransformer as S; S('${EMBEDDING_MODEL}')"
 
 # Non-root runtime user; /app/data and /app/logs stay writable for ingestion.
+# /app/config holds mutable app state (local accounts, optional ACL rules), so
+# it must exist and be writable — and it MUST be a bind mount in production,
+# otherwise every `up --build` silently drops the accounts created at runtime.
 RUN useradd --create-home --uid 10001 app \
- && mkdir -p /app/data /app/logs /models \
+ && mkdir -p /app/data /app/logs /app/config /models \
  && chown -R app:app /app /models
 USER app
 

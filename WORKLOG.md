@@ -45,6 +45,7 @@
 | 34 | OIDC/JWKS 接入（无账号验证） | 本轮 | 完成 |
 | 35 | 浏览器 OIDC 登录（`/auth/login` → `/auth/callback`） | 本轮 | 完成 |
 | 36 | 本地账号登录（scrypt + CLI + 管理台，不接 IdP） | 本轮 | 完成 |
+| 37 | 部署加固：ACL fail-closed + 账号库持久化 | 本轮 | 完成 |
 
 当前运行态：`vector_store=milvus`、`hybrid.engine=milvus`、Milvus `v2.5.4`、26 chunks / 4 部门。
 
@@ -588,7 +589,7 @@ ResolutionImpossible
 | 检查 | 结果 |
 |---|---|
 | `python test_agent.py` | 20/20 通过（需服务 + LLM，含缓存断言） |
-| `pytest -q`（离线，含 CI） | 432/432，约 35s；覆盖率 92% |
+| `pytest -q`（离线，含 CI） | 444/444，约 30s；覆盖率 92% |
 | `ruff check src tests main.py run_ingestion.py` | 全绿 |
 | `python scripts/check_hybrid.py` | 69/69 |
 | `python scripts/check_hybrid_milvus.py` | 19/19（2.5+），低版本 SKIP |
@@ -749,7 +750,21 @@ python scripts/check_oidc.py --issuer https://login.microsoftonline.com/common/v
 - 命令行 `scripts/manage_users.py add|list|show|set|passwd|disable|enable|delete`，密码从终端读（不进 shell 历史），无 TTY 时从 stdin 读
 - `/ui/` 修复：jwt 模式下原本只发 body 身份、必然 401；现在有登录框、`Authorization` 头、401 自动回登录框、退出按钮，部门/用户字段在 jwt 模式下隐藏
 - 实测（uvicorn + 真实 HTTP）：登录 200 → `/admin/api/session` 返回 `user:alice / Tech,HR / admin`；bob（仅 Finance）登录后 `/admin/api/meta` 403、body 伪造 `user_dept=Tech` 仍只能用 Finance；改密码后旧 token 401；停用后登录 401；降级唯一管理员 409
-- 测试：`tests/test_auth_local.py`（55 项）覆盖哈希/盐/篡改参数、用户名与部门校验、原子写与 0600、缓存失效、吊销（禁用/删除/改密/改权限）、外部 token 不受影响、登录限流与审计、管理台 CRUD、最后管理员保护；全套 **432 passed**，`ruff` 通过
+- 测试：`tests/test_auth_local.py`（55 项）覆盖哈希/盐/篡改参数、用户名与部门校验、原子写与 0600、缓存失效、吊销（禁用/删除/改密/改权限）、外部 token 不受影响、登录限流与审计、管理台 CRUD、最后管理员保护
+
+### 部署加固：ACL fail-closed 与账号库持久化
+
+复盘时发现两个"部署后才会暴露"的问题，都属于会静默出错的那一类：
+
+- **ACL 静默放行（fail-open）**：`ACL_ENABLED=true` + 规则文件缺失/损坏时，`_load()` 返回 `{}`，`is_allowed()` 于是对任何文档都返回 `True`。生产 compose 里 `ACL_FILE=/app/config/acl.json` 的挂载原本是注释状态，一旦有人打开 `ACL_ENABLED` 却忘了取消注释，机密文档**完全不过滤**，且 `/health` 报 ok
+  - 现在 `acl._load()` 在文件缺失、不可解析、非对象、规则值不是列表时抛 `ACLConfigError`；`is_allowed` / `filter_documents` 一律按"受控"处理（丢弃文档）
+  - 启动时 `acl.validate_config()` 失败即拒绝启动（与弱密钥同样的处理）；`/health` 新增 `acl` 字段并在不可用时返回 503；`scripts/doctor.py` 新增 `Document ACL` 检查
+  - 修好文件后按 mtime 自动恢复，无需重启
+- **账号库随容器消失**：`AUTH_USERS_FILE` 默认落在 `/app/config/users.json`，但镜像只 `mkdir /app/data /app/logs /models`，compose 也只挂了 `data/` 和 `logs/`。功能能跑（`_save()` 会建目录），但 `up --build` 一重建容器，**所有本地账号全部丢失**
+  - `Dockerfile` 增加 `/app/config`；`docker-compose.prod.yml` 挂 `./config:/app/config`（读写，因为运行时要写 users.json）并显式设 `AUTH_USERS_FILE`
+- `config/acl.json` 加入 `.gitignore`；`config/acl.example.json` 保持提交
+- `scripts/doctor.py` 新增 `Local accounts` 检查：启用但没有账号、或没有可用管理员时 FAIL
+- 测试：`tests/test_acl.py` 覆盖文件缺失/非法 JSON/非对象/规则值类型错误全部 fail-closed 以及修复后自动恢复；`tests/test_health.py` 覆盖 `/health` 的 acl 字段、不可用时 503、启动拒绝；`tests/test_doctor.py` 覆盖两项新检查。全套 **444 passed**，`ruff` 通过
 
 ---
 

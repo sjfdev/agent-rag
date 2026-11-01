@@ -99,7 +99,7 @@ agent-rag/
 ├── volumes/                 # Milvus/etcd 数据卷
 ├── eval/cases.jsonl         # 检索评测集（命中 + 泄漏用例）
 ├── config/acl.example.json  # 文档级 ACL 规则示例
-├── tests/                   # pytest 离线测试（432 项，覆盖率 92%）
+├── tests/                   # pytest 离线测试（444 项，覆盖率 92%）
 ├── Makefile                 # 常用命令（make help）
 ├── .github/workflows/ci.yml # ruff + pytest（CI）
 ├── WORKLOG.md               # 本轮迭代记录与验证矩阵
@@ -336,7 +336,7 @@ curl -fsS localhost:8000/health
 
 - 镜像 CPU-only（torch 从 CPU 索引安装），embedding 模型已内置，冷启动不联网
 - 只有 `app` 暴露 8000；Milvus/etcd 在内网
-- 数据卷：`./data`（原始文件）、`./logs`、`./volumes-prod`（索引，与本地开发栈隔离）
+- 数据卷：`./data`（原始文件）、`./logs`、`./volumes-prod`（索引，与本地开发栈隔离）、`./config`（本地账号 `users.json` 与 `acl.json`，**必须持久化**，否则重建容器会丢账号）
 - 容器健康检查用 `/info`（存活）；**就绪探针请用 `/health`**（索引为空时返回 503）
 - 慢网络可用构建参数：`--build-arg PIP_INDEX_URL=... TORCH_INDEX_URL=... HF_ENDPOINT=...`
 - 单 worker 限制见 §12.8；多副本前需 Redis
@@ -476,6 +476,7 @@ curl -H "Authorization: Bearer <token>" localhost:8000/admin/api/session
 
 - 密码用 `hashlib.scrypt`（标准库，无需 argon2/bcrypt 依赖），编码为 `scrypt$n$r$p$salt$hash`；验证约 140 ms，未知用户也会做一次等价计算，避免用响应时间枚举账号
 - 用户文件原子写入（临时文件 + `os.replace`，权限 600），按 mtime 缓存，手工编辑后无需重启；文件损坏时记日志并按"无账号"处理，不会让服务崩溃
+- **容器部署**：`docker-compose.prod.yml` 已把 `./config` 挂到 `/app/config`；不要在重建容器时丢掉这个挂载，否则账号库会随容器一起消失
 - token 带 `ver`（账号版本）：改密码、改部门/组/管理员、停用都会 +1，**已签发的 token 立即失效**；删除账号同理
 - 没有 `ver` 的 token（IdP / 网关签发）不受用户文件影响，两种方式可以共存
 - 登录失败与非管理员访问一样返回 401，但失败原因只写审计和日志，响应统一为 `invalid username or password`
@@ -723,7 +724,7 @@ python scripts/check_loaders.py      # 9 种格式解析（不写向量库）
 python scripts/check_admin.py        # 管理台上传→入库→删除冒烟
 python scripts/bench_retrieval.py    # embedding / FAISS / Milvus / LLM 延迟
 python scripts/generate_demo_files.py  # 重建 data/Demo 多格式样例
-pytest -q                            # 离线测试（432 项，~35s，覆盖率 92%，无需服务/LLM）
+pytest -q                            # 离线测试（444 项，~30s，覆盖率 92%，无需服务/LLM）
 ruff check src tests main.py run_ingestion.py   # 代码检查
 python test_agent.py                 # 端到端 18 项断言（需服务已启动）
 ```
@@ -855,8 +856,8 @@ python run_ingestion.py --no-prune # 不清理已删除文件
 | `OCR_ENABLED` | `false` | 扫描版 PDF OCR（需 pytesseract/pdf2image/tesseract/poppler） |
 | `OCR_MIN_CHARS` | `20` | 页面文本少于该值时触发 OCR |
 | `OCR_LANG` | `eng+chi_sim` | tesseract 语言包 |
-| `ACL_ENABLED` | `false` | 是否启用文档级 ACL |
-| `ACL_FILE` | `./config/acl.json` | ACL 规则文件（见 `config/acl.example.json`） |
+| `ACL_ENABLED` | `false` | 是否启用文档级 ACL；开启后文件不可用会**拒绝启动**（fail closed） |
+| `ACL_FILE` | `./config/acl.json` | ACL 规则文件（见 `config/acl.example.json`，真实文件已 gitignore） |
 | `FAQ_CACHE_ENABLED` | `true` | 是否启用 FAQ 答案缓存 |
 | `FAQ_CACHE_MAX_ENTRIES` | `512` | 答案缓存容量（LRU） |
 | `FAQ_CACHE_TTL` | `86400` | 答案缓存有效期（秒） |
@@ -1072,7 +1073,7 @@ python scripts/bench_retrieval.py
 ## 10. 已知限制与后续方向
 
 - 服务端不存储会话，多轮依赖客户端回传 `history`
-- 文档级 ACL 为**可选**（`ACL_ENABLED`），规则为静态 JSON，不区分读/写/下载；未配置规则的文档默认为部门内公开
+- 文档级 ACL 为**可选**（`ACL_ENABLED`），规则为静态 JSON，不区分读/写/下载；未配置规则的文档默认为部门内公开。**失败即关闭**：`ACL_ENABLED=true` 但文件缺失/损坏时，服务拒绝启动、`/health` 返回 503、检索拿不到任何受控文档（不会再静默放行）
 - `/chat` 鉴权为**可选**静态 API Key（`CHAT_API_KEY`）；`user_id`/`user_dept` 仍由调用方提供，若需真正身份体系需接入网关/OIDC
 - 入库为同步 CPU/IO 操作；全量 reset 期间查询不受影响（影子索引），只有提交切换的瞬间会有毫秒级维护窗口
 - 多轮检索为启发式改写（代词/短句拼接上轮问题），复杂指代仍可能失败；更稳的方案是 LLM 改写（会多一次调用）

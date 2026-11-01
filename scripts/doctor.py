@@ -94,6 +94,40 @@ def main() -> int:
     else:
         check("Data directory", FAIL, f"{data_dir} does not exist")
 
+    # --- access control ---------------------------------------------------
+    from src import acl, local_auth
+
+    acl_state = acl.status()
+    if not acl_state["enabled"]:
+        check("Document ACL", OK, "disabled (every document is public in its dept)")
+    elif acl_state["ok"]:
+        check("Document ACL", OK, f"{acl_state['rules']} rule(s)")
+    else:
+        # Fails closed at runtime: no document is served. Almost always a
+        # typo or a missing volume mount in production.
+        check("Document ACL", FAIL, str(acl_state["error"]))
+
+    if local_auth.enabled():
+        users = local_auth.list_users()
+        admins = sum(1 for user in users if user["admin"] and not user["disabled"])
+        if not users:
+            check(
+                "Local accounts",
+                FAIL,
+                f"enabled but {settings.AUTH_USERS_FILE} has no accounts "
+                "(create one with scripts/manage_users.py)",
+            )
+        elif not admins:
+            check("Local accounts", FAIL, f"{len(users)} account(s) but no enabled admin")
+        else:
+            check(
+                "Local accounts",
+                OK,
+                f"{len(users)} account(s), {admins} admin, {settings.AUTH_USERS_FILE}",
+            )
+    else:
+        check("Local accounts", OK, "disabled")
+
     # --- index ------------------------------------------------------------
     try:
         from src.engine import kb_engine

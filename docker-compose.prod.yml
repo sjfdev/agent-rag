@@ -76,13 +76,16 @@ services:
       AUDIT_LOG_PATH: /app/logs/admin_audit.log
       JOBS_PATH: /app/logs/ingest_jobs.json
       HF_HUB_OFFLINE: "1"
-      # Optional ACL file mounted read-only; enable via ACL_ENABLED=true in .env.
+      # Local accounts (AUTH_LOCAL_LOGIN_ENABLED) and the optional ACL live here.
+      AUTH_USERS_FILE: /app/config/users.json
       ACL_FILE: /app/config/acl.json
     volumes:
       - ${DOCKER_VOLUME_DIRECTORY:-.}/data:/app/data
       - ${DOCKER_VOLUME_DIRECTORY:-.}/logs:/app/logs
-      # Uncomment after creating config/acl.json.
-      # - ./config:/app/config:ro
+      # Mutable app state: local accounts (users.json) and acl.json. This MUST be
+      # persistent, otherwise recreating the container wipes every account.
+      # Read-write because the console/CLI writes users.json at runtime.
+      - ${DOCKER_CONFIG_DIRECTORY:-./config}:/app/config
     ports:
       - "${APP_PORT:-8000}:8000"
     depends_on:

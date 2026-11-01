@@ -663,7 +663,7 @@ curl -s -X POST localhost:8000/chat -H 'Content-Type: application/json' \
 
 ## 11. 后续待办（按优先级，2026-11-01 之后）
 
-> 当前基线：**309 项测试、92% 覆盖率、CI 全绿**；`milvus 2.5.4 + 服务端稀疏 BM25`；28 chunks；`/health=ok`。
+> 当前基线：**444 项测试、92% 覆盖率、CI 全绿**；`milvus 2.5.4 + 服务端稀疏 BM25`；28 chunks；`/health=ok`。
 > 容器化交付已完成（`Dockerfile` / `docker-compose.prod.yml` / `PRODUCTIZATION.md`）。
 > 下面按「对外发布必须先做 → 产品化 → 规模化」排序，每项都有落点与验收方式。
 
@@ -697,9 +697,16 @@ curl -s -X POST localhost:8000/chat -H 'Content-Type: application/json' \
 - [ ] schema 变更写迁移说明（当前只有 `--reset`）
 
 #### 11.1.4 备份与恢复演练
-- [ ] 备份 `data/` + `volumes-prod/` + `logs/`
+- [ ] 备份 `data/` + `volumes-prod/` + `logs/` + `config/`（账号库与 ACL 规则）
 - [ ] 每季度演练「删库 → 恢复 → 验证」
 - [ ] 验收：恢复后 `verify_retrieval.py` 与 `eval_retrieval.py` 通过
+
+#### 11.1.5 部署加固（2026-11-01 补充）
+- [x] **ACL fail-closed**：`ACL_ENABLED=true` 但规则文件缺失/损坏时拒绝启动（`acl.validate_config`）、`/health` 返回 503、检索丢弃全部文档；`scripts/doctor.py` 增加 `Document ACL` 检查。此前是静默放行（fail-open），一个忘记挂载就能绕过全部文档权限
+- [x] **账号库持久化**：`Dockerfile` 创建 `/app/config`，`docker-compose.prod.yml` 挂载 `./config:/app/config` 并显式设置 `AUTH_USERS_FILE`；此前容器重建会丢失全部本地账号
+- [x] `config/acl.json` 加入 `.gitignore`（真实规则可能含人名/文档路径），示例仍为 `config/acl.example.json`
+- [x] `scripts/doctor.py` 增加 `Local accounts` 检查（启用但无账号 / 无可用管理员 → FAIL）
+- [ ] 备份 `config/`（账号库与 ACL）纳入例行流程——见 11.1.4
 
 ### 11.2 P1 产品化与稳定性
 

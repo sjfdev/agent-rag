@@ -49,11 +49,87 @@ def test_disabled_acl_allows_everything(tmp_path, monkeypatch):
     assert acl.is_allowed("Finance/budget.pdf", "u1")
 
 
-def test_missing_file_allows_everything(tmp_path, monkeypatch):
+def test_missing_file_fails_closed(tmp_path, monkeypatch):
+    """ACL_ENABLED with an unusable file must never serve protected documents."""
     monkeypatch.setattr(settings, "ACL_ENABLED", True)
     monkeypatch.setattr(settings, "ACL_FILE", str(tmp_path / "missing.json"))
     acl.refresh()
-    assert acl.is_allowed("Finance/budget.pdf", "u1")
+    assert acl.is_allowed("Finance/budget.pdf", "u1") is False
+    assert acl.status() == {
+        "enabled": True,
+        "ok": False,
+        "rules": 0,
+        "error": acl.status()["error"],
+    }
+    assert "does not exist" in acl.status()["error"]
+
+
+def test_invalid_json_fails_closed(tmp_path, monkeypatch):
+    monkeypatch.setattr(settings, "ACL_ENABLED", True)
+    monkeypatch.setattr(settings, "ACL_FILE", str(tmp_path / "acl.json"))
+    (tmp_path / "acl.json").write_text("{not json")
+    acl.refresh()
+    assert acl.is_allowed("Finance/budget.pdf", "u_finance") is False
+    assert acl.status()["ok"] is False
+
+
+def test_non_object_json_fails_closed(tmp_path, monkeypatch):
+    monkeypatch.setattr(settings, "ACL_ENABLED", True)
+    monkeypatch.setattr(settings, "ACL_FILE", str(tmp_path / "acl.json"))
+    (tmp_path / "acl.json").write_text('["a", "b"]')
+    acl.refresh()
+    assert acl.is_allowed("Finance/budget.pdf", "u_finance") is False
+
+
+def test_non_list_rule_fails_closed(tmp_path, monkeypatch):
+    monkeypatch.setattr(settings, "ACL_ENABLED", True)
+    monkeypatch.setattr(settings, "ACL_FILE", str(tmp_path / "acl.json"))
+    (tmp_path / "acl.json").write_text('{"Finance/budget.pdf": 42}')
+    acl.refresh()
+    assert acl.is_allowed("Finance/budget.pdf", "u_finance") is False
+
+
+def test_validate_config_raises_for_broken_acl(tmp_path, monkeypatch):
+    monkeypatch.setattr(settings, "ACL_ENABLED", True)
+    monkeypatch.setattr(settings, "ACL_FILE", str(tmp_path / "missing.json"))
+    acl.refresh()
+    with pytest.raises(acl.ACLConfigError):
+        acl.validate_config()
+
+
+def test_validate_config_is_noop_when_disabled(monkeypatch):
+    monkeypatch.setattr(settings, "ACL_ENABLED", False)
+    acl.validate_config()  # must not raise even with a bogus path
+
+
+def test_status_reports_disabled(monkeypatch):
+    monkeypatch.setattr(settings, "ACL_ENABLED", False)
+    assert acl.status() == {"enabled": False, "ok": True, "rules": 0, "error": None}
+
+
+def test_broken_acl_drops_documents(tmp_path, monkeypatch):
+    from langchain_core.documents import Document
+
+    path = tmp_path / "acl.json"
+    monkeypatch.setattr(settings, "ACL_ENABLED", True)
+    monkeypatch.setattr(settings, "ACL_FILE", str(path))
+    acl.refresh()
+    docs = [Document(page_content="a", metadata={"source": "Tech/a.md"})]
+
+    # Unusable file: nothing is served, not even documents without a rule.
+    path.write_text("{broken")
+    assert acl.filter_documents(docs, "u1") == []
+    assert acl.is_allowed("Tech/a.md", "u1") is False
+
+    # Fixing the file clears the cached error on the next mtime change.
+    path.write_text(json.dumps({"Finance/budget.pdf": ["u_finance"]}))
+    import os
+
+    stat = path.stat()
+    os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns + 1_000_000))
+    assert [d.metadata["source"] for d in acl.filter_documents(docs, "u1")] == [
+        "Tech/a.md"
+    ]
 
 
 def test_filter_documents(acl_file):

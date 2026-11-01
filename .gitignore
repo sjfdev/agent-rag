@@ -21,3 +21,5 @@ logs/
 # Local account database (contains password hashes): never commit.
 config/users.json
 config/users.json.tmp
+# Real ACL rules (may name people/doc paths); the example is committed instead.
+config/acl.json

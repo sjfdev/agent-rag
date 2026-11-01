@@ -52,3 +52,42 @@ def test_doctor_warns_on_empty_index(doctor, monkeypatch, capsys, tmp_path):
     output = capsys.readouterr().out
     assert "Index" in output
     assert code in (0, 1)
+
+
+def test_doctor_fails_on_broken_acl(doctor, monkeypatch, capsys, tmp_path):
+    from src import acl
+    from src.config import settings
+
+    monkeypatch.setattr(sys, "argv", ["doctor.py", "--no-llm"])
+    monkeypatch.setattr(settings, "ACL_ENABLED", True)
+    monkeypatch.setattr(settings, "ACL_FILE", str(tmp_path / "missing-acl.json"))
+    acl.refresh()
+    try:
+        code = doctor.main()
+        output = capsys.readouterr().out
+        assert "[FAIL] Document ACL" in output
+        assert code == 1
+    finally:
+        monkeypatch.setattr(settings, "ACL_ENABLED", False)
+        acl.refresh()
+
+
+def test_doctor_fails_when_local_login_has_no_accounts(doctor, monkeypatch, capsys, tmp_path):
+    from src import local_auth
+    from src.config import settings
+
+    monkeypatch.setattr(sys, "argv", ["doctor.py", "--no-llm"])
+    monkeypatch.setattr(settings, "AUTH_MODE", "jwt")
+    monkeypatch.setattr(settings, "AUTH_JWT_SECRET", "x" * 40)
+    monkeypatch.setattr(settings, "AUTH_LOCAL_LOGIN_ENABLED", True)
+    monkeypatch.setattr(settings, "AUTH_USERS_FILE", str(tmp_path / "users.json"))
+    local_auth.clear_cache()
+    try:
+        code = doctor.main()
+        output = capsys.readouterr().out
+        assert "[FAIL] Local accounts" in output
+        assert code == 1
+    finally:
+        monkeypatch.setattr(settings, "AUTH_LOCAL_LOGIN_ENABLED", False)
+        monkeypatch.setattr(settings, "AUTH_MODE", "none")
+        local_auth.clear_cache()
