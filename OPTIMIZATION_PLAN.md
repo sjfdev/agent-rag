@@ -751,20 +751,46 @@ curl -s -X POST localhost:8000/chat -H 'Content-Type: application/json' \
 
 ### 11.4 建议顺序
 
-1. 11.1.1 登录（决定后续所有权限形态）
-2. 11.1.3 发布流程 + 11.1.4 备份演练（1 天，风险兜底）
-3. 11.2.1 告警（半天，接上已有指标）
-4. 11.2.3 前端最小版（Markdown + 会话列表）
-5. 做 SaaS 时：11.1.2 多租户 → 11.2.2 计费
-6. 11.3 全部按需，触发条件写在每项里
+1. ~~11.1.1 登录~~（已完成：JWT + OIDC + 本地账号）
+2. ~~11.1.3 发布流程~~（已完成：`v1.0.0` tag + `agent-rag:v1.0.0` 镜像）
+3. **11.1.4 备份与恢复演练**（下一项，唯一不可逆风险）
+4. 11.2.1 告警（半天，接上已有指标）
+5. 11.2.3 / 11.2.4 前端会话列表 + 服务端历史
+6. 做 SaaS 时：11.1.2 多租户 → 11.2.2 计费
+7. 11.3 全部按需，触发条件写在每项里
+
+### 11.4.1 下次开工（2026-11-02）
+
+**第一件：11.1.4 备份与恢复演练。** 这是 P0 里唯一还能动手、且失败不可逆的项。
+
+落点与验收：
+
+- [ ] `scripts/backup.py`：打包 `data/` + `config/`（账号库与 ACL）+ `logs/` + 后端卷（Milvus `volumes/milvus`、FAISS `db/`），输出带时间戳的归档 + `SHA256SUMS`；`--verify` 只校验不写
+- [ ] `scripts/restore.py`：从归档还原，拒绝在服务运行且维护锁未开时执行
+- [ ] `make backup` / `make restore` 入口；`doctor.py` 增加「最近一次备份距今 X 天」提示
+- [ ] 演练一次：备份 → 移走 `data/` 与 `config/` → 恢复 → `verify_retrieval.py` + 双后端 `eval_retrieval.py` 通过
+- [ ] `WORKLOG.md` 记录演练耗时与恢复后的 eval 数字
+
+之后的候选顺序：11.2.1 告警（Prometheus 抓 `/metrics` + 4 条规则）→ 11.2.3/11.2.4 会话列表与服务端历史。
+
+开工前先处理的环境问题（不是代码问题）：
+
+| 问题 | 现状 | 处理 |
+|---|---|---|
+| 宿主机磁盘 | 95%（约 17G 可用），今天两次把 colima 的 VM 搞停 | 清 Docker 可回收层（`docker image prune` 约有 11G 可回收） |
+| `agent-rag:dev` | 仍是 28 小时前的旧镜像，缺 `markdown.js` | 需要时 `APP_TAG=v1.0.0` 或直接用 `agent-rag:v1.0.0` |
+| `/tmp` | 会被系统清理，之前的启动脚本与日志因此丢失 | 启动脚本已挪到 `~/.agent-rag-run.sh`，日志 `~/agent-rag-server.log` |
+| 本地运行方式 | 已在 Milvus（28 chunks，服务端 BM25） | 切回 FAISS 只需改 `~/.agent-rag-run.sh` 的 `VECTOR_STORE_TYPE` |
 
 ### 11.5 恢复开发时的自检
 
 ```bash
 git pull && make doctor && pytest -q
 docker compose ps                      # 开发栈 etcd + milvus
-curl -s localhost:8000/health          # 期望 ok
+curl -s localhost:8000/health          # 期望 ok；storage.ok 必须为 true
 python scripts/verify_retrieval.py     # 部门隔离
 VECTOR_STORE_TYPE=milvus python scripts/eval_retrieval.py
 ```
+
+若 `/health` 显示 `storage.ok=false`，先清理磁盘**再 `docker restart milvus-standalone`**；只清空间不会恢复写入（RocksDB 缓存了第一次 ENOSPC，见 `WORKLOG.md` 同日条目）。
 

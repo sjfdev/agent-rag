@@ -878,6 +878,22 @@ run_ingestion.py --reset      28 chunks
 
 同期把发布闸门补全：`make release` + `doctor` + 双后端 eval 全部跑通，`v1.0.0` tag 与 `agent-rag:v1.0.0` 镜像落地；镜像构建时发现 `hf-mirror.com` 对模型文件返回 403（宿主机有缓存所以本地无感），已把 `--build-arg HF_ENDPOINT=...` 的处置写进 `Dockerfile`。
 
+### 2026-11-01 收尾
+
+当天最后状态（明天从这里继续）：
+
+```
+版本      v1.0.0（tag 已推送，CI success）
+镜像      agent-rag:v1.0.0 与 :latest 内容一致
+测试      490 passed，ruff 干净
+后端      Milvus 28 chunks，hybrid=server-side BM25；FAISS 26 chunks 保留为后备
+索引评估  Milvus / FAISS 均 hit@4 100%、MRR 0.89、leaks 0
+服务      本地 127.0.0.1:8000（脚本 ~/.agent-rag-run.sh，日志 ~/agent-rag-server.log）
+健康      /health=ok，storage.ok=true（约 17G 可用）
+```
+
+明天第一件：**11.1.4 备份与恢复演练**（落点、验收与开工前环境清理见 `OPTIMIZATION_PLAN.md` §11.4.1）。
+
 ---
 
 ## 10. 相关文档
