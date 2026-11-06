@@ -23,3 +23,6 @@ config/users.json
 config/users.json.tmp
 # Real ACL rules (may name people/doc paths); the example is committed instead.
 config/acl.json
+
+# Local agent artifacts
+agensi/

@@ -536,7 +536,7 @@ VECTOR_STORE_TYPE=milvus python scripts/verify_retrieval.py
 ```bash
 conda activate agent-rag
 cd /Users/songjiangfeng/work/ai/agent-rag
-uvicorn main:app --host 0.0.0.0 --port 8000
+uvicorn main:app --host 127.0.0.1 --port 8000
 # 或指定后端：VECTOR_STORE_TYPE=milvus uvicorn main:app --port 8000
 ```
 

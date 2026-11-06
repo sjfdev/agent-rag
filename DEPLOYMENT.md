@@ -156,7 +156,7 @@ Before starting the API, you must populate the database.
 
 ### 4.1 Start the API Server
 ```bash
-uvicorn main:app --host 0.0.0.0 --port 8000
+uvicorn main:app --host 127.0.0.1 --port 8000
 ```
 
 ### 4.1.1 Web test console

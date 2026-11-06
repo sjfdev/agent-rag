@@ -22,7 +22,7 @@ ingest: ## Incremental ingestion of data/
 	$(PYTHON) run_ingestion.py
 
 run: ## Start the API server on :8000
-	$(PYTHON) -m uvicorn main:app --host 0.0.0.0 --port 8000
+	$(PYTHON) -m uvicorn main:app --host 127.0.0.1 --port 8000
 
 test: ## Offline unit/API tests (no network)
 	$(PYTHON) -m pytest -q

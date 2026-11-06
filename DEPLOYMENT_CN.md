@@ -163,7 +163,7 @@ python -c "import numpy, torch, faiss, langchain; print(numpy.__version__, torch
 
 ### 4.1 启动 API 服务
 ```bash
-uvicorn main:app --host 0.0.0.0 --port 8000
+uvicorn main:app --host 127.0.0.1 --port 8000
 ```
 
 ### 4.1.1 可视化测试台
