@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>知识库管理 - agent-rag</title>
+<title data-i18n="page.adminTitle">知识库管理 - agent-rag</title>
 <style>
   :root {
     --bg: #0e1116;
@@ -27,6 +27,7 @@
   }
   .brand { font-size: 16px; font-weight: 600; }
   .brand span { color: var(--muted); font-weight: 400; margin-left: 8px; font-size: 12px; }
+  .brand .brandName { color: var(--text); font-weight: 600; margin-left: 0; font-size: 16px; }
   .meta { display: flex; gap: 14px; align-items: center; color: var(--muted); font-size: 12px; flex-wrap: wrap; }
   .meta b { color: var(--text); font-weight: 500; }
   .meta a { color: var(--accent); text-decoration: none; }
@@ -122,77 +123,81 @@
 </head>
 <body>
 <header>
-  <div class="brand">知识库管理<span>ingestion console</span></div>
+  <div class="brand"><span class="brandName" data-i18n="admin.brand">知识库管理</span><span data-i18n="admin.brandSub">ingestion console</span></div>
   <div class="meta">
-    <span>后端 <b id="store">-</b></span>
-    <span>模型 <b id="model">-</b></span>
-    <span>上传上限 <b id="maxMb">-</b></span>
+    <span><span data-i18n="common.backend">后端</span> <b id="store">-</b></span>
+    <span><span data-i18n="common.model">模型</span> <b id="model">-</b></span>
+    <span><span data-i18n="common.maxUpload">上传上限</span> <b id="maxMb">-</b></span>
     <span class="identity" id="identity" hidden></span>
-    <button id="logout" class="tiny" hidden>退出</button>
-    <a href="/ui/">返回对话</a>
+    <button id="logout" class="tiny" hidden data-i18n="auth.logout">退出</button>
+    <select id="lang" aria-label="Language" data-i18n-aria-label="common.language" title="Language" data-i18n-title="common.language">
+      <option value="zh">中文</option>
+      <option value="en">English</option>
+    </select>
+    <a href="/ui/" data-i18n="admin.backToChat">返回对话</a>
   </div>
 </header>
 
 <div class="gate" id="gate" hidden>
   <form class="gateCard" id="loginForm">
-    <h1>登录知识库管理</h1>
-    <p id="gateHint">
+    <h1 data-i18n="auth.adminTitle">登录知识库管理</h1>
+    <p id="gateHint" data-i18n="auth.adminHint">
       用账号密码登录，或直接粘贴管理员 Bearer token／管理令牌（ADMIN_TOKEN）。
       凭据只保存在当前标签页的 sessionStorage 中。
     </p>
     <div id="passwordFields" hidden>
-      <input id="username" type="text" placeholder="用户名" autocomplete="username">
-      <input id="password" type="password" placeholder="密码" autocomplete="current-password">
+      <input id="username" type="text" placeholder="用户名" data-i18n-placeholder="auth.username" autocomplete="username">
+      <input id="password" type="password" placeholder="密码" data-i18n-placeholder="auth.password" autocomplete="current-password">
     </div>
     <details id="tokenFallback" open>
-      <summary>使用 token / 管理令牌</summary>
-      <input id="credential" type="password" placeholder="Bearer token 或管理令牌" autocomplete="off">
+      <summary data-i18n="auth.adminTokenSummary">使用 token / 管理令牌</summary>
+      <input id="credential" type="password" placeholder="Bearer token 或管理令牌" data-i18n-placeholder="auth.adminTokenPlaceholder" autocomplete="off">
     </details>
     <div class="gateErr" id="gateErr"></div>
     <div class="gateFoot">
-      <span class="hint">JWT 需带 <code>admin: true</code></span>
-      <button type="submit" class="primary" id="loginBtn">登录</button>
+      <span class="hint"><span data-i18n="auth.adminJwtHint">JWT 需带</span> <code>admin: true</code></span>
+      <button type="submit" class="primary" id="loginBtn" data-i18n="auth.login">登录</button>
     </div>
-    <a class="gateSso" id="ssoLogin" href="/auth/login?next=/admin" hidden>使用企业账号登录</a>
+    <a class="gateSso" id="ssoLogin" href="/auth/login?next=/admin" hidden data-i18n="auth.adminSso">使用企业账号登录</a>
   </form>
 </div>
 
 <main id="console" hidden>
   <section class="card">
-    <h2>部门</h2>
+    <h2 data-i18n="admin.deptTitle">部门</h2>
     <div class="row">
       <select id="dept"></select>
-      <button id="refresh">刷新</button>
-      <input id="newDept" type="text" placeholder="新部门名称" maxlength="64">
-      <button id="createDept">创建部门</button>
+      <button id="refresh" data-i18n="common.refresh">刷新</button>
+      <input id="newDept" type="text" placeholder="新部门名称" data-i18n-placeholder="admin.newDeptPlaceholder" maxlength="64">
+      <button id="createDept" data-i18n="admin.createDept">创建部门</button>
     </div>
     <div class="stats" id="stats"></div>
   </section>
 
   <section class="card">
-    <h2>上传文件</h2>
+    <h2 data-i18n="admin.uploadTitle">上传文件</h2>
     <div class="drop" id="drop">
-      拖拽文件到这里，或 <label>选择文件<input id="file" type="file" multiple hidden></label>
+      <span data-i18n="admin.dropText">拖拽文件到这里，或</span> <label><span data-i18n="admin.chooseFile">选择文件</span><input id="file" type="file" multiple hidden></label>
       <div class="hint" id="formats"></div>
     </div>
     <div class="row">
-      <input id="subdir" type="text" placeholder="子目录（可选，如 runbooks）" maxlength="128">
-      <button id="upload" class="primary">上传到当前部门</button>
+      <input id="subdir" type="text" placeholder="子目录（可选，如 runbooks）" data-i18n-placeholder="admin.subdirPlaceholder" maxlength="128">
+      <button id="upload" class="primary" data-i18n="admin.uploadButton">上传到当前部门</button>
     </div>
     <div class="msg" id="uploadMsg"></div>
     <div class="bar" id="uploadBar" hidden><div class="fill" id="uploadFill"></div></div>
   </section>
 
   <section class="card">
-    <h2>入库文件<span class="sub" id="fileCount"></span></h2>
+    <h2><span data-i18n="admin.filesTitle">入库文件</span><span class="sub" id="fileCount"></span></h2>
     <div class="row">
-      <button id="ingestDept">增量入库（当前部门）</button>
-      <button id="ingestAll">增量入库（全部）</button>
+      <button id="ingestDept" data-i18n="admin.ingestDept">增量入库（当前部门）</button>
+      <button id="ingestAll" data-i18n="admin.ingestAll">增量入库（全部）</button>
     </div>
     <table>
       <thead>
         <tr>
-          <th>文件</th><th>类型</th><th>大小</th><th>状态</th><th>chunks</th><th>修改时间</th><th></th>
+          <th data-i18n="admin.table.file">文件</th><th data-i18n="admin.table.type">类型</th><th data-i18n="admin.table.size">大小</th><th data-i18n="admin.table.status">状态</th><th data-i18n="admin.table.chunks">chunks</th><th data-i18n="admin.table.modified">修改时间</th><th></th>
         </tr>
       </thead>
       <tbody id="fileBody"></tbody>
@@ -201,23 +206,23 @@
   </section>
 
   <section class="card" id="usersCard" hidden>
-    <h2>账号<span class="sub" id="userCount"></span></h2>
+    <h2><span data-i18n="admin.accountsTitle">账号</span><span class="sub" id="userCount"></span></h2>
     <p class="hint" style="margin:0 0 10px">
-      仅 <code>AUTH_LOCAL_LOGIN_ENABLED=true</code> 时可用。密码用 scrypt 哈希保存在
-      <code id="usersPath">config/users.json</code>，改密码或停用会立即使该账号的旧 token 失效。
+      <span data-i18n="admin.accountsHintPrefix">仅</span> <code>AUTH_LOCAL_LOGIN_ENABLED=true</code><span data-i18n="admin.accountsHintMiddle">时可用。密码用 scrypt 哈希保存在</span>
+      <code id="usersPath">config/users.json</code><span data-i18n="admin.accountsHintSuffix">，改密码或停用会立即使该账号的旧 token 失效。</span>
     </p>
     <div class="row userRow">
-      <input id="newUser" type="text" placeholder="用户名" maxlength="64" autocomplete="off">
-      <input id="newPass" type="password" placeholder="密码（≥10 位）" maxlength="256" autocomplete="new-password">
-      <input id="newDepts" type="text" placeholder="部门（必填），逗号分隔，如 Tech,HR" maxlength="200">
-      <input id="newGroups" type="text" placeholder="组（可选）" maxlength="200">
-      <label class="roleFlag"><input id="newAdmin" type="checkbox"> 管理员</label>
-      <button id="createUser" class="primary">创建账号</button>
+      <input id="newUser" type="text" placeholder="用户名" data-i18n-placeholder="admin.newUserPlaceholder" maxlength="64" autocomplete="off">
+      <input id="newPass" type="password" placeholder="密码（≥10 位）" data-i18n-placeholder="admin.newPassPlaceholder" maxlength="256" autocomplete="new-password">
+      <input id="newDepts" type="text" placeholder="部门（必填），逗号分隔，如 Tech,HR" data-i18n-placeholder="admin.newDeptsPlaceholder" maxlength="200">
+      <input id="newGroups" type="text" placeholder="组（可选）" data-i18n-placeholder="admin.newGroupsPlaceholder" maxlength="200">
+      <label class="roleFlag"><input id="newAdmin" type="checkbox"> <span data-i18n="admin.adminLabel">管理员</span></label>
+      <button id="createUser" class="primary" data-i18n="admin.createUser">创建账号</button>
     </div>
     <table>
       <thead>
         <tr>
-          <th>用户</th><th>部门 / 组</th><th>管理员</th><th>状态</th><th></th>
+          <th data-i18n="admin.userTable.user">用户</th><th data-i18n="admin.userTable.deptsGroups">部门 / 组</th><th data-i18n="admin.userTable.admin">管理员</th><th data-i18n="admin.userTable.status">状态</th><th></th>
         </tr>
       </thead>
       <tbody id="userBody"></tbody>
@@ -226,29 +231,29 @@
   </section>
 
   <section class="card dangerZone">
-    <h2>重建索引</h2>
-    <p class="hint" style="margin:0 0 10px">
+    <h2 data-i18n="admin.rebuildTitle">重建索引</h2>
+    <p class="hint" style="margin:0 0 10px" data-i18n="admin.rebuildHint">
       删除当前索引/集合并重新入库全部部门。Embedding 会重新计算，期间检索结果可能不完整。
     </p>
     <label class="row" style="font-size:13px">
-      <input id="resetFlag" type="checkbox"> 我确认要重建全部索引
+      <input id="resetFlag" type="checkbox"> <span data-i18n="admin.rebuildConfirm">我确认要重建全部索引</span>
     </label>
     <div class="row" style="margin-top:10px">
-      <button id="resetBtn" class="danger">执行重建</button>
+      <button id="resetBtn" class="danger" data-i18n="admin.rebuildButton">执行重建</button>
     </div>
   </section>
 
   <section class="card" id="jobCard" hidden>
-    <h2>任务<span id="jobStatus"></span></h2>
+    <h2><span data-i18n="admin.jobTitle">任务</span><span id="jobStatus"></span></h2>
     <pre id="jobLog"></pre>
   </section>
 
   <section class="card">
-    <h2>操作审计<span class="sub">最近 20 条</span></h2>
+    <h2><span data-i18n="admin.auditTitle">操作审计</span><span class="sub" data-i18n="admin.auditRecent">最近 20 条</span></h2>
     <table>
       <thead>
         <tr>
-          <th>时间</th><th>操作</th><th>操作者</th><th>对象</th><th>结果</th>
+          <th data-i18n="admin.auditTable.time">时间</th><th data-i18n="admin.auditTable.action">操作</th><th data-i18n="admin.auditTable.actor">操作者</th><th data-i18n="admin.auditTable.target">对象</th><th data-i18n="admin.auditTable.result">结果</th>
         </tr>
       </thead>
       <tbody id="auditBody"></tbody>
@@ -256,10 +261,48 @@
   </section>
 </main>
 
+<script src="/ui/i18n.js"></script>
 <script>
 const $ = (id) => document.getElementById(id);
 const deptSel = $("dept");
 const fileBody = $("fileBody");
+const t = window.i18n.t;
+
+// Backend detail strings are English. Translate the common ones so a Chinese
+// console does not mix languages; unknown messages pass through unchanged.
+const DETAIL_MESSAGES = {
+  "cross-origin admin request": "error.crossOrigin",
+  "invalid or missing token": "error.invalidToken",
+  "invalid admin token": "error.invalidToken",
+  "admin privileges required": "error.adminRequired",
+  "department not found": "error.deptNotFound",
+  "file not found": "error.fileNotFound",
+  "user not found": "error.userNotFound",
+  "path outside data directory": "error.pathOutsideData",
+  "invalid source path": "error.invalidSourcePath",
+  "invalid department name": "chat.error.invalidDepartment",
+  "local login is not configured": "error.localLoginDisabled",
+  "the last enabled administrator cannot be demoted or disabled": "error.adminLastDemote",
+  "the last enabled administrator cannot be deleted": "error.adminLastDelete",
+  "an ingestion job is already running": "error.ingestRunning",
+  "reset must target the whole knowledge base": "error.resetScope",
+  "no files uploaded": "error.noFilesUploaded",
+  "too many login attempts": "auth.tooMany",
+  "invalid username or password": "auth.badCredentials",
+};
+
+function localizeDetail(detail) {
+  if (typeof detail !== "string") return detail;
+  const key = DETAIL_MESSAGES[detail];
+  if (key) return t(key);
+  let match = detail.match(/^vector store unavailable: (.+)$/);
+  if (match) return t("error.vectorStoreUnavailable", { reason: match[1] });
+  match = detail.match(/^at most (\d+) files per upload$/);
+  if (match) return t("error.tooManyFiles", { limit: match[1] });
+  match = detail.match(/^(.+) exceeds (\d+)MB$/);
+  if (match) return t("error.fileTooLarge", { name: match[1], mb: match[2] });
+  return detail;
+}
 
 // The credential can be either a JWT bearer token (AUTH_MODE=jwt) or the
 // legacy ADMIN_TOKEN. It is stored per browser tab, never in a cookie.
@@ -302,7 +345,9 @@ async function api(path, options = {}) {
     );
   } catch (err) {
     if (err.name === "AbortError") {
-      const timeout = new Error("请求超时（" + Math.round(timeoutMs / 1000) + " 秒无响应）");
+      const timeout = new Error(
+        t("admin.requestTimeout", { seconds: Math.round(timeoutMs / 1000) })
+      );
       timeout.status = 0;
       timeout.timeout = true;
       throw timeout;
@@ -316,7 +361,7 @@ async function api(path, options = {}) {
   if (!res.ok) {
     let detail = res.status;
     if (data && data.detail !== undefined) {
-      detail = typeof data.detail === "string" ? data.detail : JSON.stringify(data.detail);
+      detail = typeof data.detail === "string" ? localizeDetail(data.detail) : JSON.stringify(data.detail);
     }
     const error = new Error(detail);
     error.status = res.status;
@@ -324,7 +369,7 @@ async function api(path, options = {}) {
     // instead of leaving every panel showing "加载失败".
     if (res.status === 401 && path !== "/admin/api/session") {
       clearCredential();
-      showGate("登录已失效，请重新登录。");
+      showGate(t("auth.expired"));
     }
     throw error;
   }
@@ -342,18 +387,28 @@ function fmtBytes(n) {
   return (n / 1024 / 1024).toFixed(1) + " MB";
 }
 
-const STATUS_LABEL = {
-  indexed: "已入库",
-  pending: "待入库",
-  changed: "有变更",
-  unsupported: "不支持",
-  unknown: "未知",
-};
+function statusLabel(status) {
+  const key = "admin.status." + status;
+  const label = t(key);
+  return label === key ? status : label;
+}
+
+function jobStatusLabel(status) {
+  const key = "admin.jobStatus." + status;
+  const label = t(key);
+  return label === key ? status : label;
+}
+
+function auditActionLabel(action) {
+  const key = "admin.auditAction." + action;
+  const label = t(key);
+  return label === key ? action : label;
+}
 
 function badge(status) {
   const span = document.createElement("span");
   span.className = "badge b-" + status;
-  span.textContent = STATUS_LABEL[status] || status;
+  span.textContent = statusLabel(status);
   return span;
 }
 
@@ -379,11 +434,13 @@ function renderIdentity(info) {
     return;
   }
   const parts = [];
-  if (info.user_id) parts.push("用户 <b>" + info.user_id + "</b>");
-  if (info.depts && info.depts.length) parts.push("部门 <b>" + info.depts.join(", ") + "</b>");
-  if (info.source === "admin_token") parts.push("管理令牌");
-  if (info.is_admin) parts.push("管理员");
-  el.innerHTML = parts.join(" · ");
+  if (info.user_id) parts.push(t("admin.identity.user", { name: info.user_id }));
+  if (info.depts && info.depts.length) {
+    parts.push(t("admin.identity.depts", { names: info.depts.join(", ") }));
+  }
+  if (info.source === "admin_token") parts.push(t("admin.identity.adminToken"));
+  if (info.is_admin) parts.push(t("admin.identity.admin"));
+  el.textContent = parts.join(" · ");
   el.hidden = false;
   $("logout").hidden = false;
 }
@@ -412,7 +469,7 @@ async function resolveSession() {
     const info = await api("/admin/api/session");
     renderIdentity(info);
     if (!info.is_admin) {
-      showGate("该账号没有管理权限（token 需要 admin: true）。");
+      showGate(t("auth.adminNoAccess"));
       return false;
     }
     hideGate();
@@ -420,11 +477,11 @@ async function resolveSession() {
   } catch (error) {
     if (error.status === 401) {
       clearCredential();
-      showGate("登录已失效，请重新登录。");
+      showGate(t("auth.expired"));
     } else if (error.status === 403) {
-      showGate("该账号没有管理权限（token 需要 admin: true）。");
+      showGate(t("auth.adminNoAccess"));
     } else {
-      showGate("无法连接管理接口：" + error.message);
+      showGate(t("auth.adminConnectFailed", { error: error.message }));
     }
     return false;
   }
@@ -498,7 +555,7 @@ async function loadLoginOptions() {
 async function login(raw) {
   const value = (raw || "").trim();
   if (!value) {
-    $("gateErr").textContent = "请输入 token 或管理令牌。";
+    $("gateErr").textContent = t("admin.enterToken");
     return false;
   }
   if (looksLikeJwt(value)) {
@@ -527,15 +584,15 @@ async function passwordLogin(username, password) {
   });
   if (!res.ok) {
     if (res.status === 429) {
-      $("gateErr").textContent = "尝试次数过多，请稍后再试。";
+      $("gateErr").textContent = t("auth.tooMany");
     } else {
-      $("gateErr").textContent = "用户名或密码错误。";
+      $("gateErr").textContent = t("auth.badCredentials");
     }
     return false;
   }
   const data = await res.json();
   if (!data.token) {
-    $("gateErr").textContent = "登录失败：服务端没有返回 token。";
+    $("gateErr").textContent = t("admin.loginFailedNoToken");
     return false;
   }
   bearer = data.token;
@@ -555,9 +612,9 @@ async function loadMeta() {
   $("model").textContent = meta.llm_model;
   $("maxMb").textContent = meta.max_upload_mb + " MB";
   if (meta.max_upload_total_mb) {
-    $("maxMb").textContent += "（单次合计 " + meta.max_upload_total_mb + " MB）";
+    $("maxMb").textContent += t("admin.maxUploadTotal", { mb: meta.max_upload_total_mb });
   }
-  $("formats").textContent = "支持：" + meta.formats.join(" ");
+  $("formats").textContent = t("admin.formats", { formats: meta.formats.join(" ") });
 
   const previous = currentDept;
   deptSel.innerHTML = "";
@@ -570,7 +627,7 @@ async function loadMeta() {
   if (!meta.depts.length) {
     const option = document.createElement("option");
     option.value = "";
-    option.textContent = "（暂无部门）";
+    option.textContent = t("admin.noDept");
     deptSel.appendChild(option);
   }
   if (previous && meta.depts.some((d) => d.name === previous)) {
@@ -581,22 +638,22 @@ async function loadMeta() {
   const c = meta.counts || {};
   $("stats").innerHTML = "";
   const pills = [
-    ["文件总数", (meta.depts || []).reduce((n, d) => n + d.files, 0)],
-    ["已入库", c.indexed || 0],
-    ["待入库", c.pending || 0],
-    ["有变更", c.changed || 0],
-    ["不支持", c.unsupported || 0],
+    ["admin.totalFiles", (meta.depts || []).reduce((n, d) => n + d.files, 0)],
+    ["admin.status.indexed", c.indexed || 0],
+    ["admin.status.pending", c.pending || 0],
+    ["admin.status.changed", c.changed || 0],
+    ["admin.status.unsupported", c.unsupported || 0],
   ];
   for (const [label, value] of pills) {
     const pill = document.createElement("span");
     pill.className = "pill";
-    pill.textContent = label + " ";
+    pill.textContent = t(label) + " ";
     const b = document.createElement("b");
     b.textContent = value;
     pill.appendChild(b);
     $("stats").appendChild(pill);
   }
-  if (meta.ingesting) setMsg($("fileMsg"), "已有入库任务在运行", "");
+  if (meta.ingesting) setMsg($("fileMsg"), t("admin.ingestRunning"), "");
   return meta;
 }
 
@@ -604,14 +661,14 @@ async function loadFiles() {
   const query = currentDept ? "?dept=" + encodeURIComponent(currentDept) : "";
   const data = await api("/admin/api/files" + query);
   fileBody.innerHTML = "";
-  $("fileCount").textContent = currentDept ? "（" + currentDept + "）" : "（全部）";
+  $("fileCount").textContent = currentDept ? t("admin.deptInParens", { dept: currentDept }) : t("admin.all");
 
   if (!data.files.length) {
     const tr = document.createElement("tr");
     const td = document.createElement("td");
     td.colSpan = 7;
     td.className = "mono";
-    td.textContent = "暂无文件，先上传或创建部门。";
+    td.textContent = t("admin.noFiles");
     tr.appendChild(td);
     fileBody.appendChild(tr);
     return;
@@ -653,7 +710,7 @@ async function loadFiles() {
     const actions = document.createElement("td");
     const del = document.createElement("button");
     del.className = "tiny danger";
-    del.textContent = "删除";
+    del.textContent = t("common.delete");
     del.onclick = () => removeFile(file);
     actions.appendChild(del);
     tr.appendChild(actions);
@@ -670,10 +727,10 @@ function renderAudit(records) {
     const tr = document.createElement("tr");
     const cells = [
       (record.ts || "").replace("T", " ").replace("+00:00", "Z"),
-      record.action || "",
+      auditActionLabel(record.action || ""),
       record.actor || "",
       [record.dept, record.source].filter(Boolean).join(" / "),
-      record.ok === false ? "失败" : "成功",
+      record.ok === false ? t("admin.auditResult.failure") : t("admin.auditResult.success"),
     ];
     for (const value of cells) {
       const td = document.createElement("td");
@@ -700,10 +757,10 @@ async function loadAudit() {
 // hang) left everything below it — including the account card — unrendered.
 async function refreshAll() {
   const panels = [
-    { name: "概览", run: loadMeta, msg: null },
-    { name: "文件", run: loadFiles, msg: "fileMsg" },
-    { name: "审计", run: loadAudit, msg: null },
-    { name: "账号", run: loadUsers, msg: "userMsg" },
+    { name: "admin.panel.overview", run: loadMeta, msg: null },
+    { name: "admin.panel.files", run: loadFiles, msg: "fileMsg" },
+    { name: "admin.panel.audit", run: loadAudit, msg: null },
+    { name: "admin.panel.accounts", run: loadUsers, msg: "userMsg" },
   ];
   const results = await Promise.allSettled(panels.map((panel) => panel.run()));
   const failed = [];
@@ -711,11 +768,11 @@ async function refreshAll() {
     if (result.status === "fulfilled") return;
     const panel = panels[index];
     const error = result.reason || {};
-    failed.push(panel.name);
+    failed.push(t(panel.name));
     if (panel.msg) {
       setMsg(
         $(panel.msg),
-        panel.name + "加载失败：" + (error.message || error),
+        t("admin.panelFailed", { panel: t(panel.name), error: error.message || error }),
         "error"
       );
     }
@@ -747,7 +804,7 @@ function renderUsers(data) {
   const card = $("usersCard");
   if (!card) return;
   const users = data.users || [];
-  $("userCount").textContent = "（" + users.length + "）";
+  $("userCount").textContent = t("admin.countInParens", { count: users.length });
   if (data.path) $("usersPath").textContent = data.path;
   const body = $("userBody");
   body.innerHTML = "";
@@ -762,14 +819,14 @@ function renderUsers(data) {
     const scope = [user.depts.join(", "), user.groups.map((g) => "group:" + g).join(", ")]
       .filter(Boolean)
       .join(" · ");
-    tr.appendChild(userCell(scope || "（无部门）"));
+    tr.appendChild(userCell(scope || t("admin.userNoDepts")));
 
     const adminCell = document.createElement("td");
     const adminBox = document.createElement("input");
     adminBox.type = "checkbox";
     adminBox.checked = !!user.admin;
     adminBox.onchange = () =>
-      patchUser(user.username, { admin: adminBox.checked }, "权限已更新");
+      patchUser(user.username, { admin: adminBox.checked }, t("admin.permissionsUpdated"));
     adminCell.appendChild(adminBox);
     tr.appendChild(adminCell);
 
@@ -781,12 +838,12 @@ function renderUsers(data) {
       patchUser(
         user.username,
         { disabled: disableBox.checked },
-        disableBox.checked ? "账号已停用" : "账号已启用"
+        disableBox.checked ? t("admin.accountDisabled") : t("admin.accountEnabled")
       );
     const statusLabel = document.createElement("label");
     statusLabel.className = "roleFlag";
     statusLabel.appendChild(disableBox);
-    statusLabel.appendChild(document.createTextNode("停用"));
+    statusLabel.appendChild(document.createTextNode(t("admin.disable")));
     statusCell.appendChild(statusLabel);
     tr.appendChild(statusCell);
 
@@ -794,12 +851,12 @@ function renderUsers(data) {
     actions.className = "actions";
     const reset = document.createElement("button");
     reset.className = "tiny";
-    reset.textContent = "改密码";
+    reset.textContent = t("admin.changePassword");
     reset.onclick = () => resetPassword(user.username);
     actions.appendChild(reset);
     const del = document.createElement("button");
     del.className = "tiny danger";
-    del.textContent = "删除";
+    del.textContent = t("common.delete");
     del.onclick = () => deleteUser(user.username);
     actions.appendChild(del);
     tr.appendChild(actions);
@@ -819,7 +876,7 @@ async function loadUsers() {
     // 404 = local login disabled; any other failure is worth showing.
     card.hidden = error.status === 404;
     if (error.status !== 404) {
-      setMsg($("userMsg"), "账号列表加载失败：" + error.message, "error");
+      setMsg($("userMsg"), t("admin.loadUsersFailed", { error: error.message }), "error");
     }
     throw error;
   }
@@ -834,26 +891,26 @@ async function patchUser(username, changes, okMessage) {
     });
     setMsg($("userMsg"), okMessage, "ok");
   } catch (error) {
-    setMsg($("userMsg"), "更新失败：" + error.message, "error");
+    setMsg($("userMsg"), t("admin.updateFailed", { error: error.message }), "error");
   }
   await loadUsers().catch(() => {});
 }
 
 async function resetPassword(username) {
   const value = prompt(
-    "为 " + username + " 设置新密码（至少 10 位）。\n改密码后该账号已签发的 token 会立即失效。"
+    t("admin.resetPasswordPrompt", { user: username })
   );
   if (!value) return;
-  await patchUser(username, { password: value }, "密码已更新");
+  await patchUser(username, { password: value }, t("admin.passwordUpdated"));
 }
 
 async function deleteUser(username) {
-  if (!confirm("删除账号 " + username + "？该账号将无法再登录。")) return;
+  if (!confirm(t("admin.deleteUserConfirm", { user: username }))) return;
   try {
     await api("/admin/api/users/" + encodeURIComponent(username), { method: "DELETE" });
-    setMsg($("userMsg"), "已删除 " + username, "ok");
+    setMsg($("userMsg"), t("admin.userDeleted", { user: username }), "ok");
   } catch (error) {
-    setMsg($("userMsg"), "删除失败：" + error.message, "error");
+    setMsg($("userMsg"), t("admin.deleteFailed", { error: error.message }), "error");
   }
   await loadUsers().catch(() => {});
 }
@@ -863,13 +920,13 @@ async function createUser() {
   const password = $("newPass").value;
   const depts = splitList($("newDepts").value);
   if (!username || !password) {
-    setMsg($("userMsg"), "请填写用户名和密码。", "error");
+    setMsg($("userMsg"), t("admin.enterUserPass"), "error");
     return;
   }
   if (!depts.length) {
     // A token without departments cannot retrieve anything; the server rejects
     // it too, but catching it here keeps the message next to the field.
-    setMsg($("userMsg"), "请至少填写一个部门（账号权限由部门决定）。", "error");
+    setMsg($("userMsg"), t("admin.enterDept"), "error");
     $("newDepts").focus();
     return;
   }
@@ -890,40 +947,40 @@ async function createUser() {
     $("newDepts").value = "";
     $("newGroups").value = "";
     $("newAdmin").checked = false;
-    setMsg($("userMsg"), "已创建账号 " + username, "ok");
+    setMsg($("userMsg"), t("admin.userCreated", { user: username }), "ok");
   } catch (error) {
-    setMsg($("userMsg"), "创建失败：" + error.message, "error");
+    setMsg($("userMsg"), t("admin.createFailed", { error: error.message }), "error");
   }
   await loadUsers().catch(() => {});
 }
 
 async function removeFile(file) {
-  if (!confirm("删除文件并从索引移除？\n" + file.source)) return;
+  if (!confirm(t("admin.deleteFileConfirm", { source: file.source }))) return;
   try {
     const result = await api(
       "/admin/api/file?dept=" + encodeURIComponent(file.dept) +
       "&source=" + encodeURIComponent(file.source),
       { method: "DELETE" }
     );
-    setMsg($("fileMsg"), "已删除 " + result.deleted + "（移除 " + result.chunks_removed + " 个 chunk）", "ok");
+    setMsg($("fileMsg"), t("admin.fileDeleted", { dept: file.dept, source: result.deleted, chunks: result.chunks_removed }), "ok");
     await refreshAll();
   } catch (error) {
-    setMsg($("fileMsg"), "删除失败：" + error.message, "error");
+    setMsg($("fileMsg"), t("admin.deleteFailed", { error: error.message }), "error");
   }
 }
 
 function showPending() {
   const names = pendingFiles.map((f) => f.name);
-  setMsg($("uploadMsg"), names.length ? "待上传：" + names.join("，") : "", "");
+  setMsg($("uploadMsg"), names.length ? t("admin.pendingUpload", { names: names.join(", ") }) : "", "");
 }
 
 async function upload() {
   if (!pendingFiles.length) {
-    setMsg($("uploadMsg"), "请先选择文件。", "error");
+    setMsg($("uploadMsg"), t("admin.selectFiles"), "error");
     return;
   }
   if (!currentDept) {
-    setMsg($("uploadMsg"), "请先创建并选择部门。", "error");
+    setMsg($("uploadMsg"), t("admin.createDeptFirst"), "error");
     return;
   }
   const form = new FormData();
@@ -932,7 +989,7 @@ async function upload() {
   for (const file of pendingFiles) form.append("files", file, file.name);
 
   $("upload").disabled = true;
-  setMsg($("uploadMsg"), "上传中…", "");
+  setMsg($("uploadMsg"), t("admin.uploading"), "");
   const bar = $("uploadBar");
   const fill = $("uploadFill");
   bar.hidden = false;
@@ -945,17 +1002,17 @@ async function upload() {
         if (total) fill.style.width = Math.min(100, Math.round((loaded / total) * 100)) + "%";
       },
     });
-    const saved = data.saved.map((s) => s.source + (s.overwritten ? "（覆盖）" : "")).join("，");
-    let message = "已上传：" + saved + "。点击「增量入库」后生效。";
+    const saved = data.saved.map((s) => s.source + (s.overwritten ? t("admin.overwritten") : "")).join(", ");
+    let message = t("admin.uploaded", { saved });
     if (data.errors && data.errors.length) {
-      message += " 失败：" + data.errors.map((e) => e.name + "（" + e.error + "）").join("，");
+      message += t("admin.uploadFailedDetail", { errors: data.errors.map((e) => e.name + " (" + e.error + ")").join(", ") });
     }
     setMsg($("uploadMsg"), message, data.errors && data.errors.length ? "error" : "ok");
     pendingFiles = [];
     $("file").value = "";
     await refreshAll();
   } catch (error) {
-    setMsg($("uploadMsg"), "上传失败：" + error.message, "error");
+    setMsg($("uploadMsg"), t("admin.uploadFailed", { error: error.message }), "error");
   } finally {
     $("upload").disabled = false;
     setTimeout(() => { bar.hidden = true; fill.style.width = "0%"; }, 600);
@@ -970,7 +1027,7 @@ async function startIngest(dept, reset) {
   setBusy(true);
   jobId = null;
   $("jobCard").hidden = false;
-  $("jobStatus").textContent = "启动中…";
+  $("jobStatus").textContent = t("admin.jobStarting");
   $("jobLog").textContent = "";
   try {
     const body = { reset: !!reset };
@@ -983,7 +1040,7 @@ async function startIngest(dept, reset) {
     jobId = data.job_id;
     pollJob();
   } catch (error) {
-    $("jobStatus").textContent = "失败";
+    $("jobStatus").textContent = t("admin.jobFailed");
     $("jobLog").textContent = error.message;
     setBusy(false);
   }
@@ -994,7 +1051,7 @@ async function pollJob() {
   if (!jobId) return;
   try {
     const job = await api("/admin/api/jobs/" + jobId);
-    $("jobStatus").textContent = job.status;
+    $("jobStatus").textContent = jobStatusLabel(job.status);
     $("jobLog").textContent = job.log.join("\n");
     $("jobLog").scrollTop = $("jobLog").scrollHeight;
     if (job.status === "done" || job.status === "error") {
@@ -1004,7 +1061,7 @@ async function pollJob() {
       return;
     }
   } catch (error) {
-    $("jobStatus").textContent = "轮询失败：" + error.message;
+    $("jobStatus").textContent = t("admin.jobPollFailed", { error: error.message });
     setBusy(false);
     return;
   }
@@ -1019,7 +1076,7 @@ deptSel.onchange = () => {
 $("refresh").onclick = refreshAll;
 
 $("createUser").onclick = () => {
-  createUser().catch((e) => setMsg($("userMsg"), "创建失败：" + e.message, "error"));
+  createUser().catch((e) => setMsg($("userMsg"), t("admin.createFailed", { error: e.message }), "error"));
 };
 
 $("createDept").onclick = async () => {
@@ -1037,9 +1094,9 @@ $("createDept").onclick = async () => {
     deptSel.value = name;
     currentDept = name;
     await loadFiles();
-    setMsg($("fileMsg"), "部门 " + name + " 就绪", "ok");
+    setMsg($("fileMsg"), t("admin.deptReady", { name }), "ok");
   } catch (error) {
-    setMsg($("fileMsg"), "创建失败：" + error.message, "error");
+    setMsg($("fileMsg"), t("admin.createFailed", { error: error.message }), "error");
   }
 };
 
@@ -1052,7 +1109,7 @@ $("file").onchange = () => {
 
 $("ingestDept").onclick = () => {
   if (!currentDept) {
-    setMsg($("fileMsg"), "请先选择部门。", "error");
+    setMsg($("fileMsg"), t("admin.selectDeptFirst"), "error");
     return;
   }
   startIngest(currentDept, false);
@@ -1062,10 +1119,10 @@ $("ingestAll").onclick = () => startIngest(null, false);
 
 $("resetBtn").onclick = () => {
   if (!$("resetFlag").checked) {
-    setMsg($("fileMsg"), "请先勾选确认。", "error");
+    setMsg($("fileMsg"), t("admin.confirmRequired"), "error");
     return;
   }
-  if (!confirm("将删除现有索引并重新入库全部文件，确定继续？")) return;
+  if (!confirm(t("admin.resetConfirm"))) return;
   startIngest(null, true);
 };
 
@@ -1102,7 +1159,7 @@ $("loginForm").onsubmit = async (event) => {
       await login($("credential").value);
     }
   } catch (error) {
-    $("gateErr").textContent = "登录失败：" + error.message;
+    $("gateErr").textContent = t("admin.createFailed", { error: error.message });
   } finally {
     btn.disabled = false;
   }
@@ -1122,18 +1179,25 @@ async function guarded(fn) {
   } catch (error) {
     if (error.status === 401) {
       clearCredential();
-      showGate("登录已失效，请重新登录。");
+      showGate(t("auth.expired"));
     }
     throw error;
   }
 }
+
+document.addEventListener("i18n:change", () => {
+  if (!$("console").hidden) {
+    renderIdentity(session);
+    refreshAll();
+  }
+});
 
 (async function boot() {
   const fromSso = consumeTokenFragment();
   await loadLoginOptions();
   const authed = await resolveSession();
   if (authed) await refreshAll();
-  else if (fromSso) showGate("登录凭据无效或该账号没有管理权限。");
+  else if (fromSso) showGate(t("auth.adminInvalidSso"));
 })();
 </script>
 </body>
