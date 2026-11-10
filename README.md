@@ -56,8 +56,9 @@ docker compose -f docker-compose.prod.yml exec app python run_ingestion.py
 
 | 端点 | 用途 |
 |---|---|
-| `POST /chat` | 问答（返回答案、来源、耗时） |
+| `POST /chat` | 问答（返回答案、来源、耗时；可带 `session_id`） |
 | `POST /chat/stream` | SSE 流式问答 |
+| `POST/GET/DELETE /sessions` | 服务端会话：创建/列表/详情/删除 |
 | `GET /health` | 存活/就绪探针（`?probe=1` 探测 LLM） |
 | `GET /metrics` | Prometheus 指标 |
 | `GET /info` | 后端、模型与实际检索引擎 |
@@ -88,7 +89,7 @@ Python 3.11 · FastAPI · LangGraph / LangChain · FAISS / Milvus 2.5.4 · sente
 
 ## 已知限制
 
-- 服务端不存储会话，多轮依赖客户端回传 `history`
+- 服务端会话默认写入 `./logs/sessions.db`（SQLite），适合单 worker；多副本需要共享数据库
 - 文档级 ACL 为静态 JSON 规则；`/chat` 鉴权为可选的静态 API Key（生产建议接网关/OIDC）
 - 进程内缓存/限流/任务状态不跨 worker；多副本需 Redis 等外部组件
 - 扫描版 PDF 需要先 OCR；超大文件为一次性读入

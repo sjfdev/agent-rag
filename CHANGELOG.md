@@ -29,6 +29,16 @@ three agree before you push a tag.
   `storage` block, and `scripts/doctor.py` fails with the tightest path.
 - **Chinese/English switch** in both UIs (`static/i18n.js`, follow the browser
   language by default, remembered in `localStorage`).
+- **Server-side sessions**: `POST /sessions` creates a conversation and
+  `ChatRequest.session_id` hands ownership of the transcript to the server, so
+  the client sends only the newest message instead of replaying the whole
+  history (body size stays constant over any number of turns). Sessions are
+  isolated by `user_id`, can be listed/read/deleted via `/sessions`, and are
+  stored in SQLite at `SESSIONS_DB_PATH` (default `./logs/sessions.db`, already
+  mounted and backed up). Conversations longer than `2 × HISTORY_MAX_MESSAGES`
+  are folded into a running summary with one extra LLM call per window
+  (`SESSION_SUMMARY_*`); if summarization fails, the prompt falls back to the
+  last window. New metric: `agent_rag_session_summaries_total{result}`.
 - **Monitoring stack**: `docker-compose.monitoring.yml` runs Prometheus,
   blackbox_exporter and Grafana on the `agent-rag-prod` network. Grafana
   provisions the "Agent RAG" dashboard (request/error rate, p95 latency, time

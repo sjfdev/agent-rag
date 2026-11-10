@@ -156,6 +156,19 @@ class Settings(BaseSettings):
     # dropped silently (oldest first, in user/assistant pairs) so long
     # conversations keep working instead of failing validation.
     HISTORY_MAX_MESSAGES: int = 20
+    # Server-side sessions (POST /sessions + ChatRequest.session_id). Stored in
+    # SQLite under logs/ by default, which is already mounted and backed up in
+    # the production compose file. Disable to require client-supplied history.
+    SESSIONS_ENABLED: bool = True
+    SESSIONS_DB_PATH: str = "./logs/sessions.db"
+    # Fold older turns into a running summary once the conversation exceeds
+    # 2x HISTORY_MAX_MESSAGES. This costs one extra LLM call per window.
+    SESSION_SUMMARY_ENABLED: bool = True
+    SESSION_SUMMARY_MAX_TOKENS: int = 256
+    SESSION_SUMMARY_MAX_CHARS: int = 1200
+    # After a failed summary call, do not retry this conversation for N seconds
+    # (an unavailable LLM would otherwise add its timeout to every turn).
+    SESSION_SUMMARY_RETRY_SECONDS: int = 60
     # When the LLM is unreachable or times out, answer from the retrieved
     # excerpts instead of failing the request. Retrieved facts, no generation.
     LLM_FALLBACK_ENABLED: bool = True

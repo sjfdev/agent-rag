@@ -22,6 +22,7 @@ from src.config import settings
 from src.engine import kb_engine
 from src.health import router as health_router
 from src.schemas import ChatRequest, ChatResponse
+from src.sessions_api import router as sessions_router
 from src.validation import InvalidDepartment
 from src.version import __version__
 
@@ -48,7 +49,7 @@ if _cors_origins():
         CORSMiddleware,
         allow_origins=_cors_origins(),
         allow_credentials=False,
-        allow_methods=["GET", "POST", "OPTIONS"],
+        allow_methods=["GET", "POST", "OPTIONS", "DELETE"],
         allow_headers=["Content-Type", "Authorization", "X-API-Key"],
         expose_headers=["X-Request-ID", "X-Cache"],
         max_age=600,
@@ -76,6 +77,7 @@ async def _invalid_department_handler(request: Request, exc: InvalidDepartment):
 app.include_router(admin_session_router)
 app.include_router(admin_router)
 app.include_router(health_router)
+app.include_router(sessions_router)
 # /auth/login and /auth/callback answer 404 unless an OIDC client is configured.
 auth.register_routes(app)
 # POST /auth/login for username/password accounts (AUTH_LOCAL_LOGIN_ENABLED).

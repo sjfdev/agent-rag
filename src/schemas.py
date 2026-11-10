@@ -22,6 +22,10 @@ class ChatRequest(BaseModel):
     # Optional group membership for the document-level ACL.
     user_groups: List[str] = Field(default_factory=list, max_length=50)
     message: str = Field(min_length=1, max_length=4000)
+    # When set, the server owns the transcript and `history` is ignored. Create
+    # one with POST /sessions; the request then stays a constant size for the
+    # whole conversation.
+    session_id: Optional[str] = Field(default=None, max_length=64)
     # Hard guard only (payload size / abuse). `HISTORY_MAX_MESSAGES` decides how
     # much of it is actually used, so ordinary long chats are trimmed, not
     # rejected.
@@ -40,6 +44,8 @@ class ChatResponse(BaseModel):
     sources: List[Dict[str, Any]] = []
     timings: Dict[str, Any] = {}
     request_id: str = ""
+    # Echoed when the request carried `session_id`; empty for stateless calls.
+    session_id: str = ""
     # True when the answer came from retrieval because the LLM failed.
     degraded: bool = False
     degraded_reason: str = ""

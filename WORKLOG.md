@@ -949,7 +949,34 @@ Milvus 恢复后启动容器，集合 `enterprise_kb__r1793537166470` 可见且 
 
 ---
 
-## 12. 相关文档
+## 12. 服务端会话（11.2.4，2026-11-10）
+
+此前每一轮都要把完整 `history` 回传，请求体随对话线性增长，客户端还能改写历史。这次把对话所有权交给服务端。
+
+### 落点
+
+- **`src/sessions.py`**：SQLite `sessions` + `messages` 表（`role/content/sources/degraded/seq`），`SESSIONS_DB_PATH` 默认 `./logs/sessions.db`（生产 compose 已挂载 `logs/`，`make backup` 自动包含）；每次操作独立连接 + WAL，适合单 worker 多线程
+- **`ChatRequest.session_id`**：带上后服务端加载历史，忽略请求体 `history`；请求里只发当前 `message`。会话按 `user_id` 校验，跨用户 404；无效/禁用分别返回 404/400
+- **`/sessions`**：`POST` 创建、`GET` 列表/详情、`DELETE` 删除；jwt 模式从 token 取身份，`AUTH_MODE=none` 用 `user_id`（创建在 body，读写在 query）
+- **超窗口摘要**：未摘要消息超过 `2 × HISTORY_MAX_MESSAGES` 时，把多出来的整窗折叠进 running summary（`summarize_text`，一次 LLM 调用）；失败只记日志/指标，上下文退回最近窗口，对话不失败。指标 `agent_rag_session_summaries_total{result}` 与 `agent_rag_session_summary_seconds`
+- **缓存**：会话首轮仍可命中 FAQ 缓存；已有历史时跳过答案缓存，避免把多轮回答当成可重放的单轮答案
+- **测试**：`tests/test_sessions.py` 13 项（CRUD/归属/级联删除/窗口裁剪/摘要成功与失败/失败冷却/`prepare` 忽略客户端历史/`run` 落库/20 轮输入有界/API CRUD/禁用/指标）
+
+### 验收
+
+- 连续 20 轮：`prepare` 构造的模型输入始终 ≤ `HISTORY_MAX_MESSAGES + 当前问题`，请求体 `history` 始终为空
+- 摘要：20 条消息、窗口 4 → 折叠 16 条、保留最近 4 条；下一次未摘要仅 4 条，不再调用 LLM
+- 全套 **529 passed**，`ruff` 干净
+
+### 遗留
+
+- 前端会话列表尚未接入（后端接口已就绪，见 11.2.3）
+- 多租户维度随 11.1.2 再加；目前按 `user_id` 隔离
+- 摘要调用目前同步发生在 `prepare`，超窗口那一次请求会多一次 LLM 延迟；量大后可改为后台任务
+
+---
+
+## 13. 相关文档
 
 - `AGENT_GUIDE.md`：安装、使用、接口、配置、FAQ、性能优化
 - `OPTIMIZATION_PLAN.md`：待办清单与历史进度；**下一次开发直接看第 11 节「后续待办（按优先级）」**
