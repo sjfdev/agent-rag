@@ -105,6 +105,9 @@ def info():
         "oidc_login": auth.auth_enabled() and auth.oidc_login_configured(),
         # Whether the console should offer username/password login.
         "local_login": local_auth.enabled(),
+        # The chat UI keeps transcripts server-side when this is enabled.
+        "sessions_enabled": settings.SESSIONS_ENABLED,
+        "history_max_messages": settings.HISTORY_MAX_MESSAGES,
     }
 
 

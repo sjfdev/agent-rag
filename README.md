@@ -62,7 +62,7 @@ docker compose -f docker-compose.prod.yml exec app python run_ingestion.py
 | `GET /health` | 存活/就绪探针（`?probe=1` 探测 LLM） |
 | `GET /metrics` | Prometheus 指标 |
 | `GET /info` | 后端、模型与实际检索引擎 |
-| `/ui/` | 对话测试台 |
+| `/ui/` | 对话测试台（左侧会话列表，刷新后从服务端恢复） |
 | `/admin` | 上传/删除/入库/重建/审计 |
 
 ```bash

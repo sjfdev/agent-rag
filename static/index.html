@@ -177,6 +177,66 @@
   .gateCard input { width: 100%; }
   .gateCard button.primary { width: 100%; }
   .gateErr { color: #ff6b6b; font-size: 12px; min-height: 16px; }
+  [hidden] { display: none !important; }
+  .layout { flex: 1; display: flex; min-height: 0; }
+  .pane { flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 0; }
+  .sessionBar {
+    width: 260px; flex: 0 0 260px; min-height: 0;
+    display: flex; flex-direction: column;
+    background: var(--panel); border-right: 1px solid var(--border);
+  }
+  .sessionHead {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 8px; padding: 12px 12px 10px; border-bottom: 1px solid var(--border);
+    font-size: 12px; color: var(--muted); letter-spacing: .02em;
+  }
+  .sessionHead button { padding: 4px 9px; font-size: 12px; }
+  .sessionList {
+    flex: 1; min-height: 0; overflow-y: auto;
+    padding: 8px; display: flex; flex-direction: column; gap: 4px;
+  }
+  .sessionItem {
+    display: flex; align-items: stretch; gap: 4px;
+    border: 1px solid transparent; border-radius: 8px;
+  }
+  .sessionItem.active { background: var(--panel-2); border-color: #2b4066; }
+  .sessionOpen {
+    flex: 1; min-width: 0; text-align: left; cursor: pointer;
+    background: transparent; color: var(--text); border: 0;
+    border-radius: 7px; padding: 8px 9px;
+  }
+  .sessionOpen:hover { background: var(--panel-2); }
+  .sessionTitle {
+    display: block; font-size: 13px; line-height: 1.4;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .sessionMeta {
+    display: block; margin-top: 3px; font-size: 11px;
+    color: var(--muted); font-variant-numeric: tabular-nums;
+  }
+  .sessionDel {
+    flex: 0 0 28px; background: transparent; border: 0; cursor: pointer;
+    color: var(--muted); font-size: 15px; line-height: 1; border-radius: 7px;
+  }
+  .sessionDel:hover { color: #ff6b6b; background: var(--panel-2); }
+  .sessionEmpty { padding: 16px 14px; font-size: 12px; color: var(--muted); }
+  .sessionMask {
+    position: fixed; inset: 0; z-index: 39; background: rgba(7, 9, 13, .55);
+  }
+  #sessionToggle { display: none; }
+  @media (max-width: 860px) {
+    #sessionToggle { display: inline-block; }
+    .sessionBar {
+      position: fixed; z-index: 40; top: 0; bottom: 0; left: 0;
+      width: min(300px, 86vw); flex-basis: auto;
+      transform: translateX(-100%); transition: transform .18s ease;
+      box-shadow: 0 0 30px rgba(0, 0, 0, .5);
+    }
+    .sessionBar.open { transform: none; }
+  }
+  @media (min-width: 861px) {
+    .sessionMask { display: none !important; }
+  }
   .sources { margin-top: 10px; font-size: 12px; color: var(--muted); }
   .sources summary { cursor: pointer; color: var(--accent); outline: none; }
   .sources ul { margin: 8px 0 0; padding-left: 16px; }
@@ -189,6 +249,9 @@
 </head>
 <body>
 <header>
+  <button class="ghost" id="sessionToggle" type="button" aria-expanded="false" hidden
+          title="会话" data-i18n-title="sessions.title"
+          aria-label="会话" data-i18n-aria-label="sessions.title">☰</button>
   <h1 data-i18n="page.chatTitle">企业知识库 Agent · 测试台</h1>
   <span class="badge"><span data-i18n="common.store">向量库</span> <b id="store">-</b></span>
   <span class="badge"><span data-i18n="common.model">模型</span> <b id="model">-</b></span>
@@ -198,31 +261,26 @@
   </select>
 </header>
 
-<main id="chat">
-  <div class="msg bot">
-    <div class="avatar">AI</div>
-    <div class="bubble" data-i18n="chat.greeting">选择一个部门后提问。不同部门只能检索到各自授权范围内的文档。</div>
-  </div>
-</main>
+<div class="layout" id="layout">
+  <aside class="sessionBar" id="sessionBar" hidden>
+    <div class="sessionHead">
+      <span data-i18n="sessions.title">会话</span>
+      <button class="ghost" id="newSession" type="button" data-i18n="sessions.new">新对话</button>
+    </div>
+    <div class="sessionList" id="sessionList"></div>
+    <div class="sessionEmpty" id="sessionEmpty" data-i18n="sessions.empty" hidden></div>
+  </aside>
+  <div class="sessionMask" id="sessionMask" hidden></div>
 
-<div class="gate" id="gate" hidden>
-  <form class="gateCard" id="loginForm">
-    <h2 data-i18n="auth.title">登录知识库</h2>
-    <p id="gateHint" data-i18n="auth.hint">
-      使用账号密码登录；部门与权限由账号决定，无需手工填写。
-    </p>
-    <input id="username" type="text" placeholder="用户名" data-i18n-placeholder="auth.username" autocomplete="username">
-    <input id="password" type="password" placeholder="密码" data-i18n-placeholder="auth.password" autocomplete="current-password">
-    <details id="tokenFallback">
-      <summary data-i18n="auth.tokenSummary">使用 Bearer token 登录</summary>
-      <input id="credential" type="password" placeholder="粘贴 token" data-i18n-placeholder="auth.tokenPlaceholder" autocomplete="off">
-    </details>
-    <div class="gateErr" id="gateErr"></div>
-    <button type="submit" class="primary" id="loginBtn" data-i18n="auth.login">登录</button>
-  </form>
-</div>
+  <div class="pane">
+    <main id="chat">
+      <div class="msg bot">
+        <div class="avatar">AI</div>
+        <div class="bubble" data-i18n="chat.greeting">选择一个部门后提问。不同部门只能检索到各自授权范围内的文档。</div>
+      </div>
+    </main>
 
-<footer>
+    <footer>
   <div class="controls">
     <label id="uidLabel"><span data-i18n="chat.user">用户</span> <input id="uid" value="u1" /></label>
     <label id="deptLabel"><span data-i18n="chat.dept">部门</span>
@@ -253,13 +311,34 @@
     <button data-q="How do I request VPN access?" data-dept="Demo" data-i18n="chat.preset.demoVpn">Demo VPN（多格式）</button>
     <button data-q="What is the test coverage metric?" data-dept="Demo" data-i18n="chat.preset.demoMetric">Demo 指标（Excel）</button>
   </div>
-  <div class="hint"><span data-i18n="chat.hint">多轮对话会携带历史消息；右侧时间单位均为毫秒。</span><a href="/admin" target="_blank" style="color:var(--accent);margin-left:8px" data-i18n="chat.adminLink">入库管理</a></div>
-</footer>
+  <div class="hint"><span data-i18n="chat.hint">多轮对话会出现在左侧会话列表；时间单位为毫秒。</span><a href="/admin" target="_blank" style="color:var(--accent);margin-left:8px" data-i18n="chat.adminLink">入库管理</a></div>
+    </footer>
+  </div>
+</div>
+
+<div class="gate" id="gate" hidden>
+  <form class="gateCard" id="loginForm">
+    <h2 data-i18n="auth.title">登录知识库</h2>
+    <p id="gateHint" data-i18n="auth.hint">
+      使用账号密码登录；部门与权限由账号决定，无需手工填写。
+    </p>
+    <input id="username" type="text" placeholder="用户名" data-i18n-placeholder="auth.username" autocomplete="username">
+    <input id="password" type="password" placeholder="密码" data-i18n-placeholder="auth.password" autocomplete="current-password">
+    <details id="tokenFallback">
+      <summary data-i18n="auth.tokenSummary">使用 Bearer token 登录</summary>
+      <input id="credential" type="password" placeholder="粘贴 token" data-i18n-placeholder="auth.tokenPlaceholder" autocomplete="off">
+    </details>
+    <div class="gateErr" id="gateErr"></div>
+    <button type="submit" class="primary" id="loginBtn" data-i18n="auth.login">登录</button>
+  </form>
+</div>
 
 <!-- Shared zh/en dictionary; key parity is asserted by tests/test_i18n_js.py. -->
 <script src="/ui/i18n.js"></script>
 <!-- Safe markdown renderer + escaping helpers (also unit-tested from CI). -->
 <script src="/ui/markdown.js"></script>
+<!-- Request-body helpers for server-side sessions (unit-tested from CI). -->
+<script src="/ui/sessions.js"></script>
 <script>
 const chat = document.getElementById("chat");
 const input = document.getElementById("input");
@@ -268,11 +347,20 @@ const resetBtn = document.getElementById("reset");
 const deptSel = document.getElementById("dept");
 const uidInput = document.getElementById("uid");
 const stopBtn = document.getElementById("stop");
+const sessionBar = document.getElementById("sessionBar");
+const sessionListEl = document.getElementById("sessionList");
+const sessionEmpty = document.getElementById("sessionEmpty");
+const newSessionBtn = document.getElementById("newSession");
+const sessionToggle = document.getElementById("sessionToggle");
+const sessionMask = document.getElementById("sessionMask");
 const t = window.i18n.t;
 
 let history = [];
 let busy = false;
 let abortController = null;
+let sessionsEnabled = false;
+let sessionId = "";
+let sessionsCache = [];
 
 // --- authentication --------------------------------------------------------
 // AUTH_MODE=none: the identity fields stay visible and are sent in the body.
@@ -349,6 +437,7 @@ function recentHistory() {
 
 // --- session persistence ---------------------------------------------------
 const SESSION_KEY = "agent-rag-session-v1";
+const SERVER_SESSION_KEY = "agent-rag-server-session-v1";
 
 function saveSession() {
   try {
@@ -391,6 +480,202 @@ function loadSession() {
 
 function clearSession() {
   try { localStorage.removeItem(SESSION_KEY); } catch (e) {}
+}
+
+// --- server-side sessions --------------------------------------------------
+function currentUserId() {
+  return uidInput.value.trim() || "u1";
+}
+
+function saveActiveSession() {
+  try {
+    localStorage.setItem(
+      SERVER_SESSION_KEY,
+      JSON.stringify({ sessionId, uid: currentUserId(), dept: deptSel.value })
+    );
+  } catch (e) {
+    /* private mode: the server still owns this tab's transcript */
+  }
+}
+
+function savedActiveSession() {
+  try {
+    return JSON.parse(localStorage.getItem(SERVER_SESSION_KEY) || "null");
+  } catch (e) {
+    return null;
+  }
+}
+
+function clearActiveSession() {
+  sessionId = "";
+  try { localStorage.removeItem(SERVER_SESSION_KEY); } catch (e) {}
+}
+
+function setSidebar(open) {
+  if (!sessionBar) return;
+  sessionBar.classList.toggle("open", open);
+  if (sessionMask) sessionMask.hidden = !open;
+  if (sessionToggle) sessionToggle.setAttribute("aria-expanded", open ? "true" : "false");
+}
+
+function closeSidebar() {
+  setSidebar(false);
+}
+
+function addDegradedNote(bubble) {
+  const warn = document.createElement("div");
+  warn.className = "md-note";
+  warn.dataset.i18n = "chat.degradedNote";
+  warn.textContent = t("chat.degradedNote");
+  bubble.appendChild(warn);
+}
+
+function renderSessions() {
+  if (!sessionListEl) return;
+  sessionListEl.textContent = "";
+  if (sessionEmpty) sessionEmpty.hidden = sessionsCache.length > 0;
+  const lang = window.i18n.currentLanguage();
+  for (const item of sessionsCache) {
+    const row = document.createElement("div");
+    row.className = "sessionItem" + (item.session_id === sessionId ? " active" : "");
+
+    const open = document.createElement("button");
+    open.type = "button";
+    open.className = "sessionOpen";
+    const title = document.createElement("span");
+    title.className = "sessionTitle";
+    title.textContent = item.title || t("sessions.untitled");
+    const meta = document.createElement("span");
+    meta.className = "sessionMeta";
+    const count = t("sessions.messages", { count: item.message_count || 0 });
+    const date = ChatSessions.formatDate(item.updated_at, lang);
+    meta.textContent = date ? count + " · " + date : count;
+    open.append(title, meta);
+    open.title = item.title || t("sessions.untitled");
+    open.onclick = () => openSession(item.session_id);
+
+    const del = document.createElement("button");
+    del.type = "button";
+    del.className = "sessionDel";
+    del.textContent = "×";
+    del.title = t("sessions.delete");
+    del.setAttribute("aria-label", t("sessions.delete"));
+    del.onclick = (event) => {
+      event.stopPropagation();
+      deleteServerSession(item.session_id);
+    };
+
+    row.append(open, del);
+    sessionListEl.appendChild(row);
+  }
+}
+
+async function refreshSessions() {
+  if (!sessionsEnabled) return;
+  try {
+    const res = await fetch("/sessions?" + ChatSessions.sessionQuery(currentUserId()), {
+      headers: authHeaders(),
+    });
+    if (!res.ok) return;
+    const data = await res.json();
+    sessionsCache = Array.isArray(data.sessions) ? data.sessions : [];
+    renderSessions();
+  } catch (error) {
+    /* keep the previous list; the chat still works */
+  }
+}
+
+async function createServerSession() {
+  if (!sessionsEnabled) return "";
+  if (sessionId) return sessionId;
+  try {
+    const res = await fetch("/sessions", {
+      method: "POST",
+      headers: authHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ user_id: currentUserId(), dept: deptSel.value }),
+    });
+    if (!res.ok) return "";
+    const data = await res.json();
+    if (!data.session_id) return "";
+    sessionId = data.session_id;
+    saveActiveSession();
+    refreshSessions();
+    return sessionId;
+  } catch (error) {
+    return "";
+  }
+}
+
+async function openSession(id, options) {
+  if (!sessionsEnabled || busy) return;
+  try {
+    const res = await fetch(
+      "/sessions/" + encodeURIComponent(id) + "?" + ChatSessions.sessionQuery(currentUserId()),
+      { headers: authHeaders() }
+    );
+    if (!res.ok) {
+      if (res.status === 404) {
+        clearActiveSession();
+        sessionsCache = sessionsCache.filter((item) => item.session_id !== id);
+        renderSessions();
+        if (!options || !options.silent) startNewSession("sessions.missing");
+      }
+      return;
+    }
+    const data = await res.json();
+    sessionId = data.session_id || id;
+    saveActiveSession();
+    if (data.dept) {
+      if (![...deptSel.options].some((option) => option.value === data.dept)) {
+        const option = document.createElement("option");
+        option.value = data.dept;
+        option.textContent = data.dept;
+        deptSel.appendChild(option);
+      }
+      deptSel.value = data.dept;
+    }
+    history = [];
+    chat.textContent = "";
+    const messages = Array.isArray(data.messages) ? data.messages : [];
+    for (const message of messages) {
+      history.push({ role: message.role, content: message.content || "" });
+      if (message.role === "user") {
+        addMsg("user", message.content || "");
+        continue;
+      }
+      const bubble = addMsg("bot", "");
+      if (message.content) setMarkdown(bubble, message.content);
+      if (message.degraded) addDegradedNote(bubble);
+      attachSources(bubble, message.sources);
+      addCopy(bubble, message.content || "");
+    }
+    if (!messages.length) addMsg("bot", "", null, false, "chat.greeting");
+    renderSessions();
+    closeSidebar();
+    chat.scrollTop = chat.scrollHeight;
+  } catch (error) {
+    addMsg("bot", "", null, true, "sessions.loadFailed", { error: error.message });
+  }
+}
+
+async function deleteServerSession(id) {
+  if (!sessionsEnabled || busy) return;
+  if (typeof window.confirm === "function" && !window.confirm(t("sessions.deleteConfirm"))) return;
+  try {
+    const res = await fetch(
+      "/sessions/" + encodeURIComponent(id) + "?" + ChatSessions.sessionQuery(currentUserId()),
+      { method: "DELETE", headers: authHeaders() }
+    );
+    if (!res.ok) {
+      addMsg("bot", "", null, true, "sessions.deleteFailed");
+      return;
+    }
+    sessionsCache = sessionsCache.filter((item) => item.session_id !== id);
+    if (sessionId === id) startNewSession("sessions.deleted");
+    renderSessions();
+  } catch (error) {
+    addMsg("bot", "", null, true, "sessions.deleteFailed");
+  }
 }
 
 function addPosition(path, key, name, value) {
@@ -588,16 +873,23 @@ async function send() {
 
   abortController = new AbortController();
   try {
+    // Server-side sessions: create one lazily on the first turn. If creation
+    // fails, buildChatBody falls back to the bounded local history.
+    const activeSession = await createServerSession();
     const resp = await fetch("/chat/stream", {
       method: "POST",
       headers: authHeaders({ "Content-Type": "application/json" }),
       signal: abortController.signal,
-      body: JSON.stringify({
-        user_id: uidInput.value.trim() || "u1",
-        user_dept: deptSel.value,
-        message: text,
-        history: recentHistory(),
-      }),
+      body: JSON.stringify(
+        ChatSessions.buildChatBody({
+          userId: currentUserId(),
+          dept: deptSel.value,
+          message: text,
+          sessionId: activeSession,
+          history: recentHistory(),
+          maxHistory: HISTORY_MAX_MESSAGES,
+        })
+      ),
     });
 
     if (!resp.ok) {
@@ -665,6 +957,10 @@ async function send() {
           timings = ev.timings;
           if (ev.sources) sources = ev.sources;
           if (ev.degraded) degraded = true;
+          if (ev.session_id) {
+            sessionId = ev.session_id;
+            saveActiveSession();
+          }
         } else if (ev.type === "error") {
           bubble.classList.remove("streaming");
           bubble.classList.add("error");
@@ -686,19 +982,18 @@ async function send() {
       } else {
         setMarkdown(bubble, answer);
       }
-      if (degraded) {
-        const warn = document.createElement("div");
-        warn.className = "md-note";
-        warn.dataset.i18n = "chat.degradedNote";
-        warn.textContent = t("chat.degradedNote");
-        bubble.appendChild(warn);
-      }
+      if (degraded) addDegradedNote(bubble);
       attachSources(bubble, sources);
       attachTimings(bubble, timings);
       addCopy(bubble, answer);
       history.push({ role: "user", content: text });
       history.push({ role: "assistant", content: answer });
-      saveSession();
+      if (sessionsEnabled) {
+        saveActiveSession();
+        refreshSessions();
+      } else {
+        saveSession();
+      }
     } else if (!bubble.classList.contains("error")) {
       bubble.textContent = t("chat.empty");
     }
@@ -738,9 +1033,11 @@ input.addEventListener("keydown", e => {
 // answers from another department would otherwise leak into this conversation.
 function startNewSession(key, vars) {
   history = [];
-  chat.innerHTML = "";
+  clearActiveSession();
   clearSession();
+  chat.innerHTML = "";
   addMsg("bot", "", null, false, key, vars);
+  if (sessionsEnabled) renderSessions();
   input.focus();
 }
 
@@ -749,9 +1046,20 @@ deptSel.addEventListener("change", () => {
 });
 uidInput.addEventListener("change", () => {
   startNewSession("chat.switchedUser", { user: uidInput.value || "u1" });
+  refreshSessions();
 });
 
 const newChatBtn = document.getElementById("newchat");
+
+newSessionBtn.onclick = () => {
+  startNewSession("sessions.started");
+  closeSidebar();
+};
+sessionToggle.onclick = () => setSidebar(!sessionBar.classList.contains("open"));
+sessionMask.onclick = closeSidebar;
+document.addEventListener("i18n:change", () => {
+  if (sessionsEnabled) renderSessions();
+});
 
 // Open a brand-new session in a separate tab; the current conversation stays intact.
 newChatBtn.onclick = () => {
@@ -870,10 +1178,12 @@ document.getElementById("loginForm").onsubmit = async (event) => {
   }
   if (!(await resolveAuth())) return;
   startNewSession("auth.signedInNew");
+  refreshSessions();
 };
 
 document.getElementById("logout").onclick = () => {
   clearCredential();
+  sessionsCache = [];
   startNewSession("auth.signedOut");
   showGate();
 };
@@ -886,6 +1196,7 @@ document.getElementById("logout").onclick = () => {
     const info = await fetch("/info").then((r) => r.json());
     authMode = info.auth_mode || "none";
     localLogin = Boolean(info.local_login);
+    sessionsEnabled = Boolean(info.sessions_enabled);
     store.textContent = info.vector_store || "-";
     model.textContent = info.llm_model || "-";
   } catch (error) {
@@ -900,8 +1211,22 @@ document.getElementById("logout").onclick = () => {
   if (authMode === "jwt") document.getElementById("tokenFallback").open = !localLogin;
   const authed = await resolveAuth();
   if (authed) {
-    // Restore the previous conversation (best-effort; ignores corrupt state).
-    if (!new URLSearchParams(location.search).get("new")) loadSession();
+    const freshView = Boolean(new URLSearchParams(location.search).get("new"));
+    if (sessionsEnabled) {
+      sessionBar.hidden = false;
+      sessionToggle.hidden = false;
+      if (freshView) clearActiveSession();
+      await refreshSessions();
+      // Reopen this tab's last server session; a deleted one falls back to the
+      // greeting without showing an error during boot.
+      const saved = freshView ? null : savedActiveSession();
+      if (saved && saved.sessionId && saved.uid === currentUserId()) {
+        await openSession(saved.sessionId, { silent: true });
+      }
+    } else if (!freshView) {
+      // Older servers (or SESSIONS_ENABLED=false) keep the localStorage transcript.
+      loadSession();
+    }
   } else if (fromSso) {
     showGate(t("auth.invalidSso"));
   }
