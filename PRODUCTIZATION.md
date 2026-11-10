@@ -116,17 +116,19 @@ Nginx 对应 `proxy_buffering off; proxy_read_timeout 300s;`（SSE 必需）。
 - 配额检查放在 `chat_service.prepare`，与限流同一位置
 - 计费口径建议：只统计成功完成的 LLM 调用（`llm_calls`），失败/降级不计费
 
-### 2.4 可观测性（P1）
+### 2.4 可观测性（P1，告警已完成 2026-11-10）
 
-已有 `/metrics`，缺的是「告警」：
-
-- Prometheus 抓取 + Grafana 面板（QPS、P95、错误率、缓存命中、索引块数）
-- 建议告警项：
-  - `agent_rag_chat_requests_total{status="error"}` 5 分钟增长 > 0
-  - `rate(agent_rag_cache_total{result="hit"})` 骤降（索引/缓存异常）
-  - `agent_rag_index_chunks == 0`（空库）
-  - `/health` 连续 3 次非 200
-- 日志：当前是 stdout，接入 Loki/ELK；`request_id` 已贯穿
+- [x] Prometheus 抓取 + Grafana 面板（QPS、P95、错误率、缓存命中、索引块数）：
+  `docker-compose.monitoring.yml` + `monitoring/`，`make monitor-up` / `make monitor-check`
+- [x] 告警项（`monitoring/prometheus/alerts.yml`，6 条）：
+  - `AgentRagErrorRate`：chat 错误率 5 分钟 > 5%
+  - `AgentRagCacheHitDrop`：10 分钟缓存命中率低于 1 小时基线的一半
+  - `AgentRagIndexEmpty`：`agent_rag_index_chunks == 0` 持续 5 分钟
+  - `AgentRagHealthDown`：blackbox 探测 `/health` 连续 3 次非 2xx
+  - `AgentRagMetricsDown`：`up{job="agent-rag"} == 0`
+  - `AgentRagMaintenanceStuck`：重建标志持续 1 小时
+- [ ] 告警通知落地：加 Alertmanager + 邮件/Slack/Webhook 路由
+- [ ] 日志：当前是 stdout，接入 Loki/ELK；`request_id` 已贯穿
 
 ### 2.5 前端产品化（P1）
 

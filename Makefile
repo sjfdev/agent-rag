@@ -7,7 +7,7 @@ endif
 
 .PHONY: help install data ingest run test lint cov milvus-up milvus-down milvus-logs \
         reset-faiss reset-milvus doctor check eval clean release release-check \
-        backup restore
+        backup restore monitor-up monitor-down monitor-logs monitor-check
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | \
@@ -61,6 +61,18 @@ backup: ## Archive data, config, logs and the vector store (checksummed)
 restore: ## Restore an archive (make restore ARCHIVE=backups/<file>.tar.gz)
 	@test -n "$(ARCHIVE)" || (echo "usage: make restore ARCHIVE=backups/<file>.tar.gz"; exit 1)
 	$(PYTHON) scripts/restore.py "$(ARCHIVE)"
+
+monitor-up: ## Start Prometheus + blackbox + Grafana (needs the prod stack)
+	docker compose -f docker-compose.monitoring.yml up -d
+
+monitor-down: ## Stop the monitoring stack (keeps metric data)
+	docker compose -f docker-compose.monitoring.yml down
+
+monitor-logs: ## Tail monitoring stack logs
+	docker compose -f docker-compose.monitoring.yml logs -f --tail=100
+
+monitor-check: ## Validate Prometheus/Grafana configs offline
+	$(PYTHON) scripts/check_monitoring.py
 
 check: lint test ## Lint + tests
 

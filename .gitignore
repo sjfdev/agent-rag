@@ -12,8 +12,12 @@ htmlcov/
 .env
 db/
 volumes/
+volumes-prod/
+volumes-monitoring/
 logs/
 backups/
+# Bearer token for the /metrics scrape (only needed when METRICS_TOKEN is set).
+monitoring/prometheus/metrics_token
 
 # OS / editor
 .DS_Store

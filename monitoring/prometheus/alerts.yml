@@ -1,0 +1,102 @@
+# Alerting rules for agent-rag.
+#
+# Loaded by Prometheus (see prometheus.yml -> rule_files). Keep expressions
+# aligned with the metric names exported by src/metrics.py; `make monitor-check`
+# fails if an `agent_rag_*` metric here does not exist in the code.
+
+groups:
+  - name: agent-rag-availability
+    rules:
+      - alert: AgentRagMetricsDown
+        expr: up{job="agent-rag"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "agent-rag /metrics is not scrapeable"
+          description: >-
+            Prometheus has failed to scrape {{ $labels.instance }} for 2 minutes.
+            The app may be down, unreachable on the agent-rag-prod network, or
+            METRICS_TOKEN changed without updating the scrape config.
+
+      - alert: AgentRagHealthDown
+        expr: probe_success{job="agent-rag-health"} == 0
+        for: 45s
+        labels:
+          severity: critical
+        annotations:
+          summary: "agent-rag /health returns non-2xx"
+          description: >-
+            The readiness probe for {{ $labels.instance }} has failed for
+            45 seconds (three consecutive scrapes). Check the index, Milvus,
+            disk space and the app log; /health returns 503 when the index is
+            empty or unreachable.
+
+      - alert: AgentRagIndexEmpty
+        expr: agent_rag_index_chunks == 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "agent-rag has zero indexed chunks"
+          description: >-
+            The live index reports 0 chunks. Queries cannot retrieve anything.
+            Run `python run_ingestion.py` (or use the admin console) and check
+            /health before routing traffic to this instance.
+
+      - alert: AgentRagMaintenanceStuck
+        expr: agent_rag_maintenance == 1
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: "agent-rag rebuild has been running for over an hour"
+          description: >-
+            A full index rebuild has held the maintenance flag for more than an
+            hour. Check the ingestion job log and disk space; a stuck rebuild
+            usually means Milvus is refusing writes.
+
+  - name: agent-rag-quality
+    rules:
+      - alert: AgentRagErrorRate
+        expr: >-
+          sum(rate(agent_rag_chat_requests_total{status="error"}[5m]))
+          /
+          clamp_min(sum(rate(agent_rag_chat_requests_total[5m])), 0.001)
+          > 0.05
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "agent-rag chat error rate above 5%"
+          description: >-
+            More than 5% of chat requests failed over the last 5 minutes.
+            Inspect `agent_rag_chat_requests_total{status="error"}` and the app
+            log for LLM, validation or vector-store failures.
+
+      - alert: AgentRagCacheHitDrop
+        expr: >-
+          (
+            sum(rate(agent_rag_cache_total{cache="answer",result="hit"}[10m]))
+            /
+            clamp_min(sum(rate(agent_rag_cache_total{cache="answer",result=~"hit|miss"}[10m])), 0.001)
+          )
+          <
+          0.5 *
+          (
+            sum(rate(agent_rag_cache_total{cache="answer",result="hit"}[1h]))
+            /
+            clamp_min(sum(rate(agent_rag_cache_total{cache="answer",result=~"hit|miss"}[1h])), 0.001)
+          )
+          and
+          sum(rate(agent_rag_cache_total{cache="answer",result="miss"}[10m])) > 0
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "agent-rag answer cache hit rate dropped by half"
+          description: >-
+            The 10-minute answer-cache hit ratio is less than half of its
+            1-hour baseline. A sudden drop usually follows an index rebuild
+            (every write clears the cache) or a traffic mix change. Compare
+            with `agent_rag_maintenance` and recent ingestion activity.

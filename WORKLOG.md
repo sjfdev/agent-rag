@@ -923,7 +923,33 @@ Milvus 恢复后启动容器，集合 `enterprise_kb__r1793537166470` 可见且 
 
 ---
 
-## 11. 相关文档
+## 11. 告警与监控（11.2.1，2026-11-10）
+
+此前只有 `/metrics`，没有任何人收到告警。这次把「指标 → 面板 → 规则 → 校验」整条链路落地，默认随生产 compose 一起用。
+
+### 落点
+
+- **`docker-compose.monitoring.yml`**：Prometheus + blackbox_exporter + Grafana，加入 `agent-rag-prod` 外部网络；UI 只绑 `127.0.0.1`（`:9090` / `:3000`），数据写 `volumes-monitoring/`（已 gitignore）
+- **`monitoring/prometheus/prometheus.yml`**：抓 `app:8000/metrics`；通过 blackbox `http_2xx` 探测 `http://app:8000/health`（`/health` 非 2xx 才有 `probe_success=0`；`degraded` 仍是 200）
+- **`monitoring/prometheus/alerts.yml`**：6 条规则——`AgentRagMetricsDown`、`AgentRagHealthDown`、`AgentRagIndexEmpty`、`AgentRagErrorRate`（>5%）、`AgentRagCacheHitDrop`（10 分钟命中率 < 1 小时基线一半）、`AgentRagMaintenanceStuck`
+- **`monitoring/grafana/`**：datasource + dashboard provider + 「Agent RAG」面板（请求量、错误率、P95、首 token、缓存命中、索引块数、就绪、引擎、构建版本）
+- **`scripts/check_monitoring.py`**：离线校验 YAML/JSON、必需告警、每条规则的 `expr/labels/annotations`，并把规则与面板里出现的每个 `agent_rag_*` 指标回溯到 `src/metrics.py`；装了 `promtool` 时再跑 `promtool check rules`
+- **`make monitor-up|monitor-down|monitor-logs|monitor-check`**；`requirements*.txt` 显式加 `PyYAML==6.0.3`
+
+### 验证
+
+- `python scripts/check_monitoring.py` → `RESULT: OK (23 checks)`（本机无 promtool，规则结构检查已覆盖）
+- `pytest -q tests/test_monitoring.py` → 7 passed；全套测试与 `ruff` 结果见本轮提交
+- 未启动容器做端到端验证（需要 `agent-rag-prod` 网络与生产 compose），配置校验覆盖了抓取目标、relabel、面板数据源与指标名一致性
+
+### 遗留
+
+- 告警通知：Prometheus 只负责判定，真正发邮件/Slack 需要 Alertmanager（规则里已带 `severity`，可直接路由）
+- 日志仍是 stdout，Loki/ELK 未接；`request_id` 已贯穿，接入时可直接做 label
+
+---
+
+## 12. 相关文档
 
 - `AGENT_GUIDE.md`：安装、使用、接口、配置、FAQ、性能优化
 - `OPTIMIZATION_PLAN.md`：待办清单与历史进度；**下一次开发直接看第 11 节「后续待办（按优先级）」**

@@ -1,0 +1,94 @@
+# Observability overlay: Prometheus + blackbox_exporter + Grafana.
+#
+# It reuses the running production stack's network (`agent-rag-prod`), so start
+# that first:
+#
+#   docker compose -f docker-compose.prod.yml up -d
+#   docker compose -f docker-compose.monitoring.yml up -d
+#
+# UIs are bound to loopback by default; put a reverse proxy with TLS in front
+# for remote access. Set GRAFANA_ADMIN_PASSWORD in .env before exposing :3000.
+#
+#   Grafana    http://127.0.0.1:3000   (folder "Agent RAG", dashboard "Agent RAG")
+#   Prometheus http://127.0.0.1:9090   (Alerts tab -> agent-rag-* rules)
+#
+# Stop with `docker compose -f docker-compose.monitoring.yml down`; metric and
+# dashboard state lives under volumes-monitoring/ (gitignored).
+name: agent-rag-monitoring
+
+services:
+  prometheus:
+    image: ${PROMETHEUS_IMAGE:-prom/prometheus:v2.55.1}
+    container_name: agent-rag-prometheus
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=${PROMETHEUS_RETENTION:-15d}
+      - --web.enable-lifecycle
+    volumes:
+      - ./monitoring/prometheus:/etc/prometheus:ro
+      - ${DOCKER_VOLUME_DIRECTORY:-.}/volumes-monitoring/prometheus:/prometheus
+    ports:
+      - "127.0.0.1:${PROMETHEUS_PORT:-9090}:9090"
+    depends_on:
+      - blackbox
+    networks:
+      - monitoring
+      - prod
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"
+
+  blackbox:
+    image: ${BLACKBOX_IMAGE:-prom/blackbox-exporter:v0.25.0}
+    container_name: agent-rag-blackbox
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/blackbox_exporter/blackbox.yml
+    volumes:
+      - ./monitoring/blackbox:/etc/blackbox_exporter:ro
+    # No published port: only Prometheus needs to reach :9115.
+    networks:
+      - monitoring
+      - prod
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  grafana:
+    image: ${GRAFANA_IMAGE:-grafana/grafana:11.3.0}
+    container_name: agent-rag-grafana
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/agent-rag.json
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - ${DOCKER_VOLUME_DIRECTORY:-.}/volumes-monitoring/grafana:/var/lib/grafana
+    ports:
+      - "127.0.0.1:${GRAFANA_PORT:-3000}:3000"
+    depends_on:
+      - prometheus
+    networks:
+      - monitoring
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"
+
+networks:
+  monitoring:
+    name: agent-rag-monitoring
+  prod:
+    name: agent-rag-prod
+    external: true

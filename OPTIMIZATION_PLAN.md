@@ -663,7 +663,7 @@ curl -s -X POST localhost:8000/chat -H 'Content-Type: application/json' \
 
 ## 11. 后续待办（按优先级，2026-11-01 之后）
 
-> 当前基线：**509 项测试、CI 全绿**；`milvus 2.5.4 + 服务端稀疏 BM25`；28 chunks；备份/恢复脚本已落地（`make backup` / `make restore`）。
+> 当前基线：**516 项测试、CI 全绿**；`milvus 2.5.4 + 服务端稀疏 BM25`；28 chunks；备份/恢复脚本已落地（`make backup` / `make restore`）；监控栈已落地（`make monitor-up` / `make monitor-check`）。
 > 容器化交付已完成（`Dockerfile` / `docker-compose.prod.yml` / `PRODUCTIZATION.md`）。
 > 下面按「对外发布必须先做 → 产品化 → 规模化」排序，每项都有落点与验收方式。
 
@@ -716,9 +716,11 @@ curl -s -X POST localhost:8000/chat -H 'Content-Type: application/json' \
 
 ### 11.2 P1 产品化与稳定性
 
-#### 11.2.1 告警（有指标，无人收）
-- [ ] Prometheus 抓取 `/metrics` + Grafana 面板
-- [ ] 告警项：错误率、缓存命中骤降、`index_chunks == 0`、`/health` 连续非 200
+#### 11.2.1 告警（已完成 2026-11-10）
+- [x] Prometheus 抓取 `/metrics` + Grafana 面板：`docker-compose.monitoring.yml` + `monitoring/`（Prometheus/blackbox/Grafana，`make monitor-up|monitor-down|monitor-check`），预置「Agent RAG」面板（请求量/错误率/P95/首 token/缓存命中/索引块数/就绪/引擎）
+- [x] 告警项（`monitoring/prometheus/alerts.yml`）：`AgentRagErrorRate`（5 分钟错误率 >5%）、`AgentRagCacheHitDrop`（10 分钟命中率低于 1 小时基线一半）、`AgentRagIndexEmpty`（`agent_rag_index_chunks == 0` 持续 5 分钟）、`AgentRagHealthDown`（blackbox 探测 `/health` 连续 3 次非 2xx）、`AgentRagMetricsDown`、`AgentRagMaintenanceStuck`
+- [x] 离线校验：`scripts/check_monitoring.py`（检查告警/面板引用的 `agent_rag_*` 指标都存在于 `src/metrics.py`，有 promtool 时额外跑 `promtool check rules`），`tests/test_monitoring.py`（7 项）
+- [ ] 告警通知落地：Alertmanager + 邮件/Slack/Webhook 路由
 - [ ] 日志接入 Loki/ELK（`request_id` 已贯穿）
 
 #### 11.2.2 配额与计费
@@ -758,7 +760,7 @@ curl -s -X POST localhost:8000/chat -H 'Content-Type: application/json' \
 1. ~~11.1.1 登录~~（已完成：JWT + OIDC + 本地账号）
 2. ~~11.1.3 发布流程~~（已完成：`v1.0.0` tag + `agent-rag:v1.0.0` 镜像）
 3. ~~11.1.4 备份与恢复演练~~（已完成：脚本 + 双后端沙箱演练）
-4. **11.2.1 告警**（下一项，半天，接上已有指标）
+4. ~~11.2.1 告警~~（已完成：Prometheus + blackbox + Grafana + 6 条规则）
 5. 11.2.3 / 11.2.4 前端会话列表 + 服务端历史
 6. 做 SaaS 时：11.1.2 多租户 → 11.2.2 计费
 7. 11.3 全部按需，触发条件写在每项里
@@ -773,7 +775,9 @@ curl -s -X POST localhost:8000/chat -H 'Content-Type: application/json' \
 - [x] 演练：备份 → 移走目录 → 恢复 → `verify_retrieval.py` + 双后端 `eval_retrieval.py` 通过（FAISS 与 Milvus 均 18/18、MRR 0.89、leaks 0）
 - [x] `WORKLOG.md` 记录演练耗时与恢复后的 eval 数字
 
-下一项：**11.2.1 告警**（Prometheus 抓 `/metrics` + 4 条规则）→ 11.2.3/11.2.4 会话列表与服务端历史。
+**11.2.1 已完成（2026-11-10）。** `docker-compose.monitoring.yml` 拉起 Prometheus + blackbox_exporter + Grafana，加入 `agent-rag-prod` 网络；`monitoring/prometheus/alerts.yml` 落地 6 条规则（错误率、缓存命中骤降、空索引、`/health` 非 2xx、抓取失败、重建卡住）；Grafana 预置「Agent RAG」面板；`scripts/check_monitoring.py` 校验配置与指标名一致（无 promtool 也可跑），`tests/test_monitoring.py` 7 项。剩余：Alertmanager 通知路由、Loki/ELK 日志。
+
+下一项：**11.2.3/11.2.4 会话列表与服务端历史**。
 
 演练环境注意：Docker/colima 只共享 `$HOME`，不要把演练卷放在 `/tmp`（容器里会看到空目录，误判为恢复失败）。
 

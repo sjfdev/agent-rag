@@ -1,0 +1,13 @@
+# blackbox_exporter modules used by the agent-rag-health scrape job.
+#
+# `http_2xx` treats any 2xx as success. agent-rag returns 200 for both "ok" and
+# "degraded" (ingestion/rebuild or low disk) and 503 only when the index is
+# empty or unreachable, which is the condition worth paging on.
+modules:
+  http_2xx:
+    prober: http
+    timeout: 5s
+    http:
+      method: GET
+      preferred_ip_protocol: ip4
+      follow_redirects: false
