@@ -195,8 +195,19 @@ curl -s http://localhost:8000/metrics | grep '^agent_rag_'
 ```
 - 指标覆盖：请求量/成功率、端到端与检索/LLM 耗时、首 token 延迟、索引块数、入库任务、重建状态
 - 部门名不作为标签（避免敏感信息与高基数）
-- 如需鉴权：`.env` 设置 `METRICS_TOKEN=xxx`，Prometheus 配置 `authorization: { credentials: xxx }`
+- 如需鉴权：`.env` 设置 `METRICS_TOKEN=xxx`，Prometheus 配置 `authorization` 并在 `monitoring/prometheus/metrics_token` 写入同一个值（见 `monitoring/README.md`）
 - 多 worker/多副本时各进程指标独立，请在 Prometheus 侧按 instance 聚合
+
+**开箱监控栈**（Prometheus + blackbox_exporter + Grafana）：
+```bash
+docker compose -f docker-compose.prod.yml up -d   # 先起应用，创建 agent-rag-prod 网络
+make monitor-up                                   # 启动监控，加入同一网络
+make monitor-check                                # 离线校验配置（CI 可跑）
+```
+- Grafana `http://127.0.0.1:3000`：预置 **Agent RAG** 面板（请求量/错误率/P95/缓存命中/索引块数/就绪探针）
+- Prometheus `http://127.0.0.1:9090`：6 条告警（抓取失败、`/health` 连续非 2xx、索引为空、错误率 >5%、缓存命中骤降、重建卡住）
+- 两个端口默认只绑 `127.0.0.1`；对外访问请加 TLS 反向代理。告警通知需自行加 Alertmanager
+- 文件在 `monitoring/`，指标数据在 `volumes-monitoring/`（已 gitignore）
 
 ### 4.2 功能验证
 先做**离线检索验证**（不需要 LLM，检查入库与部门隔离）：

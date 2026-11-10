@@ -29,6 +29,16 @@ three agree before you push a tag.
   `storage` block, and `scripts/doctor.py` fails with the tightest path.
 - **Chinese/English switch** in both UIs (`static/i18n.js`, follow the browser
   language by default, remembered in `localStorage`).
+- **Monitoring stack**: `docker-compose.monitoring.yml` runs Prometheus,
+  blackbox_exporter and Grafana on the `agent-rag-prod` network. Grafana
+  provisions the "Agent RAG" dashboard (request/error rate, p95 latency, time
+  to first token, cache hit ratio, live index chunks, retrieval engine,
+  readiness, running build). Six alert rules cover scrape failure, `/health`
+  non-2xx, an empty index, a chat error rate above 5%, a cache-hit drop, and a
+  stuck rebuild. UIs bind to `127.0.0.1`; `make monitor-up` /
+  `make monitor-down`; `make monitor-check` validates every config file
+  offline and ensures each `agent_rag_*` metric in the rules/dashboard exists
+  in `src/metrics.py`. See `monitoring/README.md`.
 
 ### Changed
 

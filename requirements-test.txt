@@ -28,6 +28,7 @@ faiss-cpu==1.15.1
 pymilvus==3.0.2
 rank-bm25==0.2.2
 prometheus-client==0.24.1
+PyYAML==6.0.3
 PyJWT==2.10.1
 cryptography==44.0.0
 

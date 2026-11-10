@@ -1,0 +1,43 @@
+# Prometheus scrape configuration for agent-rag.
+#
+# This file is mounted read-only at /etc/prometheus/prometheus.yml by
+# `docker-compose.monitoring.yml`. Every target is reachable on the
+# `agent-rag-prod` Docker network (service name `app`, port 8000).
+#
+# If you set METRICS_TOKEN in the application, uncomment the `authorization`
+# block and put the token in monitoring/prometheus/metrics_token (gitignored):
+#
+#   printf '%s' "$METRICS_TOKEN" > monitoring/prometheus/metrics_token
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  - /etc/prometheus/alerts.yml
+
+scrape_configs:
+  # Application metrics: requests, latency, cache, index size, rebuild state.
+  - job_name: agent-rag
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["app:8000"]
+    # authorization:
+    #   type: Bearer
+    #   credentials_file: /etc/prometheus/metrics_token
+
+  # Readiness probe through blackbox_exporter so "consecutive non-2xx /health"
+  # is an alertable time series (`probe_success`), not just a container log.
+  - job_name: agent-rag-health
+    metrics_path: /probe
+    params:
+      module: [http_2xx]
+    static_configs:
+      - targets: ["http://app:8000/health"]
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox:9115

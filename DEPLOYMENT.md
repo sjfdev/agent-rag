@@ -179,6 +179,7 @@ python test_agent.py
 ## 📈 5. Production Optimization
 - **Health checks**: use `GET /health` for liveness/readiness (`down` = 503 on an empty/unreachable index, `degraded` = 200 while ingesting/rebuilding). `/health?probe=1` also calls the LLM (cached 15s).
 - **Metrics**: `GET /metrics` for Prometheus (requests, latency, retrieval/LLM time, index size, ingestion, rebuild state). Set `METRICS_TOKEN` to require a bearer token; per-process values.
+- **Monitoring stack**: `docker-compose.monitoring.yml` adds Prometheus, blackbox_exporter and Grafana, joining the `agent-rag-prod` network (`make monitor-up` / `make monitor-down`). Grafana provisioning includes the "Agent RAG" dashboard (request/error rate, p95 latency, cache hit ratio, index chunks, readiness) and six alert rules: scrape down, `/health` non-2xx, empty index, chat error rate > 5%, cache-hit drop, stuck rebuild. UIs bind to loopback; `make monitor-check` validates every config file offline. See `monitoring/README.md`.
 - **Hybrid retrieval**: `HYBRID_ENGINE=auto` (default) prefers Milvus server-side sparse BM25 on 2.5+ and falls back to in-process BM25 otherwise. Check `GET /info` → `hybrid.engine`.
 - **Milvus 2.5+**: the compose default is `v2.5.4`. After upgrading, rebuild the collection with `python run_ingestion.py --reset` so the sparse field and BM25 index exist; back up `volumes/milvus` first (Milvus cannot downgrade).
 - **Reranking**: off by default; cache `RERANK_MODEL` before enabling (CPU cost ≈+200ms for MiniLM, ≈+1.2s for BGE-base).
