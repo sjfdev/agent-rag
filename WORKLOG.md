@@ -970,13 +970,39 @@ Milvus 恢复后启动容器，集合 `enterprise_kb__r1793537166470` 可见且 
 
 ### 遗留
 
-- 前端会话列表尚未接入（后端接口已就绪，见 11.2.3）
 - 多租户维度随 11.1.2 再加；目前按 `user_id` 隔离
 - 摘要调用目前同步发生在 `prepare`，超窗口那一次请求会多一次 LLM 延迟；量大后可改为后台任务
 
 ---
 
-## 13. 相关文档
+## 13. 前端会话列表（11.2.3，2026-11-10）
+
+后端已有 `/sessions`，但聊天页仍把历史塞在 `localStorage` 并每轮回传。这次把左侧会话栏接到服务端，刷新后由服务端恢复。
+
+### 落点
+
+- **布局**：`static/index.html` 增加 `.layout`（侧栏 + 对话窗格）；桌面常驻，≤860px 变抽屉（`#sessionToggle`、`#sessionMask`），不改变现有输入区结构
+- **会话栏**：新建、切换、删除（`confirm`）、当前会话高亮、消息数与日期；语言切换时重绘（`i18n:change`）
+- **懒创建**：首轮发送前 `POST /sessions`，之后 `/chat/stream` 只带 `session_id`，不再带 `history`；创建失败自动回退到原 `history` 路径
+- **恢复**：`localStorage` 只保存 `session_id`/`user_id`/`dept`；刷新或重开标签页时调 `GET /sessions/{id}` 重建消息（markdown、来源、降级提示、复制按钮），404 时静默回到问候语
+- **开关**：`/info` 新增 `sessions_enabled` 与 `history_max_messages`；`SESSIONS_ENABLED=false` 时隐藏侧栏并继续用原来的 localStorage transcript
+- **请求体**：`static/sessions.js` 的 `buildChatBody` 保证有 `session_id` 时不带 `history`，无会话时才发送截断后的本地历史；另含 `sessionQuery` 与本地化日期
+
+### 验证
+
+- `tests/test_sessions_js.py`（Node）5 项：`session_id` 优先、回退历史以 user 开头、历史形状清洗、query 编码、日期本地化
+- `tests/test_ui_sessions.py` 3 项：页面包含侧栏/helper 引用、`/ui/sessions.js` 可访问、`/info` 暴露开关
+- `tests/test_i18n_js.py`：新增 `sessions.*` 键中英文一致
+- 全套 **537 passed**，`ruff` 干净；8000 端口被其他项目占用时用 `--port 8010` 手工验收
+
+### 遗留
+
+- 引用点击预览原文、移动端细节仍归 11.2.3 后续项
+- 会话跨设备同步依赖同一 `SESSIONS_DB_PATH`；多副本部署需共享 SQLite（见 11.3）
+
+---
+
+## 14. 相关文档
 
 - `AGENT_GUIDE.md`：安装、使用、接口、配置、FAQ、性能优化
 - `OPTIMIZATION_PLAN.md`：待办清单与历史进度；**下一次开发直接看第 11 节「后续待办（按优先级）」**

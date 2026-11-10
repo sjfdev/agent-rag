@@ -39,6 +39,12 @@ three agree before you push a tag.
   are folded into a running summary with one extra LLM call per window
   (`SESSION_SUMMARY_*`); if summarization fails, the prompt falls back to the
   last window. New metric: `agent_rag_session_summaries_total{result}`.
+- **Chat session sidebar**: the chat page lists server-side sessions in a left
+  sidebar (new/switch/delete), creates one lazily on the first turn, sends
+  `session_id` instead of local `history`, and restores the transcript from
+  `/sessions/{id}` after a reload. `/info` exposes `sessions_enabled` and
+  `history_max_messages`; disabling sessions hides the sidebar and keeps the
+  localStorage fallback.
 - **Monitoring stack**: `docker-compose.monitoring.yml` runs Prometheus,
   blackbox_exporter and Grafana on the `agent-rag-prod` network. Grafana
   provisions the "Agent RAG" dashboard (request/error rate, p95 latency, time

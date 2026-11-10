@@ -663,7 +663,7 @@ curl -s -X POST localhost:8000/chat -H 'Content-Type: application/json' \
 
 ## 11. 后续待办（按优先级，2026-11-01 之后）
 
-> 当前基线：**529 项测试、CI 全绿**；`milvus 2.5.4 + 服务端稀疏 BM25`；28 chunks；备份/恢复脚本已落地（`make backup` / `make restore`）；监控栈已落地（`make monitor-up` / `make monitor-check`）；服务端会话已落地（`/sessions` + `ChatRequest.session_id`）。
+> 当前基线：**537 项测试、CI 全绿**；`milvus 2.5.4 + 服务端稀疏 BM25`；28 chunks；备份/恢复脚本已落地（`make backup` / `make restore`）；监控栈已落地（`make monitor-up` / `make monitor-check`）；服务端会话与前端会话栏已落地（`/sessions` + `ChatRequest.session_id` + 左侧侧栏）。
 > 容器化交付已完成（`Dockerfile` / `docker-compose.prod.yml` / `PRODUCTIZATION.md`）。
 > 下面按「对外发布必须先做 → 产品化 → 规模化」排序，每项都有落点与验收方式。
 
@@ -731,7 +731,7 @@ curl -s -X POST localhost:8000/chat -H 'Content-Type: application/json' \
 #### 11.2.3 前端产品化
 - [x] Markdown 渲染（安全子集：粗体/斜体/列表/表格/代码块/引用/链接，禁 HTML）：`static/markdown.js` 先转义再产标签，链接仅放行 `http(s)`/`mailto`，`javascript:`/`data:`/相对路径保持为纯文本；流式期间仍用纯文本，结束后一次性渲染；`tests/test_markdown_js.py`（17 项）用 Node 断言转义与链接白名单
 - [x] 中英文切换：`static/i18n.js` 覆盖聊天页与管理台，默认跟随浏览器语言、`localStorage` 记忆；`tests/test_i18n_js.py`
-- [ ] 服务端会话列表与历史（后端 `/sessions` 已就绪，见 11.2.4；前端待接）
+- [x] 服务端会话列表与历史：`static/index.html` 左侧会话栏（新建/切换/删除/刷新），请求带 `session_id` 且不再发送本地 `history`；刷新后按 `localStorage` 记住的 id 从 `/sessions/{id}` 恢复；`/info` 暴露 `sessions_enabled`/`history_max_messages`，关闭时回退到原有 localStorage 历史；`static/sessions.js` 负责请求体构造，`tests/test_sessions_js.py`（5 项）与 `tests/test_ui_sessions.py`（3 项）校验
 - [ ] 引用点击预览原文；移动端适配
 
 #### 11.2.4 服务端会话存储（已完成 2026-11-10）
@@ -762,9 +762,10 @@ curl -s -X POST localhost:8000/chat -H 'Content-Type: application/json' \
 2. ~~11.1.3 发布流程~~（已完成：`v1.0.0` tag + `agent-rag:v1.0.0` 镜像）
 3. ~~11.1.4 备份与恢复演练~~（已完成：脚本 + 双后端沙箱演练）
 4. ~~11.2.1 告警~~（已完成：Prometheus + blackbox + Grafana + 6 条规则）
-5. ~~11.2.4 服务端历史~~（已完成：SQLite + `/sessions` + 超窗口摘要）→ 11.2.3 前端会话列表
-6. 做 SaaS 时：11.1.2 多租户 → 11.2.2 计费
-7. 11.3 全部按需，触发条件写在每项里
+5. ~~11.2.4 服务端历史~~（已完成：SQLite + `/sessions` + 超窗口摘要）
+6. ~~11.2.3 前端会话列表~~（已完成：左侧会话栏 + `session_id` + 刷新恢复）→ 11.2.5 断开即取消
+7. 做 SaaS 时：11.1.2 多租户 → 11.2.2 计费
+8. 11.3 全部按需，触发条件写在每项里
 
 ### 11.4.1 开工记录（2026-11-09 已完成 11.1.4）
 
@@ -778,9 +779,11 @@ curl -s -X POST localhost:8000/chat -H 'Content-Type: application/json' \
 
 **11.2.1 已完成（2026-11-10）。** `docker-compose.monitoring.yml` 拉起 Prometheus + blackbox_exporter + Grafana，加入 `agent-rag-prod` 网络；`monitoring/prometheus/alerts.yml` 落地 6 条规则（错误率、缓存命中骤降、空索引、`/health` 非 2xx、抓取失败、重建卡住）；Grafana 预置「Agent RAG」面板；`scripts/check_monitoring.py` 校验配置与指标名一致（无 promtool 也可跑），`tests/test_monitoring.py` 7 项。剩余：Alertmanager 通知路由、Loki/ELK 日志。
 
-**11.2.4 已完成（2026-11-10）。** SQLite 会话/消息表 + `/sessions` CRUD + `ChatRequest.session_id`；超过 2×窗口自动生成 running summary，失败降级为只保留最近窗口；会话按 `user_id` 隔离，`logs/` 已纳入备份；`tests/test_sessions.py` 13 项，全套 **529 passed**。
+**11.2.4 已完成（2026-11-10）。** SQLite 会话/消息表 + `/sessions` CRUD + `ChatRequest.session_id`；超过 2×窗口自动生成 running summary，失败降级为只保留最近窗口；会话按 `user_id` 隔离，`logs/` 已纳入备份；`tests/test_sessions.py` 13 项。
 
-下一项：**11.2.3 前端会话列表**（后端接口已就绪）→ 11.2.5 断开即取消。
+**11.2.3 已完成（2026-11-10）。** 聊天页增加左侧会话栏：`新对话`、点击切换、`×` 删除（带确认）、语言切换后重绘；首轮消息懒创建会话，后续请求只带 `session_id`，由 `static/sessions.js` 决定请求体；刷新后按 `localStorage` 的 id 调 `/sessions/{id}` 恢复 transcript（含来源与降级标记），404 时静默回到新对话；移动端侧栏改为抽屉。`/info` 新增 `sessions_enabled`/`history_max_messages`，`SESSIONS_ENABLED=false` 时隐藏侧栏并回退到原 localStorage 历史。`tests/test_sessions_js.py` 5 项 + `tests/test_ui_sessions.py` 3 项，全套 **537 passed**。
+
+下一项：**11.2.5 客户端断开即取消** → 11.2.3 剩余体验项（引用点击预览、移动端细节）。
 
 演练环境注意：Docker/colima 只共享 `$HOME`，不要把演练卷放在 `/tmp`（容器里会看到空目录，误判为恢复失败）。
 
