@@ -100,7 +100,7 @@ def test_backup_skips_missing_data_dir(modules, state, tmp_path, monkeypatch):
     assert "data" not in {entry["archive"] for entry in manifest["entries"]}
 
 
-def test_verify_rejects_a_tampered_sidecar(modules, tmp_path):
+def test_verify_rejects_a_tampered_sidecar(modules, state, tmp_path):
     backup_mod, _ = modules
     archive = backup_mod.create_backup(dest=tmp_path / "backups", probe_url="")
     sidecar = archive.with_name(archive.name + ".sha256")
@@ -131,7 +131,7 @@ def test_verify_rejects_path_traversal(modules, tmp_path):
     assert any("unsafe member path" in error for error in errors)
 
 
-def test_backup_cli_verify_exit_codes(modules, tmp_path):
+def test_backup_cli_verify_exit_codes(modules, state, tmp_path):
     backup_mod, _ = modules
     archive = backup_mod.create_backup(dest=tmp_path / "backups", probe_url="")
     assert backup_mod.main(["--verify", str(archive)]) == 0
