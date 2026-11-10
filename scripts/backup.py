@@ -246,7 +246,9 @@ def default_targets() -> tuple:
         [settings.AUTH_USERS_FILE, settings.ACL_FILE], "config", "config"
     )
     targets += _state_targets(
-        [settings.JOBS_PATH, settings.AUDIT_LOG_PATH], "logs", "logs"
+        [settings.JOBS_PATH, settings.AUDIT_LOG_PATH, settings.SESSIONS_DB_PATH],
+        "logs",
+        "logs",
     )
     targets += _default_vector_targets(warnings)
 

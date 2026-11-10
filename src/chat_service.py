@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, Iterator, List, Optional
 
 from fastapi import HTTPException
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from src import auth, metrics
 from src.agent import app as agent_app
@@ -30,6 +30,7 @@ from src.errors import ChatTimeout, classify_error, is_store_error, is_upstream_
 from src.ratelimit import RateLimiter
 from src.runtime import in_maintenance
 from src.schemas import ChatRequest, ChatResponse
+from src.sessions import session_store
 from src.validation import InvalidDepartment, validate_depts
 
 logger = logging.getLogger("agent-rag.chat")
@@ -110,6 +111,11 @@ class Prepared:
     # Cache scope (departments + ACL groups): never share answers across
     # identities that could see different documents.
     scope: str = ""
+    user_id: str = ""
+    # Server-side session id, empty for stateless (client-history) requests.
+    session_id: str = ""
+    # True when the session already had turns: follow-ups are not cacheable.
+    has_history: bool = False
 
 
 def _client_key(user_id: str, headers: Any) -> str:
@@ -241,10 +247,59 @@ def prepare(
             headers={"X-Request-ID": request_id},
         )
 
+    # Server-side sessions: the server owns the transcript, so the client only
+    # sends the newest message. A stateless request keeps the legacy contract
+    # (history in the body).
+    session_id = (request.session_id or "").strip()
+    summary = ""
+    stored: List[Dict[str, Any]] = []
+    if session_id:
+        if not settings.SESSIONS_ENABLED:
+            metrics.observe_request(
+                endpoint=endpoint,
+                status="rejected",
+                elapsed_seconds=time.perf_counter() - started,
+            )
+            raise HTTPException(
+                status_code=400,
+                detail={"error": "sessions_disabled", "message": "server sessions are disabled"},
+                headers={"X-Request-ID": request_id},
+            )
+        if session_store.get_session(session_id, effective_user) is None:
+            metrics.observe_request(
+                endpoint=endpoint,
+                status="rejected",
+                elapsed_seconds=time.perf_counter() - started,
+            )
+            raise HTTPException(
+                status_code=404,
+                detail={"error": "session_not_found", "message": "unknown session"},
+                headers={"X-Request-ID": request_id},
+            )
+        try:
+            session_store.maybe_summarize(session_id, effective_user)
+            summary, stored = session_store.context(session_id, effective_user)
+        except Exception:
+            logger.warning(
+                "session context unavailable id=%s; continuing without history",
+                session_id,
+                exc_info=True,
+            )
+            summary, stored = "", []
+
     messages = []
-    for item in trim_history(request.history):
-        cls = HumanMessage if item.role == "user" else AIMessage
-        messages.append(cls(content=item.content))
+    if summary:
+        messages.append(
+            SystemMessage(content=f"Summary of the earlier conversation:\n{summary}")
+        )
+    if session_id:
+        for item in stored:
+            cls = HumanMessage if item.get("role") == "user" else AIMessage
+            messages.append(cls(content=item.get("content") or ""))
+    else:
+        for item in trim_history(request.history):
+            cls = HumanMessage if item.role == "user" else AIMessage
+            messages.append(cls(content=item.content))
     messages.append(HumanMessage(content=request.message))
 
     return Prepared(
@@ -252,6 +307,9 @@ def prepare(
         endpoint=endpoint,
         started=started,
         scope=cache_scope(safe_depts, requested_groups),
+        user_id=effective_user,
+        session_id=session_id,
+        has_history=bool(stored),
         inputs={
             "messages": messages,
             "user_id": effective_user,
@@ -314,10 +372,19 @@ def cache_bypassed(headers: Any) -> bool:
 
 
 def cache_lookup(
-    request: ChatRequest, headers: Any, scope: Optional[str] = None
+    request: ChatRequest,
+    headers: Any,
+    scope: Optional[str] = None,
+    force_bypass: bool = False,
 ) -> Optional[Dict[str, Any]]:
-    """Only single-turn questions are cached: follow-ups depend on history."""
-    if not _cache_enabled() or request.history or cache_bypassed(headers):
+    """Only single-turn questions are cached: follow-ups depend on history.
+
+    `force_bypass` is set for sessions that already have turns, since the
+    answer depends on server-side history even though the body has none.
+    """
+    if force_bypass or not _cache_enabled() or cache_bypassed(headers):
+        return None
+    if not request.session_id and request.history:
         return None
     key_scope = scope if scope is not None else cache_scope(request.departments(), request.user_groups)
     payload = answer_cache.get(key_scope, request.message)
@@ -331,9 +398,12 @@ def cache_store(
     final_state: Dict[str, Any],
     timings: Dict[str, Any],
     scope: Optional[str] = None,
+    force_bypass: bool = False,
 ) -> None:
     """Cache only replay-safe answers (one LLM call, no tool use)."""
-    if not _cache_enabled() or request.history or cache_bypassed(headers):
+    if force_bypass or not _cache_enabled() or cache_bypassed(headers):
+        return
+    if not request.session_id and request.history:
         return
     if int(timings.get("llm_calls") or 0) != 1:
         return
@@ -373,6 +443,31 @@ def cache_scope(departments: Any, groups: Any = None) -> str:
     return scope
 
 
+def _persist_turn(
+    prepared: Prepared,
+    request: ChatRequest,
+    answer: str,
+    sources: Optional[List[Dict[str, Any]]],
+    degraded: bool,
+) -> None:
+    """Store a finished turn; a session write must never fail the answer."""
+    if not prepared.session_id:
+        return
+    try:
+        session_store.append_turn(
+            prepared.session_id,
+            prepared.user_id,
+            request.message,
+            answer,
+            sources or [],
+            degraded,
+        )
+    except Exception:
+        logger.warning(
+            "failed to persist session turn id=%s", prepared.session_id, exc_info=True
+        )
+
+
 # ---------------------------------------------------------------------------
 # non-streaming
 # ---------------------------------------------------------------------------
@@ -381,7 +476,9 @@ def run(request: ChatRequest, headers: Any, endpoint: str = "chat") -> ChatRespo
     prepared = prepare(request, endpoint, headers)
     started = prepared.started
 
-    cached = cache_lookup(request, headers, prepared.scope)
+    cached = cache_lookup(
+        request, headers, prepared.scope, force_bypass=prepared.has_history
+    )
     if cached is not None:
         timings = cached_timings(started)
         metrics.observe_request(
@@ -390,11 +487,15 @@ def run(request: ChatRequest, headers: Any, endpoint: str = "chat") -> ChatRespo
             elapsed_seconds=time.perf_counter() - started,
             timings=timings,
         )
+        _persist_turn(
+            prepared, request, cached.get("response", ""), cached.get("sources"), False
+        )
         return ChatResponse(
             response=cached.get("response", ""),
             sources=cached.get("sources") or [],
             timings=timings,
             request_id=prepared.request_id,
+            session_id=prepared.session_id,
         )
 
     try:
@@ -411,7 +512,18 @@ def run(request: ChatRequest, headers: Any, endpoint: str = "chat") -> ChatRespo
     if degraded:
         timings["degraded"] = True
     else:
-        cache_store(request, headers, final_state, timings, prepared.scope)
+        cache_store(
+            request,
+            headers,
+            final_state,
+            timings,
+            prepared.scope,
+            force_bypass=prepared.has_history,
+        )
+    answer = final_state["messages"][-1].content
+    _persist_turn(
+        prepared, request, answer, final_state.get("sources"), degraded
+    )
     logger.info(
         "chat ok request_id=%s dept=%s total_ms=%s llm_ms=%s llm_calls=%s",
         prepared.request_id,
@@ -427,10 +539,11 @@ def run(request: ChatRequest, headers: Any, endpoint: str = "chat") -> ChatRespo
         timings=timings,
     )
     return ChatResponse(
-        response=final_state["messages"][-1].content,
+        response=answer,
         sources=final_state.get("sources") or [],
         timings=timings,
         request_id=prepared.request_id,
+        session_id=prepared.session_id,
         degraded=degraded,
         degraded_reason=(final_state.get("degraded_reason") or "") if degraded else "",
     )
@@ -499,7 +612,9 @@ def _stream(
     final_state: Dict[str, Any] = {}
     first_token_at = None
 
-    cached = cache_lookup(request, headers, prepared.scope)
+    cached = cache_lookup(
+        request, headers, prepared.scope, force_bypass=prepared.has_history
+    )
     if cached is not None:
         timings = cached_timings(started)
         metrics.observe_request(
@@ -508,12 +623,16 @@ def _stream(
             elapsed_seconds=time.perf_counter() - started,
             timings=timings,
         )
+        _persist_turn(
+            prepared, request, cached.get("response", ""), cached.get("sources"), False
+        )
         yield sse({"type": "token", "content": cached.get("response", "")})
         yield sse(
             {
                 "type": "done",
                 "sources": cached.get("sources") or [],
                 "timings": timings,
+                "session_id": prepared.session_id,
             }
         )
         return
@@ -548,7 +667,21 @@ def _stream(
         if degraded:
             timings["degraded"] = True
         else:
-            cache_store(request, headers, final_state, timings, prepared.scope)
+            cache_store(
+                request,
+                headers,
+                final_state,
+                timings,
+                prepared.scope,
+                force_bypass=prepared.has_history,
+            )
+        _persist_turn(
+            prepared,
+            request,
+            final_state["messages"][-1].content,
+            final_state.get("sources"),
+            degraded,
+        )
         logger.info(
             "chat stream ok request_id=%s dept=%s total_ms=%s llm_ms=%s llm_calls=%s",
             request_id,
@@ -567,6 +700,7 @@ def _stream(
             "type": "done",
             "sources": final_state.get("sources") or [],
             "timings": timings,
+            "session_id": prepared.session_id,
         }
         if degraded:
             done["degraded"] = True

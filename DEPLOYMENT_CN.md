@@ -209,6 +209,22 @@ make monitor-check                                # 离线校验配置（CI 可�
 - 两个端口默认只绑 `127.0.0.1`；对外访问请加 TLS 反向代理。告警通知需自行加 Alertmanager
 - 文件在 `monitoring/`，指标数据在 `volumes-monitoring/`（已 gitignore）
 
+### 4.1.4 服务端会话
+```bash
+# 创建会话（AUTH_MODE=none 需要 user_id；jwt 模式从 token 取）
+curl -s -X POST localhost:8000/sessions -H 'Content-Type: application/json' \
+  -d '{"user_id":"u1","dept":"Tech"}'
+# 之后请求只发当前消息，服务端拥有完整历史
+curl -s -X POST localhost:8000/chat -H 'Content-Type: application/json' \
+  -d '{"user_id":"u1","user_dept":"Tech","session_id":"<id>","message":"它还有效吗？"}'
+curl -s 'localhost:8000/sessions?user_id=u1'          # 列表
+curl -s 'localhost:8000/sessions/<id>?user_id=u1'     # 详情 + 消息
+curl -s -X DELETE 'localhost:8000/sessions/<id>?user_id=u1'
+```
+- 存储在 `SESSIONS_DB_PATH`（默认 `./logs/sessions.db`），生产 compose 已挂载 `logs/` 并纳入 `make backup`
+- 会话按 `user_id` 隔离，跨用户返回 404；`SESSIONS_ENABLED=false` 关闭后回退到客户端回传 `history`
+- 超过 `2 × HISTORY_MAX_MESSAGES` 自动生成 running summary（每个窗口多一次 LLM 调用，`SESSION_SUMMARY_*`），失败则只保留最近窗口
+
 ### 4.2 功能验证
 先做**离线检索验证**（不需要 LLM，检查入库与部门隔离）：
 ```bash

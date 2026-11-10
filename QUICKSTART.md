@@ -49,6 +49,7 @@ make run                # http://localhost:8000
 | `http://localhost:8000/docs` | OpenAPI |
 | `http://localhost:8000/health` | 健康检查 |
 | `http://localhost:8000/metrics` | Prometheus 指标 |
+| `http://localhost:8000/sessions` | 服务端会话（`POST` 创建，`GET` 列表） |
 
 ## 5. 验证
 

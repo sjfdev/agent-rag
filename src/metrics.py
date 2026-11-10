@@ -101,6 +101,18 @@ _VERSION = Gauge(
     ["version"],
     registry=REGISTRY,
 )
+_SESSION_SUMMARIES = Counter(
+    "agent_rag_session_summaries_total",
+    "Conversation summaries folded into a session by result.",
+    ["result"],
+    registry=REGISTRY,
+)
+_SESSION_SUMMARY_SECONDS = Histogram(
+    "agent_rag_session_summary_seconds",
+    "Time spent generating a running conversation summary.",
+    buckets=(0.1, 0.25, 0.5, 1.0, 2.0, 5.0, 10.0, 20.0),
+    registry=REGISTRY,
+)
 
 
 def set_build_info(version: str) -> None:
@@ -175,6 +187,11 @@ def observe_first_token(endpoint: str, seconds: float) -> None:
 
 def observe_ingest_job(status: str) -> None:
     _INGEST_JOBS.labels(status=status).inc()
+
+
+def observe_session_summary(result: str, seconds: float) -> None:
+    _SESSION_SUMMARIES.labels(result=result).inc()
+    _SESSION_SUMMARY_SECONDS.observe(max(float(seconds), 0.0))
 
 
 def set_maintenance(active: bool) -> None:

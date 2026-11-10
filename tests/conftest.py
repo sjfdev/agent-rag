@@ -24,6 +24,8 @@ def _offline_env(tmp_path_factory):
     os.environ.setdefault("DB_PATH", str(root / "vector_db"))
     os.environ.setdefault("DATA_DIR", str(root / "data"))
     os.environ.setdefault("BACKUP_DIR", str(root / "backups"))
+    os.environ.setdefault("SESSIONS_DB_PATH", str(root / "sessions.db"))
+    os.environ.setdefault("SESSION_SUMMARY_ENABLED", "false")
     os.environ.setdefault("HF_HUB_OFFLINE", "1")
     os.environ.setdefault("FAQ_CACHE_ENABLED", "true")
     # Imported here so settings pick up the environment above.
@@ -35,6 +37,8 @@ def _offline_env(tmp_path_factory):
     settings.DB_PATH = str(root / "vector_db")
     settings.DATA_DIR = str(root / "data")
     settings.BACKUP_DIR = str(root / "backups")
+    settings.SESSIONS_DB_PATH = str(root / "sessions.db")
+    settings.SESSION_SUMMARY_ENABLED = False
     yield
 
 

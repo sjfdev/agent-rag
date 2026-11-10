@@ -140,13 +140,12 @@ Nginx 对应 `proxy_buffering off; proxy_read_timeout 300s;`（SSE 必需）。
 - 移动端适配
 - 引用预览：点击来源直接看原文片段
 
-### 2.6 服务端会话（P1）
+### 2.6 服务端会话（P1，已完成 2026-11-10）
 
-现在 history 由客户端回传，长对话靠裁剪。产品化建议：
-
-- 会话表（id、user、tenant、标题、时间）
-- 消息表（role、content、sources、degraded）
-- 服务端只回传最近 N 条，超出自动摘要（多一次 LLM 调用，需计入成本）
+- [x] 会话表（id、user、dept、title、时间）+ 消息表（role、content、sources、degraded）：`src/sessions.py`（SQLite，`SESSIONS_DB_PATH`）
+- [x] 服务端只使用最近 N 条，超出 `2 × HISTORY_MAX_MESSAGES` 自动摘要（每个窗口多一次 LLM 调用，`SESSION_SUMMARY_*`；失败降级为最近窗口）
+- [x] `POST/GET/DELETE /sessions` + `ChatRequest.session_id`；会话按 `user_id` 隔离；`logs/` 已纳入备份
+- [ ] 多租户维度（做 SaaS 时随 11.1.2 一起加 `tenant`）
 
 ### 2.7 发布流程（P1）
 
