@@ -6,7 +6,8 @@ PYTHON := $(CONDA_PY)
 endif
 
 .PHONY: help install data ingest run test lint cov milvus-up milvus-down milvus-logs \
-        reset-faiss reset-milvus doctor check eval clean release release-check
+        reset-faiss reset-milvus doctor check eval clean release release-check \
+        backup restore
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | \
@@ -53,6 +54,13 @@ reset-milvus: ## Rebuild the Milvus collection from scratch
 
 doctor: ## Environment / dependency / connectivity health check
 	$(PYTHON) scripts/doctor.py
+
+backup: ## Archive data, config, logs and the vector store (checksummed)
+	$(PYTHON) scripts/backup.py
+
+restore: ## Restore an archive (make restore ARCHIVE=backups/<file>.tar.gz)
+	@test -n "$(ARCHIVE)" || (echo "usage: make restore ARCHIVE=backups/<file>.tar.gz"; exit 1)
+	$(PYTHON) scripts/restore.py "$(ARCHIVE)"
 
 check: lint test ## Lint + tests
 

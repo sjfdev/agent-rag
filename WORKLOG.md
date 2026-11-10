@@ -892,11 +892,38 @@ run_ingestion.py --reset      28 chunks
 健康      /health=ok，storage.ok=true（约 17G 可用）
 ```
 
-明天第一件：**11.1.4 备份与恢复演练**（落点、验收与开工前环境清理见 `OPTIMIZATION_PLAN.md` §11.4.1）。
+明天第一件：**11.1.4 备份与恢复演练**（落点、验收与开工前环境清理见 `OPTIMIZATION_PLAN.md` §11.4.1）。已于 2026-11-09 完成，见下节。
 
 ---
 
-## 10. 相关文档
+## 10. 备份与恢复演练（11.1.4，2026-11-09）
+
+P0 最后一项。此前只有零散的 `tar` 命令（见 `AGENT_GUIDE.md` §12.3/§12.5），没有校验、没有恢复脚本，也没有演练过。这次补齐到可重复执行的流程。
+
+### 落点
+
+- **`scripts/backup.py`**：归档 `data/`、`config/`（本地账号 + ACL）、`logs/`、当前后端索引（FAISS `DB_PATH` 或 `volumes{,-prod}/{milvus,etcd}`）。时间戳命名，写 `manifest.json`（原始绝对路径、索引元数据、文件数）、逐文件 `SHA256SUMS`、`.sha256` 边车；`--verify` 只校验不写盘
+- **`scripts/restore.py`**：先校验边车、manifest、每个文件哈希；服务可达或 Milvus/etcd 容器在跑时拒绝执行（`--force` 显式越过）；解压到临时目录，旧目录改名为 `<name>.pre-restore-<时间戳>` 后再交换，中途失败回滚；`--dry-run` 只列目标
+- **`make backup` / `make restore ARCHIVE=...`**；`doctor.py` 增加备份新鲜度检查（`BACKUP_DIR` / `BACKUP_WARN_DAYS`，默认 30 天）
+- 测试 `tests/test_backup_restore.py`（11 项）+ `test_doctor.py` 2 项：边车篡改、缺 manifest、路径穿越、服务在跑拒绝、恢复保留旧副本、dry-run、Milvus 容器在跑拒绝 `--live`、manifest 冲突等。全套 **509 passed**，`ruff` 干净
+
+### 演练结果（隔离沙箱，未动真实目录）
+
+| 后端 | 归档 | 恢复内容 | 目录比对 | `verify_retrieval` | `eval_retrieval` |
+|---|---|---|---|---|---|
+| FAISS | 0.1 MB | 4 项（data/config/logs/vector） | 逐字节一致 | OK | hit@4 18/18、MRR 0.89、leaks 0 |
+| Milvus | 25.2 MB | 5 项（data/config/logs/milvus/etcd） | 逐字节一致（仅 Finder `.DS_Store`） | OK | hit@4 18/18、MRR 0.89、leaks 0 |
+
+Milvus 恢复后启动容器，集合 `enterprise_kb__r1793537166470` 可见且 `row_count=28`，确认不是“只有文件一样、数据不可查”。真实环境的两份归档已写入 `backups/` 并 `--verify` 通过（`agent-rag-backup-20261109-114239.tar.gz` FAISS、`...-115621.tar.gz` Milvus）。
+
+### 两个环境坑
+
+- **`/tmp` 不在 colima 的共享目录里**：把演练卷放在 `/tmp` 时容器看到的是空目录，etcd 从零启动、Milvus 自然找不到集合。第一次演练因此误判为恢复失败；换到 `$HOME` 下立即复现成功。演练（以及任何 bind mount）都放在 `$HOME` 内
+- 演练中途 conda 环境里的 `packaging` 不见了（`pip show` 为空），`langchain_core.embeddings` 导入失败；`pip install packaging` 后恢复。不是代码问题，但记住了：eval 启动失败先看基础依赖
+
+---
+
+## 11. 相关文档
 
 - `AGENT_GUIDE.md`：安装、使用、接口、配置、FAQ、性能优化
 - `OPTIMIZATION_PLAN.md`：待办清单与历史进度；**下一次开发直接看第 11 节「后续待办（按优先级）」**

@@ -1,7 +1,9 @@
 """The doctor script reports problems without raising."""
 
 import importlib.util
+import os
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -52,6 +54,42 @@ def test_doctor_warns_on_empty_index(doctor, monkeypatch, capsys, tmp_path):
     output = capsys.readouterr().out
     assert "Index" in output
     assert code in (0, 1)
+
+
+def test_doctor_warns_when_no_backup_exists(doctor, monkeypatch, capsys, tmp_path):
+    from src.config import settings
+
+    monkeypatch.setattr(sys, "argv", ["doctor.py", "--no-llm"])
+    monkeypatch.setattr(settings, "BACKUP_DIR", str(tmp_path / "no-backups"))
+    doctor.main()
+    output = capsys.readouterr().out
+    assert "[WARN] Backup" in output
+
+
+def test_doctor_reports_backup_age(doctor, monkeypatch, capsys, tmp_path):
+    from src.config import settings
+
+    backup_dir = tmp_path / "backups"
+    backup_dir.mkdir()
+    archive = backup_dir / "agent-rag-backup-20260101-000000.tar.gz"
+    archive.write_bytes(b"archive")
+    sidecar = archive.with_name(archive.name + ".sha256")
+    sidecar.write_text(f"{'0' * 64}  {archive.name}\n", encoding="utf-8")
+
+    monkeypatch.setattr(sys, "argv", ["doctor.py", "--no-llm"])
+    monkeypatch.setattr(settings, "BACKUP_DIR", str(backup_dir))
+
+    doctor.main()
+    output = capsys.readouterr().out
+    assert "[OK  ] Backup" in output
+
+    old = time.time() - 40 * 86400
+    os.utime(archive, (old, old))
+    doctor.results.clear()
+    doctor.main()
+    output = capsys.readouterr().out
+    assert "[WARN] Backup" in output
+    assert "day(s) old" in output
 
 
 def test_doctor_fails_on_broken_acl(doctor, monkeypatch, capsys, tmp_path):

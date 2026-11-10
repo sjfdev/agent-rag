@@ -15,7 +15,7 @@
 ## Developer Commands
 All commands assume the conda env `agent-rag` is active (`conda activate agent-rag`).
 Container build: `docker build -t agent-rag:dev .` (CPU-only torch, embedding model baked in; build args `PIP_INDEX_URL`/`TORCH_INDEX_URL`/`HF_ENDPOINT` for slow networks). Production stack: `docker compose -f docker-compose.prod.yml up -d --build` (etcd + Milvus + app, app on :8000). The container healthcheck uses `/info` (liveness) so a fresh deployment is healthy before the first ingestion; point load balancers at `/health` (readiness).
-`make help` lists shortcuts (`install/data/ingest/run/test/lint/cov/milvus-up/milvus-down/reset-*/doctor/check/eval/release/clean`); `scripts/doctor.py` checks the environment, `scripts/check_release.py` verifies that `src/version.py`, `CHANGELOG.md`, the git tag and `APP_TAG` agree (`make release` also runs lint + tests).
+`make help` lists shortcuts (`install/data/ingest/run/test/lint/cov/milvus-up/milvus-down/reset-*/doctor/backup/restore/check/eval/release/clean`); `scripts/doctor.py` checks the environment, `scripts/check_release.py` verifies that `src/version.py`, `CHANGELOG.md`, the git tag and `APP_TAG` agree (`make release` also runs lint + tests). `scripts/backup.py` archives `data/`, `config/`, `logs/` and the live index with per-file hashes; `scripts/restore.py` verifies the archive and refuses while the API or Milvus/etcd is up.
 - **Rate limit / deadline**: `RATE_LIMIT_PER_MINUTE` (0 = off, per forwarded IP or user id, 429 + `Retry-After`); `CHAT_TIMEOUT` caps the whole request (504 `timeout`). Error classification lives in `src/errors.py`.
 - **History**: `HISTORY_MAX_MESSAGES` (default 20) is what actually reaches the model; older messages are dropped in user/assistant pairs by `chat_service.trim_history`, so long chats never fail validation. The schema's 200-message cap is only an abuse guard.
 - **API Server**: `uvicorn main:app --host 127.0.0.1 --port 8000` (chat UI `/ui/`, ingestion console `/admin`, `GET /info` exposes backend/model)
@@ -33,7 +33,7 @@ Container build: `docker build -t agent-rag:dev .` (CPU-only torch, embedding mo
 - **Loader Check**: `python scripts/check_loaders.py` (extracts every supported format in /tmp, no vector store needed).
 - **Admin Check**: `python scripts/check_admin.py` (upload→ingest→delete smoke test; server must be running).
 - **Latency Benchmark**: `python scripts/bench_retrieval.py` (embedding vs FAISS vs Milvus vs LLM). `/chat` responses include `timings` (`retrieval_ms`, `llm_ms`, `llm_calls`, `overhead_ms`, `total_ms`).
-- **Tests (offline)**: `pytest -q` runs 490 unit/API/service tests with fake embeddings and a stubbed LLM (no network, ~25s, 92% coverage). `pytest --cov=src` for coverage. Lint with `ruff check src tests main.py run_ingestion.py`.
+- **Tests (offline)**: `pytest -q` runs 509 unit/API/service tests with fake embeddings and a stubbed LLM (no network, ~25s). `pytest --cov=src` for coverage. Lint with `ruff check src tests main.py run_ingestion.py`.
 - **Verification (live)**: `python test_agent.py` (requires the API server + a working LLM endpoint).
 
 ## Critical Gotchas & Setup
