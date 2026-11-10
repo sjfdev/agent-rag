@@ -219,7 +219,7 @@ python test_agent.py
 - **升级到 Milvus 2.5 后**: 旧集合没有稀疏字段，需 `python run_ingestion.py --reset` 重建；重建前先备份 `volumes/milvus`。可用 `GET /info` 的 `hybrid.engine` 确认，或运行 `python scripts/check_hybrid_milvus.py`。
 - **性能扩展**: 对于高并发场景，建议使用 `gunicorn` 配合 `uvicorn` 工作进程：
   `gunicorn -w 4 -k uvicorn.workers.UvicornWorker main:app`
-- **数据备份**: 定期备份 `docker-compose.yml` 中映射的 Milvus 数据卷。
+- **数据备份**: `make backup` 会把 `data/`、`config/`（账号与 ACL）、`logs/` 和索引一起打包并附逐文件哈希；`make restore ARCHIVE=...` 校验后还原。备份 Milvus 卷前先 `make milvus-down`——运行中的 RocksDB 直接打包不保证可恢复。详见 `AGENT_GUIDE.md` §12.7。
 
 ### 4.3 云端模型（免费 GLM-4-Flash）
 在 `.env` 中配置（见 `.env.example`）：

@@ -13,6 +13,7 @@ import os
 import shutil
 import socket
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -107,6 +108,31 @@ def main() -> int:
         # A full disk does not fail queries; it silently breaks ingestion, and
         # Milvus caches the first ENOSPC until restarted. Catch it here.
         check("Disk space", FAIL, disk_detail)
+
+    # --- backups ----------------------------------------------------------
+    backup_dir = Path(settings.BACKUP_DIR)
+    archives = sorted(
+        backup_dir.glob("agent-rag-backup-*.tar.gz"),
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
+    )
+    if not archives:
+        check("Backup", WARN, f"no archive in {backup_dir} (run `make backup`)")
+    else:
+        newest = archives[0]
+        age_days = (time.time() - newest.stat().st_mtime) / 86400
+        sidecar = newest.with_name(newest.name + ".sha256")
+        if age_days > settings.BACKUP_WARN_DAYS:
+            check(
+                "Backup",
+                WARN,
+                f"{newest.name}, {age_days:.0f} day(s) old "
+                f"(threshold {settings.BACKUP_WARN_DAYS}; run `make backup`)",
+            )
+        elif not sidecar.is_file():
+            check("Backup", WARN, f"{newest.name} has no checksum sidecar")
+        else:
+            check("Backup", OK, f"{newest.name}, {age_days:.0f} day(s) old")
 
     # --- access control ---------------------------------------------------
     from src import acl, local_auth

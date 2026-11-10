@@ -663,7 +663,7 @@ curl -s -X POST localhost:8000/chat -H 'Content-Type: application/json' \
 
 ## 11. 后续待办（按优先级，2026-11-01 之后）
 
-> 当前基线：**490 项测试、92% 覆盖率、CI 全绿**；`milvus 2.5.4 + 服务端稀疏 BM25`；28 chunks；`/health=ok`。
+> 当前基线：**509 项测试、CI 全绿**；`milvus 2.5.4 + 服务端稀疏 BM25`；28 chunks；备份/恢复脚本已落地（`make backup` / `make restore`）。
 > 容器化交付已完成（`Dockerfile` / `docker-compose.prod.yml` / `PRODUCTIZATION.md`）。
 > 下面按「对外发布必须先做 → 产品化 → 规模化」排序，每项都有落点与验收方式。
 
@@ -698,17 +698,20 @@ curl -s -X POST localhost:8000/chat -H 'Content-Type: application/json' \
 - [x] schema 变更写迁移说明：`AGENT_GUIDE.md` §5.5.1 列出固定字段集、必须 `--reset` 与不需要 `--reset` 的变更、零停机迁移步骤（备份 → `--reset` 写影子集合 → 切别名 → verify + eval），并说明不要手工 `drop_collection`
 - [x] 首次打 tag：`v1.0.0`（已推送，`check_release.py` 五项通过；CI 在 tag 指向的 `3ad6819` 上 success）
 
-#### 11.1.4 备份与恢复演练
-- [ ] 备份 `data/` + `volumes-prod/` + `logs/` + `config/`（账号库与 ACL 规则）
-- [ ] 每季度演练「删库 → 恢复 → 验证」
-- [ ] 验收：恢复后 `verify_retrieval.py` 与 `eval_retrieval.py` 通过
+#### 11.1.4 备份与恢复演练（已完成 2026-11-09）
+- [x] `scripts/backup.py`：归档 `data/` + `config/`（账号库与 ACL）+ `logs/` + 当前后端索引（FAISS `DB_PATH` 或 `volumes{,-prod}/{milvus,etcd}`）；带 `manifest.json`、逐文件 `SHA256SUMS`、`.sha256` 边车；`--verify` 只校验不写盘
+- [x] `scripts/restore.py`：全量校验后解压到临时目录再交换；服务/容器在跑时拒绝（`--force` 可越过）；旧目录保留为 `.pre-restore-<时间戳>`，失败自动回滚
+- [x] `make backup` / `make restore ARCHIVE=...`；`scripts/doctor.py` 增加「最近一次备份距今 N 天」（`BACKUP_WARN_DAYS`，默认 30）
+- [x] 演练（隔离沙箱，2026-11-09）：FAISS 恢复后 4 个目录逐字节一致，`verify_retrieval.py` OK、`eval_retrieval.py` hit@4=18/18、MRR 0.89、leaks 0；Milvus 恢复后 5 个目录逐字节一致，恢复卷启动 Milvus 可见 `enterprise_kb` 28 rows，eval 同样 18/18 / MRR 0.89 / leaks 0
+- [x] 验收：恢复后 `verify_retrieval.py` 与 `eval_retrieval.py` 通过（双后端）
+- [ ] 每季度演练「删库 → 恢复 → 验证」（流程已落地，等排期）
 
 #### 11.1.5 部署加固（2026-11-01 补充）
 - [x] **ACL fail-closed**：`ACL_ENABLED=true` 但规则文件缺失/损坏时拒绝启动（`acl.validate_config`）、`/health` 返回 503、检索丢弃全部文档；`scripts/doctor.py` 增加 `Document ACL` 检查。此前是静默放行（fail-open），一个忘记挂载就能绕过全部文档权限
 - [x] **账号库持久化**：`Dockerfile` 创建 `/app/config`，`docker-compose.prod.yml` 挂载 `./config:/app/config` 并显式设置 `AUTH_USERS_FILE`；此前容器重建会丢失全部本地账号
 - [x] `config/acl.json` 加入 `.gitignore`（真实规则可能含人名/文档路径），示例仍为 `config/acl.example.json`
 - [x] `scripts/doctor.py` 增加 `Local accounts` 检查（启用但无账号 / 无可用管理员 → FAIL）
-- [ ] 备份 `config/`（账号库与 ACL）纳入例行流程——见 11.1.4
+- [x] 备份 `config/`（账号库与 ACL）纳入例行流程——`make backup` 已覆盖，见 11.1.4
 - [x] **磁盘余量哨兵**：`/health` 增加 `storage` 块（`DATA_DIR`/`DB_PATH`/任务与审计日志取最小余量，低于 `HEALTH_MIN_FREE_MB` → `degraded`），`scripts/doctor.py` 增加 `Disk space` 检查。起因：磁盘写满时 `/health` 全程 `ok`，Milvus 把首次 ENOSPC 缓存进 RocksDB，释放空间后仍拒绝写入，必须重启容器才恢复（实测 `docker restart milvus-standalone` 后 19/19 hybrid 检查通过）
 
 ### 11.2 P1 产品化与稳定性
@@ -725,6 +728,7 @@ curl -s -X POST localhost:8000/chat -H 'Content-Type: application/json' \
 
 #### 11.2.3 前端产品化
 - [x] Markdown 渲染（安全子集：粗体/斜体/列表/表格/代码块/引用/链接，禁 HTML）：`static/markdown.js` 先转义再产标签，链接仅放行 `http(s)`/`mailto`，`javascript:`/`data:`/相对路径保持为纯文本；流式期间仍用纯文本，结束后一次性渲染；`tests/test_markdown_js.py`（17 项）用 Node 断言转义与链接白名单
+- [x] 中英文切换：`static/i18n.js` 覆盖聊天页与管理台，默认跟随浏览器语言、`localStorage` 记忆；`tests/test_i18n_js.py`
 - [ ] 服务端会话列表与历史（配合 11.2.4）
 - [ ] 引用点击预览原文；移动端适配
 
@@ -753,25 +757,25 @@ curl -s -X POST localhost:8000/chat -H 'Content-Type: application/json' \
 
 1. ~~11.1.1 登录~~（已完成：JWT + OIDC + 本地账号）
 2. ~~11.1.3 发布流程~~（已完成：`v1.0.0` tag + `agent-rag:v1.0.0` 镜像）
-3. **11.1.4 备份与恢复演练**（下一项，唯一不可逆风险）
-4. 11.2.1 告警（半天，接上已有指标）
+3. ~~11.1.4 备份与恢复演练~~（已完成：脚本 + 双后端沙箱演练）
+4. **11.2.1 告警**（下一项，半天，接上已有指标）
 5. 11.2.3 / 11.2.4 前端会话列表 + 服务端历史
 6. 做 SaaS 时：11.1.2 多租户 → 11.2.2 计费
 7. 11.3 全部按需，触发条件写在每项里
 
-### 11.4.1 下次开工（2026-11-02）
+### 11.4.1 开工记录（2026-11-09 已完成 11.1.4）
 
-**第一件：11.1.4 备份与恢复演练。** 这是 P0 里唯一还能动手、且失败不可逆的项。
+**11.1.4 已完成。** 落点与验收全部落地：
 
-落点与验收：
+- [x] `scripts/backup.py`：打包 `data/` + `config/`（账号库与 ACL）+ `logs/` + 后端卷（Milvus `volumes{,-prod}/{milvus,etcd}`、FAISS `db/`），输出带时间戳归档 + `manifest.json` + 逐文件 `SHA256SUMS` + `.sha256` 边车；`--verify` 只校验不写
+- [x] `scripts/restore.py`：全量校验 → 临时目录解压 → 旧目录改名保留 → 交换；API 可达或 Milvus/etcd 容器在跑时拒绝（`--force` 显式越过）；中途失败回滚
+- [x] `make backup` / `make restore` 入口；`doctor.py` 增加「最近一次备份距今 X 天」提示
+- [x] 演练：备份 → 移走目录 → 恢复 → `verify_retrieval.py` + 双后端 `eval_retrieval.py` 通过（FAISS 与 Milvus 均 18/18、MRR 0.89、leaks 0）
+- [x] `WORKLOG.md` 记录演练耗时与恢复后的 eval 数字
 
-- [ ] `scripts/backup.py`：打包 `data/` + `config/`（账号库与 ACL）+ `logs/` + 后端卷（Milvus `volumes/milvus`、FAISS `db/`），输出带时间戳的归档 + `SHA256SUMS`；`--verify` 只校验不写
-- [ ] `scripts/restore.py`：从归档还原，拒绝在服务运行且维护锁未开时执行
-- [ ] `make backup` / `make restore` 入口；`doctor.py` 增加「最近一次备份距今 X 天」提示
-- [ ] 演练一次：备份 → 移走 `data/` 与 `config/` → 恢复 → `verify_retrieval.py` + 双后端 `eval_retrieval.py` 通过
-- [ ] `WORKLOG.md` 记录演练耗时与恢复后的 eval 数字
+下一项：**11.2.1 告警**（Prometheus 抓 `/metrics` + 4 条规则）→ 11.2.3/11.2.4 会话列表与服务端历史。
 
-之后的候选顺序：11.2.1 告警（Prometheus 抓 `/metrics` + 4 条规则）→ 11.2.3/11.2.4 会话列表与服务端历史。
+演练环境注意：Docker/colima 只共享 `$HOME`，不要把演练卷放在 `/tmp`（容器里会看到空目录，误判为恢复失败）。
 
 开工前先处理的环境问题（不是代码问题）：
 

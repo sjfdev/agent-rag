@@ -13,6 +13,7 @@ htmlcov/
 db/
 volumes/
 logs/
+backups/
 
 # OS / editor
 .DS_Store

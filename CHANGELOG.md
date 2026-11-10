@@ -12,6 +12,14 @@ three agree before you push a tag.
 
 ### Added
 
+- **Backup and restore**: `scripts/backup.py` archives `data/`, `config/`
+  (local accounts and ACL rules), `logs/` and the live vector store into a
+  timestamped `tar.gz` with `manifest.json`, per-file `SHA256SUMS` and a
+  `.sha256` sidecar. `scripts/restore.py` verifies every hash before swapping
+  directories, refuses to run while the API or Milvus/etcd is up, keeps the
+  previous copy by default and rolls back a half-finished swap. Entry points:
+  `make backup` and `make restore ARCHIVE=...`; `make doctor` warns when the
+  newest archive is older than `BACKUP_WARN_DAYS` (default 30).
 - **Disk headroom in `/health` and `doctor`**: every directory the app writes to
   (`DATA_DIR`, `DB_PATH`, the job and audit logs) is checked against
   `HEALTH_MIN_FREE_MB` (default 512). A full disk never fails queries, so the
@@ -19,6 +27,13 @@ three agree before you push a tag.
   the first ENOSPC in RocksDB and keeps refusing writes after space is freed
   until the container is restarted. `/health` now returns `degraded` with a
   `storage` block, and `scripts/doctor.py` fails with the tightest path.
+- **Chinese/English switch** in both UIs (`static/i18n.js`, follow the browser
+  language by default, remembered in `localStorage`).
+
+### Changed
+
+- `make run` binds the API to `127.0.0.1` by default; put a reverse proxy in
+  front when the service must be reachable from other hosts.
 
 ## [1.0.0] - 2026-11-01
 

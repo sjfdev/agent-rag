@@ -41,6 +41,13 @@ class Settings(BaseSettings):
     # Admin audit trail and ingestion job history (JSON lines / JSON).
     AUDIT_LOG_PATH: str = "./logs/admin_audit.log"
     JOBS_PATH: str = "./logs/ingest_jobs.json"
+    # Backup archives (scripts/backup.py / restore.py). The doctor warns when
+    # the newest archive is older than BACKUP_WARN_DAYS.
+    BACKUP_DIR: str = "./backups"
+    BACKUP_WARN_DAYS: int = 30
+    # Comma-separated paths to include instead of auto-detecting the vector
+    # store (DB_PATH for FAISS, volumes{,-prod}/{milvus,etcd} for Milvus).
+    BACKUP_VECTOR_PATHS: str = ""
 
     # Vector Store Config
     VECTOR_STORE_TYPE: Literal["faiss", "milvus"] = "faiss"

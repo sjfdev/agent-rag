@@ -184,7 +184,7 @@ python test_agent.py
 - **Reranking**: off by default; cache `RERANK_MODEL` before enabling (CPU cost ≈+200ms for MiniLM, ≈+1.2s for BGE-base).
 - **Scaling**: For high traffic, replace the `uvicorn` worker with `gunicorn`:
   `gunicorn -w 4 -k uvicorn.workers.UvicornWorker main:app`
-- **Backup**: Regularly backup the Milvus data volume mapped in `docker-compose.yml`.
+- **Backup**: `make backup` archives `data/`, `config/` (accounts + ACL), `logs/` and the vector store with per-file checksums; `make restore ARCHIVE=...` verifies and swaps them back. Stop Milvus/etcd before backing up their volumes (`make milvus-down`) — a copy of a running RocksDB is not guaranteed to recover. See `AGENT_GUIDE.md` §12.7.
 
 ### 4.3 Cloud model (free GLM-4-Flash)
 Configure `.env` (see `.env.example`):

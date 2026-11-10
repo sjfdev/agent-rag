@@ -99,7 +99,7 @@ agent-rag/
 ├── volumes/                 # Milvus/etcd 数据卷
 ├── eval/cases.jsonl         # 检索评测集（命中 + 泄漏用例）
 ├── config/acl.example.json  # 文档级 ACL 规则示例
-├── tests/                   # pytest 离线测试（490 项，覆盖率 92%）
+├── tests/                   # pytest 离线测试（509 项，覆盖率 93%）
 ├── Makefile                 # 常用命令（make help）
 ├── .github/workflows/ci.yml # ruff + pytest（CI）
 ├── WORKLOG.md               # 本轮迭代记录与验证矩阵
@@ -726,7 +726,7 @@ python scripts/check_loaders.py      # 9 种格式解析（不写向量库）
 python scripts/check_admin.py        # 管理台上传→入库→删除冒烟
 python scripts/bench_retrieval.py    # embedding / FAISS / Milvus / LLM 延迟
 python scripts/generate_demo_files.py  # 重建 data/Demo 多格式样例
-pytest -q                            # 离线测试（490 项，~30s，覆盖率 92%，无需服务/LLM）
+pytest -q                            # 离线测试（509 项，~30s，覆盖率 93%，无需服务/LLM）
 ruff check src tests main.py run_ingestion.py   # 代码检查
 python test_agent.py                 # 端到端 18 项断言（需服务已启动）
 ```
@@ -1203,12 +1203,20 @@ VECTOR_STORE_TYPE=milvus python scripts/check_hybrid_milvus.py
 | Milvus 升级失败 | 停容器 → 还原备份卷 → 用旧 `MILVUS_IMAGE` 启动（Milvus 不支持降级，必须还原） |
 | 误删文档 | 从 `data/` 备份恢复文件 → `make ingest` |
 
-### 12.7 备份
+### 12.7 备份与恢复
 
-- **数据源**：`data/`（真正的原始文件）——优先备份它
-- **索引**：`db/vector_db/`（FAISS）或 `volumes/{milvus,etcd}`（Milvus）——可重建，非必须
-- **运行状态**：`logs/ingest_jobs.json`、`logs/admin_audit.log`
-- 建议每天备份 `data/` + 每周备份一次索引卷
+```bash
+make backup                                   # 归档到 BACKUP_DIR（默认 ./backups）
+python scripts/backup.py --verify backups/agent-rag-backup-*.tar.gz
+make restore ARCHIVE=backups/agent-rag-backup-20261109-120000.tar.gz
+```
+
+- **归档内容**：`data/`（唯一不可重建的原始文件）、`config/`（本地账号与 ACL）、`logs/`（入库任务与审计）、当前后端的索引（FAISS `DB_PATH`，或 Milvus `volumes{,-prod}/{milvus,etcd}`）
+- **完整性**：每个归档带 `manifest.json`（原始绝对路径、索引元数据、文件数）、`SHA256SUMS`（逐文件哈希）与 `.sha256` 边车；`--verify` 只校验不写盘
+- **恢复安全**：恢复前先全量校验；服务或 Milvus/etcd 容器在跑时拒绝执行（紧急情况用 `--force`）；解压到临时目录后再交换，旧目录保留为 `<name>.pre-restore-<时间戳>`（`--discard-old` 可删除），中途失败会回滚
+- **一致性**：Milvus 运行时 RocksDB 持续写入，必须 `make milvus-down` 后再备份；脚本发现容器在跑会拒绝，`--live` 表示接受尽力而为的副本
+- **频率**：建议每天备份 `data/` + 每周一次完整归档；每季度做一次「备份 → 移走目录 → 恢复 → `verify_retrieval.py` + `eval_retrieval.py`」演练
+- `make doctor` 会提示最近一次归档距今多少天（`BACKUP_WARN_DAYS`，默认 30 天）
 
 ### 12.8 多 worker / 多副本约束
 
@@ -1225,7 +1233,9 @@ VECTOR_STORE_TYPE=milvus python scripts/check_hybrid_milvus.py
 ### 12.9 常见运维动作速查
 
 ```bash
-make doctor                      # 体检（Python/依赖/索引/LLM）
+make doctor                      # 体检（Python/依赖/索引/LLM/备份新鲜度）
+make backup                      # 备份 data/config/logs/索引
+make restore ARCHIVE=backups/<file>.tar.gz
 curl localhost:8000/health       # 存活与就绪
 curl localhost:8000/metrics      # 指标
 curl localhost:8000/admin/api/audit?limit=20   # 最近操作

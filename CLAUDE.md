@@ -28,6 +28,8 @@ make test                 # pytest -q (offline)
 make lint                 # ruff check src tests main.py run_ingestion.py scripts
 make cov                  # pytest with coverage
 make doctor               # env/deps/store/LLM connectivity report
+make backup               # archive data/config/logs/vector store, with checksums
+make restore ARCHIVE=...  # verify an archive, then swap directories back
 make eval                 # retrieval hit@k / MRR / leak check
 make check                # lint + test
 make release              # version/CHANGELOG/git-tag consistency + lint + tests
