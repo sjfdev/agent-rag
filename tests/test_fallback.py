@@ -1,5 +1,6 @@
 """LLM failure fallback: answer from retrieved excerpts, never cache it."""
 
+import asyncio
 import json
 
 import pytest
@@ -14,8 +15,18 @@ from src.config import settings
 from src.schemas import ChatRequest
 
 
+def _drain(frames):
+    async def run():
+        return [frame async for frame in frames]
+
+    return asyncio.run(run())
+
+
 class Boom:
     def invoke(self, _messages):
+        raise ConnectionError("llm unreachable")
+
+    async def ainvoke(self, _messages):
         raise ConnectionError("llm unreachable")
 
     def stream(self, _messages):  # pragma: no cover - not used here
@@ -135,11 +146,11 @@ def test_stream_emits_degraded_done(monkeypatch):
     answer_cache.clear()
     monkeypatch.setattr(agent_module, "get_engine", lambda: _engine_with([_doc()]))
     monkeypatch.setattr(agent_module, "llm", Boom())
-    monkeypatch.setattr(chat_service, "agent_app", agent_module.app)
+    monkeypatch.setattr(chat_service, "agent_async_app", agent_module.app_async)
 
     request = ChatRequest(user_id="u1", user_dept="Tech", message="password rules?")
     _, frames = chat_service.open_stream(request, {})
-    events = [json.loads(frame[6:]) for frame in frames]
+    events = [json.loads(frame[6:]) for frame in _drain(frames)]
     done = [event for event in events if event["type"] == "done"]
     assert done and done[0]["degraded"] is True
     assert done[0]["degraded_reason"] == "llm_unavailable"

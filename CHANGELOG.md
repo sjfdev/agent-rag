@@ -55,6 +55,17 @@ three agree before you push a tag.
   `make monitor-down`; `make monitor-check` validates every config file
   offline and ensures each `agent_rag_*` metric in the rules/dashboard exists
   in `src/metrics.py`. See `monitoring/README.md`.
+- **Stream cancellation on disconnect**: `/chat/stream` now runs the graph's
+  async node (`src/agent.py`: `call_model_async` / `app_async` with
+  `llm.ainvoke`). When the client closes the page or drops the connection,
+  Starlette cancels the response task and that cancellation reaches the
+  in-flight LLM request, which is aborted instead of generating an answer
+  nobody will read. A cancelled turn is neither cached nor stored in the
+  server-side session, and it is counted separately
+  (`agent_rag_chat_cancelled_total{endpoint}` and
+  `agent_rag_chat_requests_total{status="cancelled"}`) so the error-rate
+  alert is not triggered by users navigating away. `/chat` remains
+  synchronous and cannot interrupt a call already in flight.
 
 ### Changed
 

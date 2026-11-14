@@ -1,5 +1,6 @@
 """Chat service unit tests: preparation, error mapping and cache handling."""
 
+import asyncio
 import json
 
 import pytest
@@ -8,6 +9,15 @@ from fastapi import HTTPException
 from src import chat_service
 from src.cache import answer_cache
 from src.schemas import ChatRequest
+
+
+def _drain(frames):
+    """Collect an async SSE stream in a sync test (no pytest-asyncio needed)."""
+
+    async def run():
+        return [frame async for frame in frames]
+
+    return asyncio.run(run())
 
 
 def _request(message="hello", dept="Tech", history=None):
@@ -125,12 +135,12 @@ def test_stream_emits_error_frame(monkeypatch):
     answer_cache.clear()
 
     class Boom:
-        def stream(self, *args, **kwargs):
+        async def astream(self, *args, **kwargs):
             raise RuntimeError("boom")
-            yield  # pragma: no cover - keeps this a generator
+            yield  # pragma: no cover - keeps this an async generator
 
-    monkeypatch.setattr(chat_service, "agent_app", Boom())
-    frames = list(chat_service.open_stream(_request("stream fail"), {})[1])
+    monkeypatch.setattr(chat_service, "agent_async_app", Boom())
+    frames = _drain(chat_service.open_stream(_request("stream fail"), {})[1])
     assert frames
     event = json.loads(frames[-1][6:])
     assert event["type"] == "error"
@@ -142,17 +152,18 @@ def test_stream_cache_hit_skips_graph(monkeypatch):
     request = _request("stream cached?")
 
     class NoGraph:
-        def stream(self, *args, **kwargs):
+        async def astream(self, *args, **kwargs):
             raise AssertionError("graph must not run on a cache hit")
+            yield  # pragma: no cover
 
-    monkeypatch.setattr(chat_service, "agent_app", NoGraph())
+    monkeypatch.setattr(chat_service, "agent_async_app", NoGraph())
     from langchain_core.messages import AIMessage
 
     chat_service.cache_store(
         request, {}, {"messages": [AIMessage(content="cached!")], "sources": []},
         {"llm_calls": 1},
     )
-    frames = list(chat_service.open_stream(request, {})[1])
+    frames = _drain(chat_service.open_stream(request, {})[1])
     events = [json.loads(frame[6:]) for frame in frames]
     assert events[0]["type"] == "token"
     assert events[0]["content"] == "cached!"

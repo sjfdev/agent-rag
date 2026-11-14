@@ -1,7 +1,7 @@
 # AGENTS.md
 
 ## Core Architecture
-- **Chat flow**: `src/chat_service.py` owns validation, maintenance gating, answer caching, error classification and metrics for both `/chat` and `/chat/stream`; `main.py` only adapts to HTTP. Request/response models live in `src/schemas.py`.
+- **Chat flow**: `src/chat_service.py` owns validation, maintenance gating, answer caching, error classification and metrics for both `/chat` and `/chat/stream`; `main.py` only adapts to HTTP. Request/response models live in `src/schemas.py`. `/chat` uses the sync graph node; `/chat/stream` uses an async node (`src/agent.py`: `call_model_async` / `app_async`, `llm.ainvoke`). The stream runs the graph in a producer `asyncio` task and forwards frames from a queue — Starlette cancels streaming responses via an anyio cancel scope, and cancellation thrown at a generator's `yield` does not reach a graph nested inside another async generator, so `_astream` explicitly cancels the producer instead. A cancelled turn is never cached or persisted and is counted as `status="cancelled"` plus `agent_rag_chat_cancelled_total{endpoint}` — deliberately not `status="error"`, so user clicks do not trip the error-rate alert. `/chat` runs in a threadpool, so its in-flight call cannot be interrupted.
 - **RAG Pipeline**: LangGraph $\rightarrow$ Milvus $\rightarrow$ Cross-Encoder Reranker. Answers return `sources` (`source`+`page`) built from retrieval metadata; excerpts are wrapped in `<document>` tags and treated as untrusted data.
 - **Ingestion**: multi-format (`pdf/docx/pptx/xlsx/csv/md/txt/html/json`) via `src/loaders.py`; XLSX/CSV are split into header-repeating row blocks (`XLSX_ROWS_PER_CHUNK`/`CSV_ROWS_PER_CHUNK`, `XLSX_MAX_ROWS`); optional PDF table extraction (`PDF_TABLES_ENABLED`, needs pdfplumber) and OCR (`OCR_ENABLED`, needs pytesseract/pdf2image); keep metadata keys stable or the Milvus schema requires a reset; incremental — chunks carry `dept/source/page|slide|sheet/doc_id/doc_hash/kind/chunk_index`; unchanged files skipped by hash, changed files are written first and old versions deleted afterwards (crash-safe), removed ones pruned.
 - **Zero-downtime rebuild**: `--reset` / the admin console build into a shadow index (Milvus: temp collection + alias swap; FAISS: temp dir + `os.replace`). Queries keep hitting the live index; maintenance is only set during the millisecond alias swap. `count()` is the write target, `live_count()` is what queries see.
@@ -35,7 +35,7 @@ Container build: `docker build -t agent-rag:dev .` (CPU-only torch, embedding mo
 - **Loader Check**: `python scripts/check_loaders.py` (extracts every supported format in /tmp, no vector store needed).
 - **Admin Check**: `python scripts/check_admin.py` (upload→ingest→delete smoke test; server must be running).
 - **Latency Benchmark**: `python scripts/bench_retrieval.py` (embedding vs FAISS vs Milvus vs LLM). `/chat` responses include `timings` (`retrieval_ms`, `llm_ms`, `llm_calls`, `overhead_ms`, `total_ms`).
-- **Tests (offline)**: `pytest -q` runs 537 unit/API/service tests with fake embeddings and a stubbed LLM (no network, ~30s). `pytest --cov=src` for coverage. Lint with `ruff check src tests main.py run_ingestion.py`.
+- **Tests (offline)**: `pytest -q` runs 539 unit/API/service tests with fake embeddings and a stubbed LLM (no network, ~30s). `pytest --cov=src` for coverage. Lint with `ruff check src tests main.py run_ingestion.py`.
 - **Verification (live)**: `python test_agent.py` (requires the API server + a working LLM endpoint).
 
 ## Critical Gotchas & Setup

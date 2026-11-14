@@ -663,7 +663,7 @@ curl -s -X POST localhost:8000/chat -H 'Content-Type: application/json' \
 
 ## 11. 后续待办（按优先级，2026-11-01 之后）
 
-> 当前基线：**537 项测试、CI 全绿**；`milvus 2.5.4 + 服务端稀疏 BM25`；28 chunks；备份/恢复脚本已落地（`make backup` / `make restore`）；监控栈已落地（`make monitor-up` / `make monitor-check`）；服务端会话与前端会话栏已落地（`/sessions` + `ChatRequest.session_id` + 左侧侧栏）。
+> 当前基线：**539 项测试、CI 全绿**；`milvus 2.5.4 + 服务端稀疏 BM25`；28 chunks；备份/恢复脚本已落地（`make backup` / `make restore`）；监控栈已落地（`make monitor-up` / `make monitor-check`）；服务端会话与前端会话栏已落地（`/sessions` + `ChatRequest.session_id` + 左侧侧栏）；`/chat/stream` 客户端断开即取消上游 LLM 调用。
 > 容器化交付已完成（`Dockerfile` / `docker-compose.prod.yml` / `PRODUCTIZATION.md`）。
 > 下面按「对外发布必须先做 → 产品化 → 规模化」排序，每项都有落点与验收方式。
 
@@ -740,10 +740,12 @@ curl -s -X POST localhost:8000/chat -H 'Content-Type: application/json' \
 - [x] 验收：连续 20 轮请求体不再线性增长（`tests/test_sessions.py::test_twenty_turn_requests_stay_bounded`，模型输入始终 ≤ 窗口 + 当前问题）
 - [x] 隔离与持久化：会话按 `user_id` 校验归属，跨用户 404；`logs/` 已挂载并纳入 `make backup`
 
-#### 11.2.5 客户端断开即取消
-- [ ] 现状：客户端断开后同步 LLM 调用仍会跑完
-- [ ] 方案：异步 LLM 客户端或协作式取消检查
-- [ ] 验收：断开后 1 秒内停止上游调用（看日志/指标）
+#### 11.2.5 客户端断开即取消（已完成 2026-11-13）
+- [x] 现状：客户端断开后同步 LLM 调用仍会跑完
+- [x] 方案：`src/agent.py` 增加 `call_model_async`（`llm.ainvoke`）与 `app_async` 图；`/chat/stream` 改用 `agent_async_app.astream` 异步生成器，Starlette 断开时取消响应任务，取消沿 LangGraph 传到 httpx，上游请求真正中止
+- [x] 断开时既不写 FAQ 缓存也不落会话；新增 `agent_rag_chat_cancelled_total{endpoint}` 与 `agent_rag_chat_requests_total{status="cancelled"}`（不算 error，避免错误率告警误报）
+- [x] 验收：`tests/test_stream_cancel.py`（2 项）用慢速 `ainvoke` 模拟断开，断言上游调用被取消、会话无残留、缓存无条目、取消指标出现；全套 **539 passed**
+- [x] 已知限制：`/chat`（非流式）仍是同步线程池调用，客户端断开无法打断已在执行的 LLM 请求；只有 `/chat/stream` 保证 1 秒内中止
 
 ### 11.3 P2 规模化（按需，未到规模前不做）
 
@@ -763,9 +765,11 @@ curl -s -X POST localhost:8000/chat -H 'Content-Type: application/json' \
 3. ~~11.1.4 备份与恢复演练~~（已完成：脚本 + 双后端沙箱演练）
 4. ~~11.2.1 告警~~（已完成：Prometheus + blackbox + Grafana + 6 条规则）
 5. ~~11.2.4 服务端历史~~（已完成：SQLite + `/sessions` + 超窗口摘要）
-6. ~~11.2.3 前端会话列表~~（已完成：左侧会话栏 + `session_id` + 刷新恢复）→ 11.2.5 断开即取消
-7. 做 SaaS 时：11.1.2 多租户 → 11.2.2 计费
-8. 11.3 全部按需，触发条件写在每项里
+6. ~~11.2.3 前端会话列表~~（已完成：左侧会话栏 + `session_id` + 刷新恢复）
+7. ~~11.2.5 断开即取消~~（已完成：async 节点 + `app_async`，`/chat/stream` 断开中止上游调用）
+8. 下一步：11.2.3 剩余体验项（引用点击预览、移动端细节）→ 11.2.1 剩余（Alertmanager 通知 + Loki）
+9. 做 SaaS 时：11.1.2 多租户 → 11.2.2 计费
+10. 11.3 全部按需，触发条件写在每项里
 
 ### 11.4.1 开工记录（2026-11-09 已完成 11.1.4）
 
@@ -783,7 +787,10 @@ curl -s -X POST localhost:8000/chat -H 'Content-Type: application/json' \
 
 **11.2.3 已完成（2026-11-10）。** 聊天页增加左侧会话栏：`新对话`、点击切换、`×` 删除（带确认）、语言切换后重绘；首轮消息懒创建会话，后续请求只带 `session_id`，由 `static/sessions.js` 决定请求体；刷新后按 `localStorage` 的 id 调 `/sessions/{id}` 恢复 transcript（含来源与降级标记），404 时静默回到新对话；移动端侧栏改为抽屉。`/info` 新增 `sessions_enabled`/`history_max_messages`，`SESSIONS_ENABLED=false` 时隐藏侧栏并回退到原 localStorage 历史。`tests/test_sessions_js.py` 5 项 + `tests/test_ui_sessions.py` 3 项，全套 **537 passed**。
 
-下一项：**11.2.5 客户端断开即取消** → 11.2.3 剩余体验项（引用点击预览、移动端细节）。
+**11.2.5 已完成（2026-11-13）。** `src/agent.py` 把检索/提示词组装抽成 `_prepare_turn`，新增 `call_model_async`（`await llm.ainvoke`）并编译出 `app_async`；`/chat` 继续用同步 `app`（线程池），`/chat/stream` 改走 `app_async.astream`。实测发现：uvicorn/Starlette 用 anyio cancel scope 取消流式响应，取消落在外层生成器的 `yield` 上时**不会**传进嵌套在另一个 async generator 里的 LangGraph 图（上游 3 秒的假请求照常跑完）；因此 `chat_service._astream` 改为「生产者任务 + 队列」：图在独立 `asyncio` task 里跑，外层只转发帧，断开时显式 `producer.cancel()`，取消这才传到 `ainvoke` 并中止 httpx 请求（实测断开后 0.93 秒服务端看到连接关闭）。`_astream` 捕获 `CancelledError`/`GeneratorExit` 后记录 `agent_rag_chat_cancelled_total{endpoint}` 与 `status="cancelled"` 请求计数（不混入 error，避免错误率告警误报），不写缓存、不落会话，然后重新抛出以继续取消。`tests/test_stream_cancel.py` 两项覆盖真实异步图（`asyncio.create_task` + `cancel()`）与 `aclose()` 两条路径（后者断言生产者确实取消了图）；`tests/test_api.py` 的 StubLLM 补 `ainvoke`。全套 **539 passed**。
+已知限制：`/chat` 缺少可中断的异步执行，结束前客户端断开仍会让线程跑完；只有 `/chat/stream` 满足「1 秒内停止上游调用」。
+
+下一项：**11.2.3 剩余体验项（引用点击预览、移动端细节）** → 11.2.1 剩余（Alertmanager 通知路由 + Loki/ELK）。
 
 演练环境注意：Docker/colima 只共享 `$HOME`，不要把演练卷放在 `/tmp`（容器里会看到空目录，误判为恢复失败）。
 
