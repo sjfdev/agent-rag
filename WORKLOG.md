@@ -1,4 +1,4 @@
-# 工作记录（2026-10-29 ~ 10-30）
+# 工作记录（2026-10-29 ~ 2026-11-14）
 
 本文件记录本轮迭代完成的功能、验证结果与遗留事项。按提交顺序整理，便于回溯。
 更早的历史见 `OPTIMIZATION_PLAN.md` 第 7 节与 git log。
@@ -1002,7 +1002,42 @@ Milvus 恢复后启动容器，集合 `enterprise_kb__r1793537166470` 可见且 
 
 ---
 
-## 14. 相关文档
+## 14. v1.1.0 发布与生产部署（2026-11-14）
+
+v1.1.0 把本轮功能（`/chat/stream` 断开即取消、引用原文预览、监控栈扩容）合入 main 并发布，随后在生产 compose 上完成首次部署验证。
+
+### 发布
+
+- PR #5 squash 合并到 main：`51af24d`
+- 合并提交上打 tag 并推送：`v1.1.0`
+- 门禁全绿：`src/version.py` / `CHANGELOG.md` / 干净工作区 / HEAD tag / compose tag 一致（`scripts/check_release.py`）、`ruff` 干净、**568 passed**
+- 分支已删除，本地 main 与 origin 同步
+
+### 镜像
+
+- `APP_TAG=v1.1.0 docker compose -f docker-compose.prod.yml build` 成功：`agent-rag:v1.1.0`（3.04GB，`1dd91c46d2ca`）
+- 镜像内检查：`src.version=1.1.0`，`static/sources.js` 已包含
+- `docker tag agent-rag:v1.1.0 agent-rag:latest`（此前 `latest` 仍指向 v1.0.0）
+- 本机 Docker daemon 不在时构建会跳过；本次先 `colima start`（Virtualization.Framework），磁盘 31% 可用（24G）
+
+### 生产部署与冒烟
+
+1. 部署前生产栈跑的仍是旧的 `agent-rag:latest`（v1.0.0），`/health` 为 503 `down`（生产卷空）
+2. `APP_TAG=v1.1.0 docker compose -f docker-compose.prod.yml up -d app`：`agent-rag-app` 重建为 v1.1.0，etcd/Milvus 保持 healthy
+3. `/info`：`version=1.1.0`、`vector_store=milvus`、`hybrid.engine=milvus`（服务端稀疏 BM25）
+4. 容器内 `python run_ingestion.py`：`added=17 updated=0 skipped=0 pruned=0; chunks written=28`，`/health` 转为 200 `ok`
+5. `scripts/check_health.py`：**12 passed, 0 failed**
+6. 容器内 `python scripts/verify_retrieval.py`：`RESULT: OK - isolation holds`（含 Tech+HR 多部门）
+7. `GET /sources/content?source=Demo/faq.txt&user_dept=Demo&user_id=u1` → 200，返回完整 chunk；同参数请求 `Finance/confidential_budget_2026.pdf` → 404（跨部门不泄漏）
+
+### 遗留
+
+- 运维排期项（无代码改动）：真实 IdP 租户登录（需 IdP 管理员建 client/角色）、每季度「删库 → 恢复 → 验证」演练
+- 功能侧无新排期；11.3 规模化项按各自触发条件再启动
+
+---
+
+## 15. 相关文档
 
 - `AGENT_GUIDE.md`：安装、使用、接口、配置、FAQ、性能优化
 - `OPTIMIZATION_PLAN.md`：待办清单与历史进度；**下一次开发直接看第 11 节「后续待办（按优先级）」**
