@@ -547,6 +547,7 @@ uvicorn main:app --host 127.0.0.1 --port 8000
 | `GET /info` | 当前向量库 / 模型 / embedding 后端 |
 | `POST /chat` | 对话接口（一次性返回） |
 | `POST /chat/stream` | 流式对话（SSE，逐 token 返回） |
+| `GET /sources/content` | 引用原文预览（按来源 + 页/幻灯片/工作表取回完整 chunk，受部门与 ACL 限制） |
 
 ### 5.2 `/chat` 接口
 
@@ -1242,3 +1243,18 @@ curl localhost:8000/admin/api/audit?limit=20   # 最近操作
 python scripts/eval_retrieval.py # 检索质量
 python scripts/verify_retrieval.py  # 部门隔离
 ```
+
+### 12.10 监控、告警与日志
+
+```bash
+make monitor-config   # 从 .env 渲染 Alertmanager 配置（邮件/Slack/Webhook）
+make monitor-up       # 先渲染，再起 Prometheus/Alertmanager/blackbox/Grafana/Loki/Promtail
+make monitor-check    # 离线校验全部配置（无 promtool/amtool 也可跑）
+make monitor-down     # 停止（保留 volumes-monitoring/ 中的数据）
+```
+
+- **入口**：Grafana `127.0.0.1:3000`（「Agent RAG」面板）、Prometheus `:9090`、Alertmanager `:9093`、Loki `:3100`；全部只绑定回环，远程访问需 TLS 反向代理
+- **告警**：`monitoring/prometheus/alerts.yml` 的 6 条规则经 `alerting` 转发到 Alertmanager；`ALERTMANAGER_EMAIL_TO`/`SMTP_*`、`ALERTMANAGER_SLACK_WEBHOOK_URL`、`ALERTMANAGER_WEBHOOK_URL` 任选其一开启，SMTP 密码放 `monitoring/alertmanager/smtp_password`（已 gitignore），全未配置时使用 `noop` 接收器
+- **日志**：Promtail 通过 Docker socket 只采集 `agent-rag-*` 容器 stdout，推送到 Loki（`LOKI_RETENTION` 默认 720h）；Grafana 的「Application logs (Loki)」面板查询 `{service="app"}`，用 `|= "<request_id>"` 定位单次失败请求（`request_id` 也在 `X-Request-ID` 响应头里）
+- **平台差异**：Linux 默认路径可用；rootless/远程 Docker 需设置 `DOCKER_SOCKET`/`DOCKER_CONTAINERS_DIR`；无法挂载 socket 时可不启动 Promtail，指标与告警不受影响
+- **生产建议**：`METRICS_TOKEN` 与 Promtail、Grafana 密码都走 `.env`；告警至少接一个渠道，否则只能靠面板被动发现

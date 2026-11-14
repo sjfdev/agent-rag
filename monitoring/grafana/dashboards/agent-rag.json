@@ -440,6 +440,30 @@
       ],
       "title": "Running build",
       "type": "table"
+    },
+    {
+      "datasource": { "type": "loki", "uid": "loki" },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 45 },
+      "id": 13,
+      "options": {
+        "dedup": false,
+        "direction": "backward",
+        "showLabels": true,
+        "showTime": true,
+        "sortOrder": "desc",
+        "wrapLogMessage": true
+      },
+      "targets": [
+        {
+          "datasource": { "type": "loki", "uid": "loki" },
+          "editorMode": "code",
+          "expr": "{service=\"app\"}",
+          "queryType": "range",
+          "refId": "A"
+        }
+      ],
+      "title": "Application logs (Loki)",
+      "type": "logs"
     }
   ],
   "refresh": "30s",

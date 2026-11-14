@@ -16,6 +16,14 @@ global:
 rule_files:
   - /etc/prometheus/alerts.yml
 
+# Firing alerts are handed to Alertmanager, which owns grouping, inhibition,
+# silencing and delivery (email/Slack/generic webhook). Its own config is
+# rendered from .env by scripts/render_alertmanager.py.
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["alertmanager:9093"]
+
 scrape_configs:
   # Application metrics: requests, latency, cache, index size, rebuild state.
   - job_name: agent-rag

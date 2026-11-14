@@ -23,6 +23,7 @@
     background: var(--bg);
     color: var(--text);
     height: 100vh;
+    height: 100dvh;
     display: flex;
     flex-direction: column;
   }
@@ -241,8 +242,60 @@
   .sources summary { cursor: pointer; color: var(--accent); outline: none; }
   .sources ul { margin: 8px 0 0; padding-left: 16px; }
   .sources li { margin: 8px 0; }
+  .sources li.srchit { cursor: pointer; border-radius: 6px; padding: 4px 6px; margin-left: -6px; }
+  .sources li.srchit:hover, .sources li.srchit:focus-visible {
+    background: var(--panel-2); outline: none;
+  }
   .srcpath { color: var(--text); }
   .snippet { color: var(--muted); margin-top: 2px; line-height: 1.5; }
+  .preview {
+    position: fixed; inset: 0; z-index: 60; display: flex;
+    align-items: center; justify-content: center; padding: 20px;
+    background: rgba(7, 9, 13, .62);
+  }
+  .preview[hidden] { display: none; }
+  .previewCard {
+    width: min(860px, 100%); max-height: min(82vh, 900px); display: flex;
+    flex-direction: column; background: var(--panel); border: 1px solid var(--border);
+    border-radius: 12px; box-shadow: 0 20px 60px rgba(0, 0, 0, .5); overflow: hidden;
+  }
+  .previewHead {
+    display: flex; align-items: flex-start; gap: 12px; padding: 14px 18px 8px;
+    border-bottom: 1px solid var(--border);
+  }
+  .previewHead h3 { margin: 0; font-size: 14px; word-break: break-all; flex: 1; }
+  .previewMeta { padding: 8px 18px; font-size: 12px; color: var(--muted); }
+  .previewBody {
+    padding: 4px 18px 18px; overflow: auto; white-space: pre-wrap;
+    word-break: break-word; line-height: 1.6; font-size: 13px;
+  }
+  .previewBody.error { color: #ff8a8a; }
+  .previewNote { margin-top: 12px; font-size: 12px; color: var(--muted); }
+  .previewClose { flex: none; }
+  @media (max-width: 640px) {
+    .preview { padding: 0; }
+    .previewCard { width: 100%; max-height: 100%; height: 100%; border-radius: 0; }
+    .previewBody { padding-bottom: calc(28px + env(safe-area-inset-bottom)); }
+    header { padding: 10px 12px; gap: 8px; }
+    header h1 { font-size: 14px; }
+    .badge { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    main { padding: 12px; gap: 10px; }
+    .msg { max-width: 100%; }
+    .bubble { font-size: 13.5px; padding: 9px 12px; }
+    footer { padding: 10px 12px calc(10px + env(safe-area-inset-bottom)); }
+    .controls { gap: 8px; }
+    .controls label { flex: 1 1 40%; }
+    .controls label input, .controls label select { flex: 1; min-width: 0; }
+    .row { flex-wrap: wrap; }
+    .row textarea { flex: 1 1 100%; font-size: 16px; }
+    .row button { flex: 1 1 auto; }
+    .presets {
+      flex-wrap: nowrap; overflow-x: auto; padding-bottom: 2px;
+      -webkit-overflow-scrolling: touch;
+    }
+    .presets button { flex: 0 0 auto; }
+    .hint { line-height: 1.5; }
+  }
   .bubble.streaming::after { content: "▍"; margin-left: 2px; animation: blink 1s steps(1) infinite; }
   @keyframes blink { 50% { opacity: 0; } }
 </style>
@@ -333,12 +386,27 @@
   </form>
 </div>
 
+<div class="preview" id="preview" hidden role="dialog" aria-modal="true" aria-labelledby="previewTitle">
+  <div class="previewCard">
+    <div class="previewHead">
+      <h3 id="previewTitle" data-i18n="chat.preview.title">原文预览</h3>
+      <button class="ghost previewClose" id="previewClose" type="button"
+              data-i18n="chat.preview.close" data-i18n-aria-label="chat.preview.close"
+              aria-label="关闭">关闭</button>
+    </div>
+    <div class="previewMeta" id="previewMeta"></div>
+    <div class="previewBody" id="previewBody"></div>
+  </div>
+</div>
+
 <!-- Shared zh/en dictionary; key parity is asserted by tests/test_i18n_js.py. -->
 <script src="/ui/i18n.js"></script>
 <!-- Safe markdown renderer + escaping helpers (also unit-tested from CI). -->
 <script src="/ui/markdown.js"></script>
 <!-- Request-body helpers for server-side sessions (unit-tested from CI). -->
 <script src="/ui/sessions.js"></script>
+<!-- Citation preview URL builder (unit-tested from CI). -->
+<script src="/ui/sources.js"></script>
 <script>
 const chat = document.getElementById("chat");
 const input = document.getElementById("input");
@@ -700,6 +768,18 @@ function attachSources(bubble, sources) {
   const list = document.createElement("ul");
   for (const src of sources) {
     const item = document.createElement("li");
+    item.className = "srchit";
+    item.tabIndex = 0;
+    item.title = t("chat.preview.hint");
+    item.setAttribute("role", "button");
+    item.setAttribute("aria-label", t("chat.preview.hint"));
+    item.onclick = () => openSourcePreview(src);
+    item.onkeydown = (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        openSourcePreview(src);
+      }
+    };
 
     const path = document.createElement("div");
     path.className = "srcpath";
@@ -738,6 +818,84 @@ function attachSources(bubble, sources) {
   box.appendChild(list);
   bubble.appendChild(box);
 }
+
+function previewMeta(src) {
+  const parts = [];
+  if (src.dept) parts.push(t("chat.sourceDept", { dept: src.dept }));
+  if (src.kind) parts.push(t("chat.sourceKind", { kind: src.kind }));
+  const position = (key, vars) => t(key, vars).replace(/^[\s·]+/, "");
+  if (src.page !== undefined) parts.push(position("chat.page", { page: src.page }));
+  else if (src.slide !== undefined) parts.push(position("chat.slide", { slide: src.slide }));
+  else if (src.sheet) parts.push(position("chat.sheet", { sheet: src.sheet }));
+  return parts.join(" · ");
+}
+
+function closeSourcePreview() {
+  const modal = document.getElementById("preview");
+  if (modal && !modal.hidden) {
+    modal.hidden = true;
+    document.getElementById("previewBody").textContent = "";
+  }
+}
+
+async function openSourcePreview(src) {
+  const modal = document.getElementById("preview");
+  if (!modal) return;
+  const title = document.getElementById("previewTitle");
+  const meta = document.getElementById("previewMeta");
+  const body = document.getElementById("previewBody");
+  modal.hidden = false;
+  body.classList.remove("error");
+  title.textContent = src.source || t("chat.unknownSource");
+  meta.textContent = previewMeta(src);
+  body.textContent = t("chat.preview.loading");
+
+  try {
+    const res = await fetch(
+      ChatSources.previewPath({
+        source: src.source,
+        page: src.page,
+        slide: src.slide,
+        sheet: src.sheet,
+        userId: currentUserId(),
+        dept: deptSel.value,
+      }),
+      { headers: authHeaders() }
+    );
+    if (res.status === 401) {
+      clearCredential();
+      showGate(t("auth.expired"));
+      body.textContent = t("chat.preview.failed", { error: res.status });
+      body.classList.add("error");
+      return;
+    }
+    if (!res.ok) {
+      throw new Error(res.status === 404 ? t("chat.preview.missing") : String(res.status));
+    }
+    const data = await res.json();
+    const chunks = Array.isArray(data.chunks) ? data.chunks : [];
+    const text = chunks.map((chunk) => chunk.text).join("\n\n");
+    body.textContent = text || t("chat.preview.empty");
+    if (data.title) meta.textContent = [data.title, meta.textContent].filter(Boolean).join(" · ");
+    if (data.truncated) {
+      const note = document.createElement("div");
+      note.className = "previewNote";
+      note.textContent = t("chat.preview.truncated", { count: chunks.length });
+      body.appendChild(note);
+    }
+  } catch (error) {
+    body.classList.add("error");
+    body.textContent = t("chat.preview.failed", { error: error.message });
+  }
+}
+
+document.getElementById("previewClose").onclick = closeSourcePreview;
+document.getElementById("preview").onclick = (event) => {
+  if (event.target.id === "preview") closeSourcePreview();
+};
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") closeSourcePreview();
+});
 
 function addCopy(bubble, text) {
   const button = document.createElement("button");

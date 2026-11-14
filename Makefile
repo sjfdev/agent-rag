@@ -7,7 +7,7 @@ endif
 
 .PHONY: help install data ingest run test lint cov milvus-up milvus-down milvus-logs \
         reset-faiss reset-milvus doctor check eval clean release release-check \
-        backup restore monitor-up monitor-down monitor-logs monitor-check
+        backup restore monitor-config monitor-up monitor-down monitor-logs monitor-check
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | \
@@ -62,7 +62,10 @@ restore: ## Restore an archive (make restore ARCHIVE=backups/<file>.tar.gz)
 	@test -n "$(ARCHIVE)" || (echo "usage: make restore ARCHIVE=backups/<file>.tar.gz"; exit 1)
 	$(PYTHON) scripts/restore.py "$(ARCHIVE)"
 
-monitor-up: ## Start Prometheus + blackbox + Grafana (needs the prod stack)
+monitor-config: ## Render Alertmanager config from .env (secrets stay local)
+	$(PYTHON) scripts/render_alertmanager.py
+
+monitor-up: monitor-config ## Start Prometheus + Alertmanager + blackbox + Grafana (needs the prod stack)
 	docker compose -f docker-compose.monitoring.yml up -d
 
 monitor-down: ## Stop the monitoring stack (keeps metric data)

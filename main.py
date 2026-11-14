@@ -18,11 +18,13 @@ from src import acl, auth, chat_service, local_auth, metrics
 from src.admin_api import _job_store
 from src.admin_api import router as admin_router
 from src.admin_api import session_router as admin_session_router
+from src.api_access import require_chat_key
 from src.config import settings
 from src.engine import kb_engine
 from src.health import router as health_router
 from src.schemas import ChatRequest, ChatResponse
 from src.sessions_api import router as sessions_router
+from src.sources_api import router as sources_router
 from src.validation import InvalidDepartment
 from src.version import __version__
 
@@ -78,6 +80,7 @@ app.include_router(admin_session_router)
 app.include_router(admin_router)
 app.include_router(health_router)
 app.include_router(sessions_router)
+app.include_router(sources_router)
 # /auth/login and /auth/callback answer 404 unless an OIDC client is configured.
 auth.register_routes(app)
 # POST /auth/login for username/password accounts (AUTH_LOCAL_LOGIN_ENABLED).
@@ -178,25 +181,6 @@ def prometheus_metrics(request: Request):
         content=metrics.render(),
         media_type="text/plain; version=0.0.4; charset=utf-8",
     )
-
-
-def require_chat_key(http_request: Request) -> None:
-    """Optional API key for the chat endpoints (open when unset).
-
-    In jwt mode the bearer token is the credential, so the static key is not
-    required; identity and permissions are resolved in `chat_service.prepare`.
-    """
-    if auth.auth_enabled():
-        return
-    expected = settings.CHAT_API_KEY
-    if not expected:
-        return
-    provided = (
-        http_request.headers.get("x-api-key")
-        or http_request.headers.get("authorization", "").removeprefix("Bearer ").strip()
-    )
-    if not secrets.compare_digest(provided, expected):
-        raise HTTPException(status_code=401, detail="invalid api key")
 
 
 @app.post("/chat", response_model=ChatResponse)
