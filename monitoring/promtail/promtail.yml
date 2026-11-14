@@ -1,0 +1,40 @@
+# Promtail ships the stack's container logs to Loki.
+#
+# Only containers named `agent-rag-*` are kept, so unrelated workloads on the
+# same Docker host are not pulled into the log store. The json-file driver's
+# `{"log", "stream", "time"}` envelope is unwrapped by the `docker` pipeline
+# stage; `container` / `service` / `stream` become queryable labels.
+#
+# Mounts required by docker service discovery (see docker-compose.monitoring.yml):
+#   - the Docker socket (read-only)
+#   - /var/lib/docker/containers (read-only), where json-file logs live
+
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /var/lib/promtail/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+
+scrape_configs:
+  - job_name: docker
+    docker_sd_configs:
+      - host: unix:///var/run/docker.sock
+        refresh_interval: 5s
+    relabel_configs:
+      # Keep this stack only: `agent-rag-app`, `-milvus`, `-grafana`, ...
+      - source_labels: ["__meta_docker_container_name"]
+        regex: "/agent-rag-.*"
+        action: keep
+      - source_labels: ["__meta_docker_container_name"]
+        regex: "/(.*)"
+        target_label: container
+      - source_labels: ["__meta_docker_container_log_stream"]
+        target_label: stream
+      - source_labels: ["__meta_docker_container_label_com_docker_compose_service"]
+        target_label: service
+    pipeline_stages:
+      - docker: {}

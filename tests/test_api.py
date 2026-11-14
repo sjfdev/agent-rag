@@ -57,6 +57,11 @@ def seeded(tmp_path, monkeypatch):
             self.calls += 1
             return AIMessage(content="stub answer")
 
+        async def ainvoke(self, messages):
+            # /chat/stream runs the async graph node, which awaits ainvoke.
+            self.calls += 1
+            return AIMessage(content="stub answer")
+
     stub = StubLLM()
     monkeypatch.setattr(agent_module, "llm", stub)
     import main

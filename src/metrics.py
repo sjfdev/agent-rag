@@ -113,6 +113,12 @@ _SESSION_SUMMARY_SECONDS = Histogram(
     buckets=(0.1, 0.25, 0.5, 1.0, 2.0, 5.0, 10.0, 20.0),
     registry=REGISTRY,
 )
+_CANCELLED = Counter(
+    "agent_rag_chat_cancelled_total",
+    "Streaming chats abandoned by the client before they finished.",
+    ["endpoint"],
+    registry=REGISTRY,
+)
 
 
 def set_build_info(version: str) -> None:
@@ -192,6 +198,19 @@ def observe_ingest_job(status: str) -> None:
 def observe_session_summary(result: str, seconds: float) -> None:
     _SESSION_SUMMARIES.labels(result=result).inc()
     _SESSION_SUMMARY_SECONDS.observe(max(float(seconds), 0.0))
+
+
+def observe_cancelled(endpoint: str, elapsed_seconds: float) -> None:
+    """Record a stream the client walked away from.
+
+    Kept separate from `status="error"`: a disconnect is not a service failure,
+    and the error-rate alert must not fire because users clicked away.
+    """
+    _CANCELLED.labels(endpoint=endpoint).inc()
+    _REQUESTS.labels(endpoint=endpoint, status="cancelled").inc()
+    _DURATION.labels(endpoint=endpoint, status="cancelled").observe(
+        max(float(elapsed_seconds), 0.0)
+    )
 
 
 def set_maintenance(active: bool) -> None:

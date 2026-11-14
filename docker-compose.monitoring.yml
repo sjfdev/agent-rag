@@ -1,16 +1,28 @@
-# Observability overlay: Prometheus + blackbox_exporter + Grafana.
+# Observability overlay: Prometheus + Alertmanager + blackbox_exporter + Grafana
+# + Loki (logs via Promtail).
 #
 # It reuses the running production stack's network (`agent-rag-prod`), so start
 # that first:
 #
 #   docker compose -f docker-compose.prod.yml up -d
-#   docker compose -f docker-compose.monitoring.yml up -d
+#   make monitor-up          # renders alertmanager.yml from .env, then starts
 #
 # UIs are bound to loopback by default; put a reverse proxy with TLS in front
 # for remote access. Set GRAFANA_ADMIN_PASSWORD in .env before exposing :3000.
 #
-#   Grafana    http://127.0.0.1:3000   (folder "Agent RAG", dashboard "Agent RAG")
-#   Prometheus http://127.0.0.1:9090   (Alerts tab -> agent-rag-* rules)
+#   Grafana      http://127.0.0.1:3000   (folder "Agent RAG", dashboard "Agent RAG")
+#   Prometheus   http://127.0.0.1:9090   (Alerts tab -> agent-rag-* rules)
+#   Alertmanager http://127.0.0.1:9093   (silences; delivery routes)
+#   Loki         http://127.0.0.1:3100   (log store; queried through Grafana)
+#
+# Promtail needs the Docker socket and the json-file log directory to discover
+# `agent-rag-*` containers; set DOCKER_SOCKET / DOCKER_CONTAINERS_DIR if they
+# are not at the default paths.
+#
+# monitoring/alertmanager/alertmanager.yml is generated (gitignored): it needs
+# SMTP passwords / Slack URLs that must not be committed. With no
+# ALERTMANAGER_* channel variables set the stack still starts and alerts simply
+# have no destination.
 #
 # Stop with `docker compose -f docker-compose.monitoring.yml down`; metric and
 # dashboard state lives under volumes-monitoring/ (gitignored).
@@ -32,6 +44,7 @@ services:
     ports:
       - "127.0.0.1:${PROMETHEUS_PORT:-9090}:9090"
     depends_on:
+      - alertmanager
       - blackbox
     networks:
       - monitoring
@@ -40,6 +53,75 @@ services:
       driver: json-file
       options:
         max-size: "20m"
+        max-file: "3"
+
+  alertmanager:
+    image: ${ALERTMANAGER_IMAGE:-prom/alertmanager:v0.27.0}
+    container_name: agent-rag-alertmanager
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+      - --storage.path=/alertmanager
+      - --web.listen-address=0.0.0.0:9093
+    volumes:
+      # Read-only: the file is rendered on the host by scripts/render_alertmanager.py.
+      - ./monitoring/alertmanager:/etc/alertmanager:ro
+      - ${DOCKER_VOLUME_DIRECTORY:-.}/volumes-monitoring/alertmanager:/alertmanager
+    ports:
+      - "127.0.0.1:${ALERTMANAGER_PORT:-9093}:9093"
+    networks:
+      - monitoring
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  loki:
+    image: ${LOKI_IMAGE:-grafana/loki:3.2.1}
+    container_name: agent-rag-loki
+    restart: unless-stopped
+    command:
+      - -config.file=/etc/loki/loki.yml
+      # Lets loki.yml read ${LOKI_RETENTION:-720h} from the environment.
+      - -config.expand-env=true
+    environment:
+      LOKI_RETENTION: ${LOKI_RETENTION:-720h}
+    volumes:
+      - ./monitoring/loki:/etc/loki:ro
+      - ${DOCKER_VOLUME_DIRECTORY:-.}/volumes-monitoring/loki:/loki
+    ports:
+      - "127.0.0.1:${LOKI_PORT:-3100}:3100"
+    networks:
+      - monitoring
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"
+
+  promtail:
+    image: ${PROMTAIL_IMAGE:-grafana/promtail:3.2.1}
+    container_name: agent-rag-promtail
+    restart: unless-stopped
+    command:
+      - -config.file=/etc/promtail/promtail.yml
+    volumes:
+      - ./monitoring/promtail:/etc/promtail:ro
+      # Docker service discovery + json-file log locations. Override
+      # DOCKER_SOCKET / DOCKER_CONTAINERS_DIR on hosts that differ (e.g. a
+      # rootless or remote daemon); see monitoring/README.md.
+      - ${DOCKER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock:ro
+      - ${DOCKER_CONTAINERS_DIR:-/var/lib/docker/containers}:/var/lib/docker/containers:ro
+      - ${DOCKER_VOLUME_DIRECTORY:-.}/volumes-monitoring/promtail:/var/lib/promtail
+    depends_on:
+      - loki
+    networks:
+      - monitoring
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
         max-file: "3"
 
   blackbox:

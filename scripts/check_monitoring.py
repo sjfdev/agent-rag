@@ -8,14 +8,18 @@ caught before a deploy rather than after an incident:
   - `monitoring/prometheus/alerts.yml` has the required alerts and only
     references `agent_rag_*` metrics that exist in `src/metrics.py`
   - the Grafana dashboard/provisioning files parse and target the same metrics
+  - the rendered Alertmanager config is valid and every route resolves
   - `docker-compose.monitoring.yml` wires the files and the prod network
 
-Run `promtool check rules` too when promtool is installed. Exit code is
-non-zero on any failure; no network access is needed.
+Run `promtool check rules` (and `amtool check-config`) too when those binaries
+are installed. Exit code is non-zero on any failure; no network access is
+needed. Rendering `monitoring/alertmanager/alertmanager.yml` is the only write:
+it is gitignored and (re)generated from `.env` / the environment.
 
     python scripts/check_monitoring.py
 """
 
+import importlib.util
 import json
 import re
 import shutil
@@ -28,6 +32,11 @@ ROOT = Path(__file__).resolve().parent.parent
 MONITORING = ROOT / "monitoring"
 PROMETHEUS = MONITORING / "prometheus"
 GRAFANA = MONITORING / "grafana"
+ALERTMANAGER = MONITORING / "alertmanager"
+ALERTMANAGER_CONFIG = ALERTMANAGER / "alertmanager.yml"
+LOKI = MONITORING / "loki"
+PROMTAIL = MONITORING / "promtail"
+GITIGNORE = ROOT / ".gitignore"
 
 REQUIRED_ALERTS = {
     "AgentRagMetricsDown",
@@ -149,6 +158,19 @@ def check_prometheus(known: Set[str]) -> None:
     ]
     check("app scrape targets include app:8000", "app:8000" in app_targets)
 
+    alerting = config.get("alerting", {})
+    alert_targets = [
+        target
+        for manager in alerting.get("alertmanagers", [])
+        for static in manager.get("static_configs", [])
+        for target in static.get("targets", [])
+    ]
+    check(
+        "prometheus.yml sends alerts to Alertmanager",
+        "alertmanager:9093" in alert_targets,
+        ", ".join(alert_targets) if alert_targets else "no alerting.alertmanagers target",
+    )
+
     health = jobs.get("agent-rag-health", {})
     check("prometheus.yml probes /health", bool(health))
     check(
@@ -196,19 +218,37 @@ def check_prometheus(known: Set[str]) -> None:
         print("SKIP  promtool not installed; structural rule checks only")
 
 
+def grafana_datasources() -> Dict[str, Dict[str, Any]]:
+    """Provisioned datasources keyed by uid, across every *.yml file."""
+    entries: Dict[str, Dict[str, Any]] = {}
+    folder = GRAFANA / "provisioning" / "datasources"
+    for path in sorted(folder.glob("*.yml")):
+        data = load_yaml(path)
+        if data is None:
+            continue
+        for entry in data.get("datasources") or []:
+            uid = entry.get("uid")
+            if uid:
+                entries[uid] = entry
+    return entries
+
+
 def check_grafana(known: Set[str]) -> None:
-    datasource = load_yaml(GRAFANA / "provisioning" / "datasources" / "prometheus.yml")
-    if datasource is not None:
-        entries = datasource.get("datasources") or []
-        uid = entries[0].get("uid") if entries else None
-        check(
-            "Grafana datasource points at Prometheus",
-            bool(entries)
-            and entries[0].get("type") == "prometheus"
-            and entries[0].get("url") == "http://prometheus:9090",
-        )
-    else:
-        uid = None
+    declared = grafana_datasources()
+    check("Grafana datasources parse", bool(declared))
+    prometheus = next(
+        (entry for entry in declared.values() if entry.get("type") == "prometheus"), {}
+    )
+    check(
+        "Grafana datasource points at Prometheus",
+        prometheus.get("url") == "http://prometheus:9090",
+    )
+    loki = next((entry for entry in declared.values() if entry.get("type") == "loki"), {})
+    check(
+        "Grafana datasource points at Loki",
+        loki.get("url") == "http://loki:3100",
+        loki.get("url", "no loki datasource"),
+    )
 
     provider = load_yaml(GRAFANA / "provisioning" / "dashboards" / "agent-rag.yml")
     if provider is not None:
@@ -227,15 +267,143 @@ def check_grafana(known: Set[str]) -> None:
     check("dashboard has a stable uid", bool(dashboard.get("uid")))
     panel_ids = [panel.get("id") for panel in panels]
     check("dashboard panel ids are unique", len(panel_ids) == len(set(panel_ids)))
+    unknown_ds = {
+        panel.get("datasource", {}).get("uid")
+        for panel in panels
+        if isinstance(panel.get("datasource"), dict)
+    } - set(declared)
     check(
-        "dashboard panels use the provisioned datasource",
-        all(
-            panel.get("datasource", {}).get("uid") == uid
-            for panel in panels
-            if isinstance(panel.get("datasource"), dict)
-        ),
+        "dashboard panels use provisioned datasources",
+        not unknown_ds,
+        ", ".join(sorted(filter(None, unknown_ds))) if unknown_ds else "",
+    )
+    log_panels = [panel for panel in panels if panel.get("type") == "logs"]
+    check(
+        "dashboard has a Loki log panel",
+        bool(log_panels)
+        and all(p.get("datasource", {}).get("uid") == "loki" for p in log_panels),
     )
     compare_metrics("dashboard", all_exprs(dashboard), known)
+
+
+def route_receivers(route: Dict[str, Any]) -> Set[str]:
+    """Receiver names referenced anywhere in a (nested) route tree."""
+    names: Set[str] = set()
+    receiver = route.get("receiver")
+    if isinstance(receiver, str):
+        names.add(receiver)
+    for child in route.get("routes", []) or []:
+        names |= route_receivers(child)
+    return names
+
+
+def check_alertmanager() -> None:
+    """Render the gitignored config from the environment, then validate it."""
+    renderer_path = Path(__file__).resolve().parent / "render_alertmanager.py"
+    spec = importlib.util.spec_from_file_location("render_alertmanager", renderer_path)
+    renderer = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(renderer)
+    try:
+        renderer.render(dest=ALERTMANAGER_CONFIG)
+    except ValueError as exc:
+        check("Alertmanager config renders", False, str(exc)[:200])
+        return
+    check("Alertmanager config renders", True)
+
+    config = load_yaml(ALERTMANAGER_CONFIG)
+    if config is None:
+        return
+    declared = {
+        receiver.get("name") for receiver in config.get("receivers", [])
+    }
+    referenced = route_receivers(config.get("route", {}))
+    check(
+        "alertmanager.yml routes only to defined receivers",
+        referenced <= declared,
+        ", ".join(sorted(referenced - declared)) if referenced - declared else "",
+    )
+    check(
+        "alertmanager.yml has a default receiver",
+        bool(config.get("route", {}).get("receiver")) and "noop" in declared,
+    )
+
+    gitignore = GITIGNORE.read_text(encoding="utf-8") if GITIGNORE.is_file() else ""
+    check(
+        "rendered Alertmanager config is gitignored",
+        "monitoring/alertmanager/alertmanager.yml" in gitignore,
+    )
+
+    if shutil.which("amtool"):
+        proc = subprocess.run(
+            ["amtool", "check-config", str(ALERTMANAGER_CONFIG)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        check("amtool check-config", proc.returncode == 0, proc.stderr.strip()[:200])
+    else:
+        print("SKIP  amtool not installed; structural Alertmanager checks only")
+
+
+def check_logs() -> None:
+    """Loki store + Promtail shipping configuration."""
+    loki = load_yaml(LOKI / "loki.yml")
+    if loki is not None:
+        check("loki.yml disables auth (single-node)", loki.get("auth_enabled") is False)
+        check(
+            "loki.yml stores to the filesystem",
+            (loki.get("common", {}).get("storage", {}).get("filesystem") or {}).get(
+                "chunks_directory"
+            )
+            == "/loki/chunks",
+        )
+        configs = loki.get("schema_config", {}).get("configs") or [{}]
+        check(
+            "loki.yml uses the tsdb schema",
+            configs[0].get("store") == "tsdb"
+            and configs[0].get("object_store") == "filesystem",
+        )
+        retention = (loki.get("limits_config") or {}).get("retention_period", "")
+        check(
+            "loki.yml retention is environment-tunable",
+            "${LOKI_RETENTION" in str(retention),
+            str(retention),
+        )
+        check(
+            "loki.yml compactor deletes expired chunks",
+            (loki.get("compactor") or {}).get("retention_enabled") is True,
+        )
+
+    promtail = load_yaml(PROMTAIL / "promtail.yml")
+    if promtail is None:
+        return
+    clients = promtail.get("clients") or [{}]
+    check(
+        "promtail.yml pushes to Loki",
+        clients[0].get("url") == "http://loki:3100/loki/api/v1/push",
+        clients[0].get("url", ""),
+    )
+    scrape = (promtail.get("scrape_configs") or [{}])[0]
+    discovery = (scrape.get("docker_sd_configs") or [{}])[0]
+    check(
+        "promtail.yml discovers containers via the Docker socket",
+        discovery.get("host") == "unix:///var/run/docker.sock",
+    )
+    relabels = scrape.get("relabel_configs") or []
+    check(
+        "promtail.yml keeps only agent-rag containers",
+        any(item.get("regex") == "/agent-rag-.*" and item.get("action") == "keep" for item in relabels),
+    )
+    stages = scrape.get("pipeline_stages") or []
+    check(
+        "promtail.yml unwraps the docker json-file envelope",
+        any("docker" in stage for stage in stages),
+    )
+    check(
+        "promtail.yml persists read positions",
+        str(promtail.get("positions", {}).get("filename", "")).startswith("/var/lib/promtail/"),
+    )
 
 
 def check_compose() -> None:
@@ -244,7 +412,11 @@ def check_compose() -> None:
     if compose is None:
         return
     services = compose.get("services", {})
-    check("monitoring compose has prometheus/blackbox/grafana", {"prometheus", "blackbox", "grafana"} <= set(services))
+    check(
+        "monitoring compose has prometheus/alertmanager/blackbox/grafana/loki/promtail",
+        {"prometheus", "alertmanager", "blackbox", "grafana", "loki", "promtail"}
+        <= set(services),
+    )
     prod_network = compose.get("networks", {}).get("prod", {})
     check(
         "monitoring compose joins the external prod network",
@@ -257,6 +429,9 @@ def check_compose() -> None:
             marker in text
             for marker in (
                 "./monitoring/prometheus:/etc/prometheus:ro",
+                "./monitoring/alertmanager:/etc/alertmanager:ro",
+                "./monitoring/loki:/etc/loki:ro",
+                "./monitoring/promtail:/etc/promtail:ro",
                 "./monitoring/blackbox:/etc/blackbox_exporter:ro",
                 "./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro",
                 "./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro",
@@ -264,8 +439,17 @@ def check_compose() -> None:
         ),
     )
     check(
+        "promtail mounts the Docker socket and container logs",
+        "${DOCKER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock:ro" in text
+        and "${DOCKER_CONTAINERS_DIR:-/var/lib/docker/containers}:/var/lib/docker/containers:ro"
+        in text,
+    )
+    check(
         "monitoring UIs bind to loopback by default",
-        "127.0.0.1:${PROMETHEUS_PORT" in text and "127.0.0.1:${GRAFANA_PORT" in text,
+        "127.0.0.1:${PROMETHEUS_PORT" in text
+        and "127.0.0.1:${GRAFANA_PORT" in text
+        and "127.0.0.1:${ALERTMANAGER_PORT" in text
+        and "127.0.0.1:${LOKI_PORT" in text,
     )
 
 
@@ -273,6 +457,8 @@ def main() -> int:
     known = source_metric_names()
     check("src/metrics.py exports metrics", bool(known), str(len(known)))
     check_prometheus(known)
+    check_alertmanager()
+    check_logs()
     check_grafana(known)
     check_compose()
 

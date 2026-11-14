@@ -9,6 +9,7 @@ This module is framework-light on purpose: the only FastAPI dependency is
 yields already-encoded SSE frames.
 """
 
+import asyncio
 import json
 import logging
 import threading
@@ -17,13 +18,14 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeout
 from dataclasses import dataclass
-from typing import Any, Dict, Iterator, List, Optional
+from typing import Any, AsyncIterator, Dict, List, Optional
 
 from fastapi import HTTPException
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from src import auth, metrics
 from src.agent import app as agent_app
+from src.agent import app_async as agent_async_app
 from src.cache import answer_cache
 from src.config import settings
 from src.errors import ChatTimeout, classify_error, is_store_error, is_upstream_error
@@ -594,19 +596,75 @@ def _record_failure(prepared: Prepared, exc: Exception) -> None:
 def open_stream(
     request: ChatRequest, headers: Any, endpoint: str = "chat_stream"
 ) -> tuple:
-    """Validate now and return (request_id, frame iterator).
+    """Validate now and return (request_id, async SSE frame iterator).
 
     Preparing eagerly means validation and maintenance faults surface as HTTP
-    errors before a 200 stream is opened.
+    errors before a 200 stream is opened. The iterator runs the graph in a task
+    it can cancel, so a client disconnect aborts the upstream request instead of
+    letting it run to completion.
     """
     prepared = prepare(request, endpoint, headers)
-    return prepared.request_id, _stream(prepared, request, headers)
+    return prepared.request_id, _astream(prepared, request, headers)
 
 
-def _stream(
+_STREAM_END = object()
+
+
+async def _astream(
     prepared: Prepared, request: ChatRequest, headers: Any
-) -> Iterator[str]:
-    """Yield SSE frames: tokens, then a done event (or an error event)."""
+) -> AsyncIterator[str]:
+    """Yield SSE frames: tokens, then a done event (or an error event).
+
+    The graph runs in a producer task; this generator only forwards frames. That
+    indirection is what makes a disconnect stop the LLM: an ASGI server cancels
+    a streaming response through an anyio cancel scope, and cancellation thrown
+    at this generator's `yield` does not reach a graph nested in another async
+    generator (the upstream call keeps running to completion). Cancelling the
+    producer task directly does abort it.
+    """
+    queue: asyncio.Queue = asyncio.Queue()
+    producer = asyncio.create_task(_produce(prepared, request, headers, queue))
+    # Retrieve the producer's outcome even if the consumer goes away first.
+    producer.add_done_callback(_discard_task_result)
+
+    try:
+        while True:
+            frame = await queue.get()
+            if frame is _STREAM_END:
+                return
+            yield frame
+    except (asyncio.CancelledError, GeneratorExit) as exc:
+        # Client walked away: the turn is incomplete, so it must not be cached
+        # or persisted (that only happens after the graph finishes). Re-raise
+        # so cancellation still unwinds the surrounding task.
+        metrics.observe_cancelled(
+            prepared.endpoint, time.perf_counter() - prepared.started
+        )
+        logger.info(
+            "chat stream cancelled request_id=%s reason=%s elapsed_ms=%.0f",
+            prepared.request_id,
+            type(exc).__name__,
+            (time.perf_counter() - prepared.started) * 1000,
+        )
+        raise
+    finally:
+        if not producer.done():
+            producer.cancel()
+
+
+def _discard_task_result(task: asyncio.Task) -> None:
+    """Mark a task's exception as retrieved so asyncio does not log it."""
+    if not task.cancelled():
+        task.exception()
+
+
+async def _produce(
+    prepared: Prepared,
+    request: ChatRequest,
+    headers: Any,
+    queue: asyncio.Queue,
+) -> None:
+    """Run the graph and push SSE frames into `queue`, ending with _STREAM_END."""
     started = prepared.started
     request_id = prepared.request_id
     final_state: Dict[str, Any] = {}
@@ -626,19 +684,22 @@ def _stream(
         _persist_turn(
             prepared, request, cached.get("response", ""), cached.get("sources"), False
         )
-        yield sse({"type": "token", "content": cached.get("response", "")})
-        yield sse(
-            {
-                "type": "done",
-                "sources": cached.get("sources") or [],
-                "timings": timings,
-                "session_id": prepared.session_id,
-            }
+        await queue.put(sse({"type": "token", "content": cached.get("response", "")}))
+        await queue.put(
+            sse(
+                {
+                    "type": "done",
+                    "sources": cached.get("sources") or [],
+                    "timings": timings,
+                    "session_id": prepared.session_id,
+                }
+            )
         )
+        await queue.put(_STREAM_END)
         return
 
     try:
-        for mode, payload in agent_app.stream(
+        async for mode, payload in agent_async_app.astream(
             prepared.inputs,
             stream_mode=["messages", "values"],
             config={"recursion_limit": settings.AGENT_RECURSION_LIMIT},
@@ -658,7 +719,7 @@ def _stream(
                         metrics.observe_first_token(
                             prepared.endpoint, first_token_at - started
                         )
-                    yield sse({"type": "token", "content": text})
+                    await queue.put(sse({"type": "token", "content": text}))
             elif mode == "values":
                 final_state = payload
 
@@ -705,15 +766,21 @@ def _stream(
         if degraded:
             done["degraded"] = True
             done["degraded_reason"] = final_state.get("degraded_reason") or ""
-        yield sse(done)
+        await queue.put(sse(done))
     except Exception as exc:
         _record_failure(prepared, exc)
         _, code, message = classify_error(exc)
-        yield sse(
-            {
-                "type": "error",
-                "code": code,
-                "message": message,
-                "request_id": request_id,
-            }
+        await queue.put(
+            sse(
+                {
+                    "type": "error",
+                    "code": code,
+                    "message": message,
+                    "request_id": request_id,
+                }
+            )
         )
+    finally:
+        # `put_nowait` so a cancelled producer can still terminate the consumer's
+        # `queue.get()` loop if it ever runs with cancellation pending.
+        queue.put_nowait(_STREAM_END)

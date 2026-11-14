@@ -663,7 +663,7 @@ curl -s -X POST localhost:8000/chat -H 'Content-Type: application/json' \
 
 ## 11. 后续待办（按优先级，2026-11-01 之后）
 
-> 当前基线：**537 项测试、CI 全绿**；`milvus 2.5.4 + 服务端稀疏 BM25`；28 chunks；备份/恢复脚本已落地（`make backup` / `make restore`）；监控栈已落地（`make monitor-up` / `make monitor-check`）；服务端会话与前端会话栏已落地（`/sessions` + `ChatRequest.session_id` + 左侧侧栏）。
+> 当前基线：**568 项测试、CI 全绿**；`milvus 2.5.4 + 服务端稀疏 BM25`；28 chunks；备份/恢复脚本已落地（`make backup` / `make restore`）；监控栈已落地（`make monitor-up` / `make monitor-check`）；服务端会话与前端会话栏已落地（`/sessions` + `ChatRequest.session_id` + 左侧侧栏）；`/chat/stream` 客户端断开即取消上游 LLM 调用。
 > 容器化交付已完成（`Dockerfile` / `docker-compose.prod.yml` / `PRODUCTIZATION.md`）。
 > 下面按「对外发布必须先做 → 产品化 → 规模化」排序，每项都有落点与验收方式。
 
@@ -684,11 +684,9 @@ curl -s -X POST localhost:8000/chat -H 'Content-Type: application/json' \
 - [x] 离线登录（不接 IdP）：`AUTH_LOCAL_LOGIN_ENABLED` + `src/local_auth.py`（`hashlib.scrypt`，无新依赖），`POST /auth/login` 签普通 bearer token，token 带 `ver` 支持禁用/改密即时吊销；`scripts/manage_users.py` CLI 与管理台「账号」卡片均可建号；登录按 IP 限流并写审计；`/ui/` 补登录框与 `Authorization` 头（此前 jwt 模式下必然 401）；`tests/test_auth_local.py`（55 项）
 - [x] 浏览器 OIDC 登录：`/auth/login`（HMAC 签名 `state`）→ `/auth/callback`（code 换 token，校验 `id_token`）→ `/admin#token=...`；JWKS 模式复用 provider `id_token`，共享密钥模式重新签发；管理台读取 fragment 后立即清理地址栏，`next` 只接受站内路径；`/info.oidc_login` 控制 SSO 按钮，`tests/test_auth_oidc.py` 覆盖状态篡改、跨站 `next`、脚本转义、token 交换失败
 
-#### 11.1.2 多租户（做 SaaS 才需要）
-- [ ] chunk 增加 `tenant` 元数据；检索表达式 `tenant == 'x' and dept in [...]`
-- [ ] 选定隔离策略：共享集合 + tenant 过滤，或一租户一集合
-- [ ] 需全量重建索引（Milvus schema 变更），先备份
-- [ ] 验收：跨租户检索 0 泄漏；管理台按租户隔离
+#### 11.1.2 多租户（不做：2026-11-14 决定改为单机部署）
+- 已取消：单机部署不需要 `tenant` 维度；支持的隔离模型仍是「部门过滤 + 可选文档 ACL」。
+- 历史方案见 `PRODUCTIZATION.md` §2.2，仅作参考，不再排期。
 
 #### 11.1.3 发布流程
 - [x] `CHANGELOG.md`（Keep a Changelog 格式，`1.0.0` 已记录全部既有能力）
@@ -716,23 +714,22 @@ curl -s -X POST localhost:8000/chat -H 'Content-Type: application/json' \
 
 ### 11.2 P1 产品化与稳定性
 
-#### 11.2.1 告警（已完成 2026-11-10）
+#### 11.2.1 告警（已完成 2026-11-14）
 - [x] Prometheus 抓取 `/metrics` + Grafana 面板：`docker-compose.monitoring.yml` + `monitoring/`（Prometheus/blackbox/Grafana，`make monitor-up|monitor-down|monitor-check`），预置「Agent RAG」面板（请求量/错误率/P95/首 token/缓存命中/索引块数/就绪/引擎）
 - [x] 告警项（`monitoring/prometheus/alerts.yml`）：`AgentRagErrorRate`（5 分钟错误率 >5%）、`AgentRagCacheHitDrop`（10 分钟命中率低于 1 小时基线一半）、`AgentRagIndexEmpty`（`agent_rag_index_chunks == 0` 持续 5 分钟）、`AgentRagHealthDown`（blackbox 探测 `/health` 连续 3 次非 2xx）、`AgentRagMetricsDown`、`AgentRagMaintenanceStuck`
 - [x] 离线校验：`scripts/check_monitoring.py`（检查告警/面板引用的 `agent_rag_*` 指标都存在于 `src/metrics.py`，有 promtool 时额外跑 `promtool check rules`），`tests/test_monitoring.py`（7 项）
-- [ ] 告警通知落地：Alertmanager + 邮件/Slack/Webhook 路由
-- [ ] 日志接入 Loki/ELK（`request_id` 已贯穿）
+- [x] 告警通知落地：Alertmanager（`docker-compose.monitoring.yml`，`127.0.0.1:9093`）接收 Prometheus `alerting` 转发；`scripts/render_alertmanager.py`（`make monitor-config`，`monitor-up`/`monitor-check` 也会执行）从 `.env` 渲染 gitignored 的 `monitoring/alertmanager/alertmanager.yml`——邮件（`ALERTMANAGER_EMAIL_TO` + SMTP，密码放 `monitoring/alertmanager/smtp_password`）、Slack、通用 Webhook 三类渠道按需开启，全未配置时落到 `noop` 接收器；分组 `alertname`+`severity`，`AgentRagMetricsDown` 抑制同一实例的派生告警；`amtool check-config` 可用时额外校验
+- [x] 日志接入 Loki：`monitoring/loki/loki.yml`（单节点 tsdb、`LOKI_RETENTION` 默认 720h、compactor 清理）+ `monitoring/promtail/promtail.yml`（Docker socket 发现、只保留 `agent-rag-*`、解 json-file 信封、label `container`/`service`/`stream`）；Grafana 增加 `loki` 数据源与「Application logs (Loki)」面板（`{service="app"}`，可用 `|= "<request_id>"` 追单请求）；`DOCKER_SOCKET`/`DOCKER_CONTAINERS_DIR` 适配 rootless/远程 daemon，Promtail 可单独不启动；`request_id` 在应用日志与 `X-Request-ID` 中贯穿
 
-#### 11.2.2 配额与计费
-- [ ] 统计 `user`/`tenant` 的 token 与请求数（落库，不只存进程内）
-- [ ] 与限流同位置做配额检查（`chat_service.prepare`）
-- [ ] 只对成功完成的 LLM 调用计费（失败/降级不计）
+#### 11.2.2 配额与计费（不做：2026-11-14 决定改为单机部署）
+- 已取消：单机部署不对外售卖调用量，保留 `RATE_LIMIT_PER_MINUTE` 与 `CHAT_TIMEOUT` 作为资源保护即可。
+- 历史方案见 `PRODUCTIZATION.md` §2.3，仅作参考，不再排期。
 
 #### 11.2.3 前端产品化
 - [x] Markdown 渲染（安全子集：粗体/斜体/列表/表格/代码块/引用/链接，禁 HTML）：`static/markdown.js` 先转义再产标签，链接仅放行 `http(s)`/`mailto`，`javascript:`/`data:`/相对路径保持为纯文本；流式期间仍用纯文本，结束后一次性渲染；`tests/test_markdown_js.py`（17 项）用 Node 断言转义与链接白名单
 - [x] 中英文切换：`static/i18n.js` 覆盖聊天页与管理台，默认跟随浏览器语言、`localStorage` 记忆；`tests/test_i18n_js.py`
 - [x] 服务端会话列表与历史：`static/index.html` 左侧会话栏（新建/切换/删除/刷新），请求带 `session_id` 且不再发送本地 `history`；刷新后按 `localStorage` 记住的 id 从 `/sessions/{id}` 恢复；`/info` 暴露 `sessions_enabled`/`history_max_messages`，关闭时回退到原有 localStorage 历史；`static/sessions.js` 负责请求体构造，`tests/test_sessions_js.py`（5 项）与 `tests/test_ui_sessions.py`（3 项）校验
-- [ ] 引用点击预览原文；移动端适配
+- [x] 引用点击预览原文：`GET /sources/content`（`src/sources_api.py`）按 `source` + page/slide/sheet 从向量库取回完整 chunk 文本，先在引擎内做部门过滤、再做 ACL，最后返回；前端点击来源条目弹窗展示（`static/sources.js` 构造查询串），`textContent` 渲染避免注入；手机端改用 `100dvh`、safe-area 内边距、全屏弹窗、16px 输入框（避免 iOS 缩放）、预设问题横向滚动。`tests/test_sources_api.py`（10 项）+ `tests/test_sources_js.py`（4 项）+ `tests/test_ui_sources.py`（2 项）
 
 #### 11.2.4 服务端会话存储（已完成 2026-11-10）
 - [x] 会话表 + 消息表（role/content/sources/degraded）：`src/sessions.py`（SQLite，`SESSIONS_DB_PATH`，默认 `./logs/sessions.db`；`SESSIONS_ENABLED` 可关）；`POST/GET/DELETE /sessions`，`ChatRequest.session_id` 带上后服务端拥有完整对话，请求体只传当前消息
@@ -740,10 +737,12 @@ curl -s -X POST localhost:8000/chat -H 'Content-Type: application/json' \
 - [x] 验收：连续 20 轮请求体不再线性增长（`tests/test_sessions.py::test_twenty_turn_requests_stay_bounded`，模型输入始终 ≤ 窗口 + 当前问题）
 - [x] 隔离与持久化：会话按 `user_id` 校验归属，跨用户 404；`logs/` 已挂载并纳入 `make backup`
 
-#### 11.2.5 客户端断开即取消
-- [ ] 现状：客户端断开后同步 LLM 调用仍会跑完
-- [ ] 方案：异步 LLM 客户端或协作式取消检查
-- [ ] 验收：断开后 1 秒内停止上游调用（看日志/指标）
+#### 11.2.5 客户端断开即取消（已完成 2026-11-13）
+- [x] 现状：客户端断开后同步 LLM 调用仍会跑完
+- [x] 方案：`src/agent.py` 增加 `call_model_async`（`llm.ainvoke`）与 `app_async` 图；`/chat/stream` 改用 `agent_async_app.astream` 异步生成器，Starlette 断开时取消响应任务，取消沿 LangGraph 传到 httpx，上游请求真正中止
+- [x] 断开时既不写 FAQ 缓存也不落会话；新增 `agent_rag_chat_cancelled_total{endpoint}` 与 `agent_rag_chat_requests_total{status="cancelled"}`（不算 error，避免错误率告警误报）
+- [x] 验收：`tests/test_stream_cancel.py`（2 项）用慢速 `ainvoke` 模拟断开，断言上游调用被取消、会话无残留、缓存无条目、取消指标出现；全套 **539 passed**
+- [x] 已知限制：`/chat`（非流式）仍是同步线程池调用，客户端断开无法打断已在执行的 LLM 请求；只有 `/chat/stream` 保证 1 秒内中止
 
 ### 11.3 P2 规模化（按需，未到规模前不做）
 
@@ -763,9 +762,12 @@ curl -s -X POST localhost:8000/chat -H 'Content-Type: application/json' \
 3. ~~11.1.4 备份与恢复演练~~（已完成：脚本 + 双后端沙箱演练）
 4. ~~11.2.1 告警~~（已完成：Prometheus + blackbox + Grafana + 6 条规则）
 5. ~~11.2.4 服务端历史~~（已完成：SQLite + `/sessions` + 超窗口摘要）
-6. ~~11.2.3 前端会话列表~~（已完成：左侧会话栏 + `session_id` + 刷新恢复）→ 11.2.5 断开即取消
-7. 做 SaaS 时：11.1.2 多租户 → 11.2.2 计费
-8. 11.3 全部按需，触发条件写在每项里
+6. ~~11.2.3 前端会话列表~~（已完成：左侧会话栏 + `session_id` + 刷新恢复）
+7. ~~11.2.5 断开即取消~~（已完成：async 节点 + `app_async`，`/chat/stream` 断开中止上游调用）
+8. ~~11.2.3 剩余体验项（引用点击预览、移动端细节）~~（已完成：`/sources/content` + 弹窗预览 + 手机端布局）
+9. ~~11.2.1 剩余（Alertmanager 通知路由 + Loki 日志）~~（已完成：`make monitor-config` + 三渠道路由 + Loki/Promtail + 日志面板）
+10. ~~11.1.2 多租户 / 11.2.2 配额与计费~~（已取消：2026-11-14 决定单机部署，11.3 规模化项默认不做）；运维侧待排期：真实 IdP 登录、每季度恢复演练
+10. 11.3 全部按需，触发条件写在每项里
 
 ### 11.4.1 开工记录（2026-11-09 已完成 11.1.4）
 
@@ -777,13 +779,20 @@ curl -s -X POST localhost:8000/chat -H 'Content-Type: application/json' \
 - [x] 演练：备份 → 移走目录 → 恢复 → `verify_retrieval.py` + 双后端 `eval_retrieval.py` 通过（FAISS 与 Milvus 均 18/18、MRR 0.89、leaks 0）
 - [x] `WORKLOG.md` 记录演练耗时与恢复后的 eval 数字
 
-**11.2.1 已完成（2026-11-10）。** `docker-compose.monitoring.yml` 拉起 Prometheus + blackbox_exporter + Grafana，加入 `agent-rag-prod` 网络；`monitoring/prometheus/alerts.yml` 落地 6 条规则（错误率、缓存命中骤降、空索引、`/health` 非 2xx、抓取失败、重建卡住）；Grafana 预置「Agent RAG」面板；`scripts/check_monitoring.py` 校验配置与指标名一致（无 promtool 也可跑），`tests/test_monitoring.py` 7 项。剩余：Alertmanager 通知路由、Loki/ELK 日志。
+**11.2.1 已完成（2026-11-10）。** `docker-compose.monitoring.yml` 拉起 Prometheus + blackbox_exporter + Grafana，加入 `agent-rag-prod` 网络；`monitoring/prometheus/alerts.yml` 落地 6 条规则（错误率、缓存命中骤降、空索引、`/health` 非 2xx、抓取失败、重建卡住）；Grafana 预置「Agent RAG」面板；`scripts/check_monitoring.py` 校验配置与指标名一致（无 promtool 也可跑），`tests/test_monitoring.py` 7 项。通知路由与日志接入已于 2026-11-14 补齐，见下方记录。
 
 **11.2.4 已完成（2026-11-10）。** SQLite 会话/消息表 + `/sessions` CRUD + `ChatRequest.session_id`；超过 2×窗口自动生成 running summary，失败降级为只保留最近窗口；会话按 `user_id` 隔离，`logs/` 已纳入备份；`tests/test_sessions.py` 13 项。
 
 **11.2.3 已完成（2026-11-10）。** 聊天页增加左侧会话栏：`新对话`、点击切换、`×` 删除（带确认）、语言切换后重绘；首轮消息懒创建会话，后续请求只带 `session_id`，由 `static/sessions.js` 决定请求体；刷新后按 `localStorage` 的 id 调 `/sessions/{id}` 恢复 transcript（含来源与降级标记），404 时静默回到新对话；移动端侧栏改为抽屉。`/info` 新增 `sessions_enabled`/`history_max_messages`，`SESSIONS_ENABLED=false` 时隐藏侧栏并回退到原 localStorage 历史。`tests/test_sessions_js.py` 5 项 + `tests/test_ui_sessions.py` 3 项，全套 **537 passed**。
 
-下一项：**11.2.5 客户端断开即取消** → 11.2.3 剩余体验项（引用点击预览、移动端细节）。
+**11.2.5 已完成（2026-11-13）。** `src/agent.py` 把检索/提示词组装抽成 `_prepare_turn`，新增 `call_model_async`（`await llm.ainvoke`）并编译出 `app_async`；`/chat` 继续用同步 `app`（线程池），`/chat/stream` 改走 `app_async.astream`。实测发现：uvicorn/Starlette 用 anyio cancel scope 取消流式响应，取消落在外层生成器的 `yield` 上时**不会**传进嵌套在另一个 async generator 里的 LangGraph 图（上游 3 秒的假请求照常跑完）；因此 `chat_service._astream` 改为「生产者任务 + 队列」：图在独立 `asyncio` task 里跑，外层只转发帧，断开时显式 `producer.cancel()`，取消这才传到 `ainvoke` 并中止 httpx 请求（实测断开后 0.93 秒服务端看到连接关闭）。`_astream` 捕获 `CancelledError`/`GeneratorExit` 后记录 `agent_rag_chat_cancelled_total{endpoint}` 与 `status="cancelled"` 请求计数（不混入 error，避免错误率告警误报），不写缓存、不落会话，然后重新抛出以继续取消。`tests/test_stream_cancel.py` 两项覆盖真实异步图（`asyncio.create_task` + `cancel()`）与 `aclose()` 两条路径（后者断言生产者确实取消了图）；`tests/test_api.py` 的 StubLLM 补 `ainvoke`。全套 **539 passed**。
+已知限制：`/chat` 缺少可中断的异步执行，结束前客户端断开仍会让线程跑完；只有 `/chat/stream` 满足「1 秒内停止上游调用」。
+
+**11.2.3 剩余项已完成（2026-11-14）。** 新增 `GET /sources/content`（`src/sources_api.py`）：按 `source` + 可选 page/slide/sheet 从向量库取回完整 chunk（最多 12 段 / 2 万字符，超出标记 `truncated`），部门过滤在引擎内完成（Milvus `expr` / FAISS 后过滤），ACL 随后应用，未命中或越权统一 404；`CHAT_API_KEY` 与 `/chat` 共用守卫（抽到 `src/api_access.py`）。前端点击来源条目打开弹窗，`static/sources.js` 负责构造查询串并由 Node 单测覆盖；内容用 `textContent` 渲染。手机端补 `100dvh`、safe-area、全屏预览、16px 输入与横向滚动预设。测试：`test_sources_api.py` 10 项 + `test_sources_js.py` 4 项 + `test_ui_sources.py` 2 项，全套 **555 passed**。
+
+**11.2.1 剩余项已完成（2026-11-14）。** Alertmanager 作为独立服务加入监控栈（`127.0.0.1:9093`），Prometheus `prometheus.yml` 通过 `alerting` 转发；`scripts/render_alertmanager.py` 从 `.env`/环境渲染到 gitignored 的 `monitoring/alertmanager/alertmanager.yml`，邮件/Slack/Webhook 三渠道按变量开启，缺 SMTP 主机或密码时直接报错，全部未配置时用 `noop` 接收器保证配置合法；路由对 `critical|warning` 全渠道分发（`continue: true`），分组 `alertname`+`severity`，并用 inhibit 规则让 `AgentRagMetricsDown` 压掉同实例的错误率/缓存/重建派生告警。日志侧新增 `promtail`（Docker socket 发现、只保留 `agent-rag-*`、解 json-file 信封、label `container`/`service`/`stream`）与单节点 `loki`（tsdb、`LOKI_RETENTION` 默认 720h、compactor 清理）；Grafana 增加 `loki` 数据源与日志面板，`|= "<request_id>"` 可追踪单请求。`scripts/check_monitoring.py` 从 28 项扩到 42 项（含渲染、路由引用、日志采集、compose 挂载与回环端口），`tests/test_monitoring.py` 从 7 项扩到 20 项，全套 **568 passed**。已知限制：Promtail 依赖 Docker socket 与 `/var/lib/docker/containers`，rootless/远程 daemon 需覆盖 `DOCKER_SOCKET`/`DOCKER_CONTAINERS_DIR`；只采集容器 stdout，应用未额外写文件日志。
+
+下一项：**1.1.0 发布（合并 PR → 打 tag → 构建镜像）**；之后无新功能排期，运维待排期：真实 IdP 登录、每季度恢复演练。
 
 演练环境注意：Docker/colima 只共享 `$HOME`，不要把演练卷放在 `/tmp`（容器里会看到空目录，误判为恢复失败）。
 

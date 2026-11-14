@@ -10,8 +10,19 @@ three agree before you push a tag.
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-11-14
+
 ### Added
 
+- **Citation preview**: clicking a citation in the chat UI opens a modal with the
+  full indexed text behind it instead of the truncated 220-character snippet.
+  `GET /sources/content` resolves `source` plus page/slide/sheet through the
+  vector store (both backends), filters by the caller's departments *inside* the
+  store and then by the document ACL, and is gated by `CHAT_API_KEY` like
+  `/chat`. Preview text is rendered with `textContent`, so indexed content
+  cannot inject HTML. The chat page also adapts to phones (`100dvh`,
+  safe-area insets, full-screen preview, 16px input to avoid iOS zoom,
+  horizontally scrollable presets).
 - **Backup and restore**: `scripts/backup.py` archives `data/`, `config/`
   (local accounts and ACL rules), `logs/` and the live vector store into a
   timestamped `tar.gz` with `manifest.json`, per-file `SHA256SUMS` and a
@@ -55,11 +66,44 @@ three agree before you push a tag.
   `make monitor-down`; `make monitor-check` validates every config file
   offline and ensures each `agent_rag_*` metric in the rules/dashboard exists
   in `src/metrics.py`. See `monitoring/README.md`.
+- **Alert delivery**: Prometheus forwards firing alerts to an Alertmanager
+  service (`127.0.0.1:9093`). Delivery channels are opt-in via `.env` — email
+  (`ALERTMANAGER_EMAIL_TO` + SMTP settings, password in the gitignored
+  `monitoring/alertmanager/smtp_password`), Slack (`ALERTMANAGER_SLACK_WEBHOOK_URL`)
+  and a generic webhook (`ALERTMANAGER_WEBHOOK_URL`); with none configured a
+  `noop` receiver keeps the config valid. `scripts/render_alertmanager.py`
+  (`make monitor-config`, also run by `monitor-up`/`monitor-check`) renders the
+  gitignored `alertmanager.yml` and refuses an incomplete email setup.
+  Grouping is `alertname`+`severity`; `AgentRagMetricsDown` inhibits the alerts
+  derived from the same app metrics so an unreachable instance is not repeated.
+- **Log shipping**: Loki (single node, tsdb, `LOKI_RETENTION` default 30 days)
+  plus Promtail, which discovers `agent-rag-*` containers through the Docker
+  socket, keeps their json-file logs and labels them with
+  `container`/`service`/`stream`. Grafana provisions a Loki datasource and the
+  dashboard gains an "Application logs (Loki)" panel (`{service="app"}`); use
+  `|= "<request_id>"` to trace a failing request. `DOCKER_SOCKET` /
+  `DOCKER_CONTAINERS_DIR` cover non-default daemons, and Promtail can be
+  started alone or omitted without affecting metrics and alerts.
+- **Stream cancellation on disconnect**: `/chat/stream` now runs the graph's
+  async node (`src/agent.py`: `call_model_async` / `app_async` with
+  `llm.ainvoke`). When the client closes the page or drops the connection,
+  Starlette cancels the response task and that cancellation reaches the
+  in-flight LLM request, which is aborted instead of generating an answer
+  nobody will read. A cancelled turn is neither cached nor stored in the
+  server-side session, and it is counted separately
+  (`agent_rag_chat_cancelled_total{endpoint}` and
+  `agent_rag_chat_requests_total{status="cancelled"}`) so the error-rate
+  alert is not triggered by users navigating away. `/chat` remains
+  synchronous and cannot interrupt a call already in flight.
 
 ### Changed
 
 - `make run` binds the API to `127.0.0.1` by default; put a reverse proxy in
   front when the service must be reachable from other hosts.
+- **Project scope is single-machine deployment**: SaaS multi-tenancy,
+  per-tenant quotas and billing are out of scope. The existing department
+  isolation, document ACL, authentication and backup/restore remain the
+  supported isolation and operations model.
 
 ## [1.0.0] - 2026-11-01
 
@@ -137,5 +181,6 @@ API surface below is what operators can rely on.
 - Multi-tenancy (`tenant` metadata) is not implemented.
 - The ACL is a static JSON file without read/write/download distinctions.
 
-[Unreleased]: https://github.com/sjfdev/agent-rag/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/sjfdev/agent-rag/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/sjfdev/agent-rag/releases/tag/v1.1.0
 [1.0.0]: https://github.com/sjfdev/agent-rag/releases/tag/v1.0.0

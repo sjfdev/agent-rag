@@ -18,6 +18,10 @@ logs/
 backups/
 # Bearer token for the /metrics scrape (only needed when METRICS_TOKEN is set).
 monitoring/prometheus/metrics_token
+# Alertmanager config is rendered from .env: it contains SMTP/Slack secrets.
+monitoring/alertmanager/alertmanager.yml
+monitoring/alertmanager/alertmanager.yml.tmp
+monitoring/alertmanager/smtp_password
 
 # OS / editor
 .DS_Store

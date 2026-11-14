@@ -114,6 +114,24 @@ class BaseVectorStore(ABC):
     def list_depts(self) -> Set[str]:
         """Departments that currently have at least one indexed chunk."""
 
+    def fetch_source_chunks(
+        self,
+        source: str,
+        depts,
+        *,
+        page: Optional[int] = None,
+        slide: Optional[int] = None,
+        sheet: Optional[str] = None,
+        limit: int = 8,
+    ) -> List[Document]:
+        """Chunks of one source within `depts`, ordered by `chunk_index`.
+
+        Backs the citation preview. The department filter must be applied before
+        anything is returned, so a preview can never cross a department
+        boundary even if the caller guesses another department's source path.
+        """
+        raise NotImplementedError
+
     def hybrid_search(
         self, query: str, user_dept, k: int, candidates: int
     ) -> Optional[List[Document]]:
@@ -244,6 +262,17 @@ def dept_filter(depts) -> str:
     if len(safe) == 1:
         return f"dept == '{safe[0]}'"
     return "dept in [" + ", ".join(f"'{dept}'" for dept in safe) + "]"
+
+
+def _quote_expr(value: str) -> str:
+    """Double-quoted Milvus string literal."""
+    escaped = str(value).replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{escaped}"'
+
+
+# A single page/sheet rarely has more chunks than this; the bound keeps a
+# preview from loading an entire large document while still allowing sorting.
+_PREVIEW_SCAN_LIMIT = 200
 
 
 def _inspect_milvus(collection: str, sparse_field: str) -> MilvusCapabilities:
@@ -567,6 +596,43 @@ class MilvusDriver(BaseVectorStore):
             return {row["dept"] for row in res if row.get("dept")}
         except Exception:
             return set()
+
+    def fetch_source_chunks(
+        self,
+        source: str,
+        depts,
+        *,
+        page: Optional[int] = None,
+        slide: Optional[int] = None,
+        sheet: Optional[str] = None,
+        limit: int = 8,
+    ) -> List[Document]:
+        if not source:
+            return []
+        limit = max(1, min(int(limit or 8), 50))
+        clauses = [dept_filter(depts), f"source == {_quote_expr(source)}"]
+        if page is not None:
+            clauses.append(f"page == {int(page)}")
+        if slide is not None:
+            clauses.append(f"slide == {int(slide)}")
+        if sheet:
+            clauses.append(f"sheet == {_quote_expr(sheet)}")
+        try:
+            rows = self._query_in(
+                self.collection,
+                " and ".join(clauses),
+                self._FETCH_FIELDS,
+                _PREVIEW_SCAN_LIMIT,
+            )
+        except Exception:
+            logger.warning("failed to fetch source preview", exc_info=True)
+            return []
+        docs: List[Document] = []
+        for row in rows:
+            text = row.pop("text", "")
+            docs.append(Document(page_content=text, metadata=row))
+        docs.sort(key=lambda doc: int(doc.metadata.get("chunk_index") or 0))
+        return docs[:limit]
 
     def _query_in(self, collection: str, expr: str, fields: List[str], limit: int):
         client = self.vector_db.client
@@ -926,6 +992,35 @@ class FAISSDriver(BaseVectorStore):
             if doc.metadata.get("dept")
         }
 
+    def fetch_source_chunks(
+        self,
+        source: str,
+        depts,
+        *,
+        page: Optional[int] = None,
+        slide: Optional[int] = None,
+        sheet: Optional[str] = None,
+        limit: int = 8,
+    ) -> List[Document]:
+        if not source:
+            return []
+        limit = max(1, min(int(limit or 8), 50))
+        allowed = _allowed_depts(depts)
+        matched = []
+        for doc in self._docs().values():
+            meta = doc.metadata or {}
+            if meta.get("dept") not in allowed or meta.get("source") != source:
+                continue
+            if page is not None and meta.get("page") != page:
+                continue
+            if slide is not None and meta.get("slide") != slide:
+                continue
+            if sheet is not None and (meta.get("sheet") or "") != sheet:
+                continue
+            matched.append(doc)
+        matched.sort(key=lambda doc: int(doc.metadata.get("chunk_index") or 0))
+        return matched[:limit]
+
     def get_doc_hash(self, doc_id: str) -> Optional[str]:
         for doc in self._write_docs().values():
             if doc.metadata.get("doc_id") == doc_id:
@@ -1108,6 +1203,25 @@ class KnowledgeBaseEngine:
 
     def list_depts(self) -> Set[str]:
         return self.driver.list_depts()
+
+    def fetch_source_chunks(
+        self,
+        source: str,
+        depts,
+        *,
+        page: Optional[int] = None,
+        slide: Optional[int] = None,
+        sheet: Optional[str] = None,
+        limit: int = 8,
+    ) -> List[Document]:
+        return self.driver.fetch_source_chunks(
+            source,
+            depts,
+            page=page,
+            slide=slide,
+            sheet=sheet,
+            limit=limit,
+        )
 
     @property
     def hybrid_mode(self) -> str:

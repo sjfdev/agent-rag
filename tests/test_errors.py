@@ -1,5 +1,7 @@
 """Shared error classification and the request deadline."""
 
+import asyncio
+import json
 import time
 
 import pytest
@@ -12,6 +14,13 @@ from src.schemas import ChatRequest
 
 def _request(message="hi"):
     return ChatRequest(user_id="u1", user_dept="Tech", message=message)
+
+
+def _drain(frames):
+    async def run():
+        return [frame async for frame in frames]
+
+    return asyncio.run(run())
 
 
 def test_store_errors():
@@ -76,21 +85,19 @@ def test_chat_timeout_disabled_invokes_directly(monkeypatch):
 
 def test_stream_deadline_emits_timeout_error(monkeypatch):
     class Slow:
-        def stream(self, *args, **kwargs):
+        async def astream(self, *args, **kwargs):
             from langchain_core.messages import AIMessage
 
             yield ("messages", (AIMessage(content="first"), {"langgraph_node": "agent"}))
-            time.sleep(1.2)
+            await asyncio.sleep(1.2)
             yield ("messages", (AIMessage(content="late"), {"langgraph_node": "agent"}))
             yield ("values", {"messages": [], "sources": []})
 
-    monkeypatch.setattr(chat_service, "agent_app", Slow())
+    monkeypatch.setattr(chat_service, "agent_async_app", Slow())
     monkeypatch.setattr(settings, "CHAT_TIMEOUT", 1)
     try:
         _, frames = chat_service.open_stream(_request("slow"), {})
-        import json
-
-        events = [json.loads(frame[6:]) for frame in frames]
+        events = [json.loads(frame[6:]) for frame in _drain(frames)]
         assert events[0]["content"] == "first"
         assert events[-1]["type"] == "error"
         assert events[-1]["code"] == "timeout"

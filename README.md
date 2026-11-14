@@ -50,7 +50,7 @@ docker compose -f docker-compose.prod.yml up -d --build
 docker compose -f docker-compose.prod.yml exec app python run_ingestion.py
 ```
 
-完整步骤与排错见 **[QUICKSTART.md](QUICKSTART.md)**；要把它做成对外产品（登录、多租户、计费、发布流程），见 **[PRODUCTIZATION.md](PRODUCTIZATION.md)**。
+完整步骤与排错见 **[QUICKSTART.md](QUICKSTART.md)**；单机交付、登录、可观测性与发布流程见 **[PRODUCTIZATION.md](PRODUCTIZATION.md)**（已取消 SaaS 多租户/计费方向）。
 
 ## 接口
 
@@ -83,8 +83,8 @@ Python 3.11 · FastAPI · LangGraph / LangChain · FAISS / Milvus 2.5.4 · sente
 | [AGENT_GUIDE.md](AGENT_GUIDE.md) | 完整使用说明、配置项、FAQ、性能调优 |
 | [DEPLOYMENT_CN.md](DEPLOYMENT_CN.md) / [DEPLOYMENT.md](DEPLOYMENT.md) | 私有化部署 |
 | [WORKLOG.md](WORKLOG.md) | 迭代记录、基准数据、验证矩阵 |
-| [OPTIMIZATION_PLAN.md](OPTIMIZATION_PLAN.md) | 待办清单（第 10 节为当前计划） |
-| [PRODUCTIZATION.md](PRODUCTIZATION.md) | 打包发布、登录/多租户/计费路线图 |
+| [OPTIMIZATION_PLAN.md](OPTIMIZATION_PLAN.md) | 待办清单（第 11 节为当前计划） |
+| [PRODUCTIZATION.md](PRODUCTIZATION.md) | 单机部署交付、身份/可观测性/备份路线图 |
 | [AGENTS.md](AGENTS.md) | 协作约定与常用命令 |
 
 ## 已知限制

@@ -1,7 +1,7 @@
 import logging
 import re
 import time
-from typing import Annotated, Any, Dict, List, TypedDict
+from typing import Annotated, Any, Dict, List, Optional, TypedDict
 
 from langchain_core.messages import (
     AIMessage,
@@ -157,8 +157,12 @@ def _fallback_answer(sources: List[Dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
-def call_model(state: AgentState):
-    """Retrieve permission-filtered context, then let the LLM answer or call a tool."""
+def _prepare_turn(state: AgentState):
+    """Retrieve permission-filtered context and assemble the prompt.
+
+    Shared by the sync and async nodes so `/chat` and `/chat/stream` always
+    retrieve the same documents for the same request.
+    """
     messages = state["messages"]
     dept = state["user_dept"]
     depts = state.get("user_depts") or [dept]
@@ -174,6 +178,7 @@ def call_model(state: AgentState):
 
     # Deterministic first-stage retrieval: permissions come from state, not the LLM.
     already_retrieved = any(isinstance(m, ToolMessage) for m in messages)
+    sources: List[Dict[str, Any]] = []
     if not already_retrieved:
         query = _retrieval_query(messages)
         t_search = time.perf_counter()
@@ -194,7 +199,6 @@ def call_model(state: AgentState):
             time.perf_counter() - t_search
         ) * 1000
         timings["retrieval_calls"] = timings.get("retrieval_calls", 0) + 1
-        sources: List[Dict[str, Any]] = []
         seen = set()
         blocks = []
         for doc in docs:
@@ -272,38 +276,23 @@ def call_model(state: AgentState):
             )
         )
 
-    t_llm = time.perf_counter()
-    try:
-        response = llm.invoke(prompt + messages)
-    except Exception as exc:
-        timings["llm_ms"] = timings.get("llm_ms", 0.0) + (
-            time.perf_counter() - t_llm
-        ) * 1000
-        # Degrade only when this request already retrieved context: the user
-        # still gets a factual (if terse) answer with citations.
-        if (
-            settings.LLM_FALLBACK_ENABLED
-            and not already_retrieved
-            and sources
-            and is_transport_error(exc)
-        ):
-            logger.warning(
-                "llm unavailable (%s); answering from %d excerpt(s)",
-                type(exc).__name__,
-                len(sources),
-            )
-            return {
-                "messages": [AIMessage(content=_fallback_answer(sources))],
-                "sources": sources,
-                "degraded": True,
-                "degraded_reason": "llm_unavailable",
-                "timings": timings,
-            }
-        raise
+    return prompt, sources, timings, already_retrieved
 
+
+def _add_llm_time(timings: Dict[str, Any], started: float) -> None:
     timings["llm_ms"] = timings.get("llm_ms", 0.0) + (
-        time.perf_counter() - t_llm
+        time.perf_counter() - started
     ) * 1000
+
+
+def _finish_turn(
+    response: BaseMessage,
+    sources: List[Dict[str, Any]],
+    timings: Dict[str, Any],
+    already_retrieved: bool,
+    llm_started: float,
+) -> Dict[str, Any]:
+    _add_llm_time(timings, llm_started)
     timings["llm_calls"] = timings.get("llm_calls", 0) + 1
 
     update: Dict[str, Any] = {"messages": [response], "timings": timings}
@@ -312,10 +301,72 @@ def call_model(state: AgentState):
     return update
 
 
-workflow = StateGraph(AgentState)
-workflow.add_node("agent", call_model)
-workflow.add_node("tools", ToolNode(agent_tools))
-workflow.set_entry_point("agent")
+def _fallback_update(
+    sources: List[Dict[str, Any]],
+    timings: Dict[str, Any],
+    already_retrieved: bool,
+    exc: Exception,
+) -> Optional[Dict[str, Any]]:
+    """Answer from the excerpts when the LLM is unreachable, else None.
+
+    Degrade only when this request already retrieved context: the user still
+    gets a factual (if terse) answer with citations.
+    """
+    if not (
+        settings.LLM_FALLBACK_ENABLED
+        and not already_retrieved
+        and sources
+        and is_transport_error(exc)
+    ):
+        return None
+    logger.warning(
+        "llm unavailable (%s); answering from %d excerpt(s)",
+        type(exc).__name__,
+        len(sources),
+    )
+    return {
+        "messages": [AIMessage(content=_fallback_answer(sources))],
+        "sources": sources,
+        "degraded": True,
+        "degraded_reason": "llm_unavailable",
+        "timings": timings,
+    }
+
+
+def call_model(state: AgentState):
+    """Sync node used by `/chat`: retrieve, then answer or call a tool."""
+    prompt, sources, timings, already_retrieved = _prepare_turn(state)
+    llm_started = time.perf_counter()
+    try:
+        response = llm.invoke(prompt + state["messages"])
+    except Exception as exc:
+        _add_llm_time(timings, llm_started)
+        fallback = _fallback_update(sources, timings, already_retrieved, exc)
+        if fallback is not None:
+            return fallback
+        raise
+    return _finish_turn(response, sources, timings, already_retrieved, llm_started)
+
+
+async def call_model_async(state: AgentState):
+    """Async node used by `/chat/stream`.
+
+    `ainvoke` keeps the HTTP request inside the response task, so when the
+    client disconnects and the ASGI server cancels that task (Starlette does
+    for StreamingResponse), the upstream LLM call is aborted instead of
+    running to completion for an answer nobody will read.
+    """
+    prompt, sources, timings, already_retrieved = _prepare_turn(state)
+    llm_started = time.perf_counter()
+    try:
+        response = await llm.ainvoke(prompt + state["messages"])
+    except Exception as exc:
+        _add_llm_time(timings, llm_started)
+        fallback = _fallback_update(sources, timings, already_retrieved, exc)
+        if fallback is not None:
+            return fallback
+        raise
+    return _finish_turn(response, sources, timings, already_retrieved, llm_started)
 
 
 def should_continue(state: AgentState):
@@ -325,7 +376,17 @@ def should_continue(state: AgentState):
     return END
 
 
-workflow.add_conditional_edges("agent", should_continue)
-workflow.add_edge("tools", "agent")
+def _build_graph(node):
+    workflow = StateGraph(AgentState)
+    workflow.add_node("agent", node)
+    workflow.add_node("tools", ToolNode(agent_tools))
+    workflow.set_entry_point("agent")
+    workflow.add_conditional_edges("agent", should_continue)
+    workflow.add_edge("tools", "agent")
+    return workflow.compile()
 
-app = workflow.compile()
+
+# `/chat` uses the sync node (FastAPI runs it in a threadpool) and
+# `/chat/stream` uses the async one so a disconnect can cancel the LLM call.
+app = _build_graph(call_model)
+app_async = _build_graph(call_model_async)
