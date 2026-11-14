@@ -684,11 +684,9 @@ curl -s -X POST localhost:8000/chat -H 'Content-Type: application/json' \
 - [x] 离线登录（不接 IdP）：`AUTH_LOCAL_LOGIN_ENABLED` + `src/local_auth.py`（`hashlib.scrypt`，无新依赖），`POST /auth/login` 签普通 bearer token，token 带 `ver` 支持禁用/改密即时吊销；`scripts/manage_users.py` CLI 与管理台「账号」卡片均可建号；登录按 IP 限流并写审计；`/ui/` 补登录框与 `Authorization` 头（此前 jwt 模式下必然 401）；`tests/test_auth_local.py`（55 项）
 - [x] 浏览器 OIDC 登录：`/auth/login`（HMAC 签名 `state`）→ `/auth/callback`（code 换 token，校验 `id_token`）→ `/admin#token=...`；JWKS 模式复用 provider `id_token`，共享密钥模式重新签发；管理台读取 fragment 后立即清理地址栏，`next` 只接受站内路径；`/info.oidc_login` 控制 SSO 按钮，`tests/test_auth_oidc.py` 覆盖状态篡改、跨站 `next`、脚本转义、token 交换失败
 
-#### 11.1.2 多租户（做 SaaS 才需要）
-- [ ] chunk 增加 `tenant` 元数据；检索表达式 `tenant == 'x' and dept in [...]`
-- [ ] 选定隔离策略：共享集合 + tenant 过滤，或一租户一集合
-- [ ] 需全量重建索引（Milvus schema 变更），先备份
-- [ ] 验收：跨租户检索 0 泄漏；管理台按租户隔离
+#### 11.1.2 多租户（不做：2026-11-14 决定改为单机部署）
+- 已取消：单机部署不需要 `tenant` 维度；支持的隔离模型仍是「部门过滤 + 可选文档 ACL」。
+- 历史方案见 `PRODUCTIZATION.md` §2.2，仅作参考，不再排期。
 
 #### 11.1.3 发布流程
 - [x] `CHANGELOG.md`（Keep a Changelog 格式，`1.0.0` 已记录全部既有能力）
@@ -723,10 +721,9 @@ curl -s -X POST localhost:8000/chat -H 'Content-Type: application/json' \
 - [x] 告警通知落地：Alertmanager（`docker-compose.monitoring.yml`，`127.0.0.1:9093`）接收 Prometheus `alerting` 转发；`scripts/render_alertmanager.py`（`make monitor-config`，`monitor-up`/`monitor-check` 也会执行）从 `.env` 渲染 gitignored 的 `monitoring/alertmanager/alertmanager.yml`——邮件（`ALERTMANAGER_EMAIL_TO` + SMTP，密码放 `monitoring/alertmanager/smtp_password`）、Slack、通用 Webhook 三类渠道按需开启，全未配置时落到 `noop` 接收器；分组 `alertname`+`severity`，`AgentRagMetricsDown` 抑制同一实例的派生告警；`amtool check-config` 可用时额外校验
 - [x] 日志接入 Loki：`monitoring/loki/loki.yml`（单节点 tsdb、`LOKI_RETENTION` 默认 720h、compactor 清理）+ `monitoring/promtail/promtail.yml`（Docker socket 发现、只保留 `agent-rag-*`、解 json-file 信封、label `container`/`service`/`stream`）；Grafana 增加 `loki` 数据源与「Application logs (Loki)」面板（`{service="app"}`，可用 `|= "<request_id>"` 追单请求）；`DOCKER_SOCKET`/`DOCKER_CONTAINERS_DIR` 适配 rootless/远程 daemon，Promtail 可单独不启动；`request_id` 在应用日志与 `X-Request-ID` 中贯穿
 
-#### 11.2.2 配额与计费
-- [ ] 统计 `user`/`tenant` 的 token 与请求数（落库，不只存进程内）
-- [ ] 与限流同位置做配额检查（`chat_service.prepare`）
-- [ ] 只对成功完成的 LLM 调用计费（失败/降级不计）
+#### 11.2.2 配额与计费（不做：2026-11-14 决定改为单机部署）
+- 已取消：单机部署不对外售卖调用量，保留 `RATE_LIMIT_PER_MINUTE` 与 `CHAT_TIMEOUT` 作为资源保护即可。
+- 历史方案见 `PRODUCTIZATION.md` §2.3，仅作参考，不再排期。
 
 #### 11.2.3 前端产品化
 - [x] Markdown 渲染（安全子集：粗体/斜体/列表/表格/代码块/引用/链接，禁 HTML）：`static/markdown.js` 先转义再产标签，链接仅放行 `http(s)`/`mailto`，`javascript:`/`data:`/相对路径保持为纯文本；流式期间仍用纯文本，结束后一次性渲染；`tests/test_markdown_js.py`（17 项）用 Node 断言转义与链接白名单
@@ -769,7 +766,7 @@ curl -s -X POST localhost:8000/chat -H 'Content-Type: application/json' \
 7. ~~11.2.5 断开即取消~~（已完成：async 节点 + `app_async`，`/chat/stream` 断开中止上游调用）
 8. ~~11.2.3 剩余体验项（引用点击预览、移动端细节）~~（已完成：`/sources/content` + 弹窗预览 + 手机端布局）
 9. ~~11.2.1 剩余（Alertmanager 通知路由 + Loki 日志）~~（已完成：`make monitor-config` + 三渠道路由 + Loki/Promtail + 日志面板）
-10. 做 SaaS 时：11.1.2 多租户 → 11.2.2 配额与计费；运维侧待排期：真实 IdP 登录、每季度恢复演练
+10. ~~11.1.2 多租户 / 11.2.2 配额与计费~~（已取消：2026-11-14 决定单机部署，11.3 规模化项默认不做）；运维侧待排期：真实 IdP 登录、每季度恢复演练
 10. 11.3 全部按需，触发条件写在每项里
 
 ### 11.4.1 开工记录（2026-11-09 已完成 11.1.4）
@@ -795,7 +792,7 @@ curl -s -X POST localhost:8000/chat -H 'Content-Type: application/json' \
 
 **11.2.1 剩余项已完成（2026-11-14）。** Alertmanager 作为独立服务加入监控栈（`127.0.0.1:9093`），Prometheus `prometheus.yml` 通过 `alerting` 转发；`scripts/render_alertmanager.py` 从 `.env`/环境渲染到 gitignored 的 `monitoring/alertmanager/alertmanager.yml`，邮件/Slack/Webhook 三渠道按变量开启，缺 SMTP 主机或密码时直接报错，全部未配置时用 `noop` 接收器保证配置合法；路由对 `critical|warning` 全渠道分发（`continue: true`），分组 `alertname`+`severity`，并用 inhibit 规则让 `AgentRagMetricsDown` 压掉同实例的错误率/缓存/重建派生告警。日志侧新增 `promtail`（Docker socket 发现、只保留 `agent-rag-*`、解 json-file 信封、label `container`/`service`/`stream`）与单节点 `loki`（tsdb、`LOKI_RETENTION` 默认 720h、compactor 清理）；Grafana 增加 `loki` 数据源与日志面板，`|= "<request_id>"` 可追踪单请求。`scripts/check_monitoring.py` 从 28 项扩到 42 项（含渲染、路由引用、日志采集、compose 挂载与回环端口），`tests/test_monitoring.py` 从 7 项扩到 20 项，全套 **568 passed**。已知限制：Promtail 依赖 Docker socket 与 `/var/lib/docker/containers`，rootless/远程 daemon 需覆盖 `DOCKER_SOCKET`/`DOCKER_CONTAINERS_DIR`；只采集容器 stdout，应用未额外写文件日志。
 
-下一项：**11.2.2 配额与计费（做 SaaS 时）**；运维待排期：真实 IdP 登录、每季度恢复演练。
+下一项：**1.1.0 发布（合并 PR → 打 tag → 构建镜像）**；之后无新功能排期，运维待排期：真实 IdP 登录、每季度恢复演练。
 
 演练环境注意：Docker/colima 只共享 `$HOME`，不要把演练卷放在 `/tmp`（容器里会看到空目录，误判为恢复失败）。
 

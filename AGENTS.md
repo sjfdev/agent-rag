@@ -1,5 +1,7 @@
 # AGENTS.md
 
+**Scope**: single-machine deployment (2026-11-14). Department isolation + optional document ACL are the supported permission model; multi-tenancy, per-tenant quotas and billing are out of scope (`OPTIMIZATION_PLAN.md` §11.1.2/§11.2.2).
+
 ## Core Architecture
 - **Chat flow**: `src/chat_service.py` owns validation, maintenance gating, answer caching, error classification and metrics for both `/chat` and `/chat/stream`; `main.py` only adapts to HTTP. Request/response models live in `src/schemas.py`. `/chat` uses the sync graph node; `/chat/stream` uses an async node (`src/agent.py`: `call_model_async` / `app_async`, `llm.ainvoke`). The stream runs the graph in a producer `asyncio` task and forwards frames from a queue — Starlette cancels streaming responses via an anyio cancel scope, and cancellation thrown at a generator's `yield` does not reach a graph nested inside another async generator, so `_astream` explicitly cancels the producer instead. A cancelled turn is never cached or persisted and is counted as `status="cancelled"` plus `agent_rag_chat_cancelled_total{endpoint}` — deliberately not `status="error"`, so user clicks do not trip the error-rate alert. `/chat` runs in a threadpool, so its in-flight call cannot be interrupted.
 - **RAG Pipeline**: LangGraph $\rightarrow$ Milvus $\rightarrow$ Cross-Encoder Reranker. Answers return `sources` (`source`+`page`) built from retrieval metadata; excerpts are wrapped in `<document>` tags and treated as untrusted data.

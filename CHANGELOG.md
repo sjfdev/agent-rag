@@ -10,6 +10,8 @@ three agree before you push a tag.
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-11-14
+
 ### Added
 
 - **Citation preview**: clicking a citation in the chat UI opens a modal with the
@@ -98,6 +100,10 @@ three agree before you push a tag.
 
 - `make run` binds the API to `127.0.0.1` by default; put a reverse proxy in
   front when the service must be reachable from other hosts.
+- **Project scope is single-machine deployment**: SaaS multi-tenancy,
+  per-tenant quotas and billing are out of scope. The existing department
+  isolation, document ACL, authentication and backup/restore remain the
+  supported isolation and operations model.
 
 ## [1.0.0] - 2026-11-01
 
@@ -175,5 +181,6 @@ API surface below is what operators can rely on.
 - Multi-tenancy (`tenant` metadata) is not implemented.
 - The ACL is a static JSON file without read/write/download distinctions.
 
-[Unreleased]: https://github.com/sjfdev/agent-rag/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/sjfdev/agent-rag/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/sjfdev/agent-rag/releases/tag/v1.1.0
 [1.0.0]: https://github.com/sjfdev/agent-rag/releases/tag/v1.0.0

@@ -5,4 +5,4 @@ Bump this together with a tag: `scripts/check_release.py` compares the three
 ship with a mismatched or unrecorded version.
 """
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
