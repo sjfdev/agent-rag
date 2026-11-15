@@ -704,7 +704,7 @@ curl -s -X POST localhost:8000/chat -H 'Content-Type: application/json' \
 - [x] 演练（隔离沙箱，2026-11-09）：FAISS 恢复后 4 个目录逐字节一致，`verify_retrieval.py` OK、`eval_retrieval.py` hit@4=18/18、MRR 0.89、leaks 0；Milvus 恢复后 5 个目录逐字节一致，恢复卷启动 Milvus 可见 `enterprise_kb` 28 rows，eval 同样 18/18 / MRR 0.89 / leaks 0
 - [x] 验收：恢复后 `verify_retrieval.py` 与 `eval_retrieval.py` 通过（双后端）
 - [x] 每日自动备份 + 保留策略（2026-11-15）：`scripts/daily_backup.py`（launchd 03:30，停机约 1 分钟、自动 silence 健康告警、`BACKUP_KEEP` 默认 14）；**异地副本按决策不做**（单机接受磁盘故障风险，`OFFSITE_BACKUP_DIR` 能力保留但留空）；开机自恢复见 `scripts/boot_recover.py`；`/metrics` 暴露 `agent_rag_backup_age_seconds`/`agent_rag_backup_archives`，`AgentRagBackupStale` 在 48 小时无新归档时告警（prod 以只读方式挂载 `./backups`），详见 `WORKLOG.md` §18
-- [ ] 每季度演练「删库 → 恢复 → 验证」（流程已落地；prod 卷演练见 `WORKLOG.md` §16，下次窗口 **2027-02-14**）
+- [ ] 每季度演练「删库 → 恢复 → 验证」（流程已落地；prod 卷演练见 `WORKLOG.md` §16，2026-11-15 又对最新归档做了沙箱恢复 + eval 验证，下次正式窗口 **2027-02-14**）
 
 #### 11.1.5 部署加固（2026-11-01 补充）
 - [x] **ACL fail-closed**：`ACL_ENABLED=true` 但规则文件缺失/损坏时拒绝启动（`acl.validate_config`）、`/health` 返回 503、检索丢弃全部文档；`scripts/doctor.py` 增加 `Document ACL` 检查。此前是静默放行（fail-open），一个忘记挂载就能绕过全部文档权限

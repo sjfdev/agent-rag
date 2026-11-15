@@ -1216,6 +1216,17 @@ colima 今天停过一次，全靠手动 `colima start` 才恢复；`make backup
 - 开发栈 `milvus-standalone`/`milvus-etcd` 备份前被停、备份后 `docker start` 恢复，状态未被改变
 - 顺带验收告警投递链路：`nc -l 9999` 起接收器 + `ALERTMANAGER_WEBHOOK_URL=http://host.docker.internal:9999/alert` 渲染配置 → 重启 alertmanager → POST 一条 `severity=warning` 测试告警，30 秒（group_wait）后收到 `{"status":"firing","receiver":"webhook"}`。踩坑：colima 下容器访问宿主**不能**用 `172.25.0.1`（那是 VM 内网桥，connection refused），必须用 `host.docker.internal`；`resolved` 通知受 `group_interval`（5m）约束。验收后恢复 `noop`，`check_monitoring` 42 项 OK。步骤已写入 `DEPLOYMENT_CN.md` §4.1.3 监控段
 
+### 沙箱恢复演练（2026-11-15，最新归档）
+
+不碰生产，验证「当前归档能不能真的恢复」：取最新 `agent-rag-backup-20261115-122824.tar.gz`（999 KB，`vector/milvus` 65 文件 + `vector/etcd`），解到 `~/agent-rag-drill`，用 `drill-net` 网络起一套一次性 etcd + Milvus（端口 19531）指向解出来的卷：
+
+- `pymilvus` 连上后可见集合 `enterprise_kb`，`num_entities=28`（与生产一致）
+- 对该实例跑 `eval_retrieval.py`：`hit@4=18/18`、`MRR=0.89`、`leaks=0`、p50 20ms —— 不只是文件能解开，数据可查、部门隔离也正确
+- 恢复实例启动时会打印旧 querynode/datanode 地址连不上的 WARN（etcd 里残留上一套容器的成员地址），Milvus 会自行重分配，不影响查询
+- 演练后 `docker rm` + `docker network rm` + 删目录，生产未受影响（`/health` 200）
+
+结论：2026-11-14 之后的所有改动（本地账号、会话、备份内容）都没有破坏归档可恢复性；正式季度演练仍按 2027-02-14 窗口做（届时走 `make restore` 覆盖真实目录）。
+
 ### 决策与遗留
 
 - **不配告警推送渠道**（2026-11-15 确认）：保持 `noop`，告警只在 Alertmanager/Grafana 界面查看；投递链路已用本地 webhook 实测（见上），需要时在 `.env` 填渠道变量即可
