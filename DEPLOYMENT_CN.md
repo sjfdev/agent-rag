@@ -206,7 +206,26 @@ make monitor-check                                # 离线校验配置（CI 可�
 ```
 - Grafana `http://127.0.0.1:3000`：预置 **Agent RAG** 面板（请求量/错误率/P95/缓存命中/索引块数/就绪探针）
 - Prometheus `http://127.0.0.1:9090`：6 条告警（抓取失败、`/health` 连续非 2xx、索引为空、错误率 >5%、缓存命中骤降、重建卡住）
-- 两个端口默认只绑 `127.0.0.1`；对外访问请加 TLS 反向代理。告警通知需自行加 Alertmanager
+- 两个端口默认只绑 `127.0.0.1`；对外访问请加 TLS 反向代理
+- Alertmanager 已在监控栈内（`127.0.0.1:9093`）；渠道在 `.env` 配 `ALERTMANAGER_EMAIL_*` / `ALERTMANAGER_SLACK_WEBHOOK_URL` / `ALERTMANAGER_WEBHOOK_URL`，`make monitor-config` 后 `docker restart agent-rag-alertmanager` 生效；全空时落 `noop`
+- 接真实渠道前先本地验收投递（换渠道后同样适用）：
+
+```bash
+# 1) 宿主起接收器（macOS 自带 nc，会把请求头和 body 打印出来）
+nc -l 9999 &
+
+# 2) 指向接收器并重载
+ALERTMANAGER_WEBHOOK_URL=http://host.docker.internal:9999/alert make monitor-config
+docker restart agent-rag-alertmanager
+
+# 3) 打一条测试告警（severity 必须是 critical/warning 才会走渠道）
+curl -s -XPOST localhost:9093/api/v2/alerts -H 'Content-Type: application/json' \
+  -d '[{"labels":{"alertname":"DeliveryTest","severity":"warning","instance":"test"},"startsAt":"'$(date -u +%FT%TZ)'"}]'
+# 约 30 秒（group_wait）后终端里应出现 "status":"firing"
+```
+- 容器里访问宿主要用 `host.docker.internal`；colima 下 `172.x.0.1` 是 VM 内网桥，不是宿主（会 connection refused）
+- `resolved` 通知受 `group_interval`（默认 5m）约束，不会紧跟着 firing 到达
+- 验收后去掉 `ALERTMANAGER_WEBHOOK_URL` 再跑一次 `make monitor-config`，恢复 `noop`
 - 文件在 `monitoring/`，指标数据在 `volumes-monitoring/`（已 gitignore）
 
 ### 4.1.4 服务端会话

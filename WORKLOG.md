@@ -1210,6 +1210,7 @@ colima 今天停过一次，全靠手动 `colima start` 才恢复；`make backup
 - 停机窗口 63 秒（19:12:56 停 → 19:13:44 起）；恢复后 `/health` 200、`https://kb.internal/info` 200、Prometheus 两个 job `up`
 - silence 生效：`GET /api/v2/silences` 显示 `daily-backup` active；窗口内 `AgentRagHealthDown` 在 Alertmanager 被抑制（noop 通道，本来也不会发通知）。修复前那次实跑没 silence，告警先 firing 后自行 resolved，可复现
 - 开发栈 `milvus-standalone`/`milvus-etcd` 备份前被停、备份后 `docker start` 恢复，状态未被改变
+- 顺带验收告警投递链路：`nc -l 9999` 起接收器 + `ALERTMANAGER_WEBHOOK_URL=http://host.docker.internal:9999/alert` 渲染配置 → 重启 alertmanager → POST 一条 `severity=warning` 测试告警，30 秒（group_wait）后收到 `{"status":"firing","receiver":"webhook"}`。踩坑：colima 下容器访问宿主**不能**用 `172.25.0.1`（那是 VM 内网桥，connection refused），必须用 `host.docker.internal`；`resolved` 通知受 `group_interval`（5m）约束。验收后恢复 `noop`，`check_monitoring` 42 项 OK。步骤已写入 `DEPLOYMENT_CN.md` §4.1.3 监控段
 
 ### 决策与遗留
 
