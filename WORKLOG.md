@@ -1081,6 +1081,7 @@ v1.1.0 把本轮功能（`/chat/stream` 断开即取消、引用原文预览、�
 - ✅ **#5 IdP 准备包**：`scripts/check_oidc.py --self-test` → **5 passed, 0 failed**（无共享密钥配置合法 / JWKS 验签 / role→admin / role→dept / 伪造 token 拒绝）；接入清单见下
 - ⏳ **#1 admin 密码与使用人账号**：2026-11-15 决定由使用人在终端自行设密码（不再生成新随机值），暂不建其他账号；命令见下方「待办交接」
 - ✅ **#6 提交**：本次提交含文档 + 一处测试隔离修复（见下）
+- ✅ **IdP 决策（2026-11-15 补记）**：确认**不接 IdP**，长期用本地账号登录（管理台「账号」卡片/`scripts/manage_users.py`）；OIDC/JWKS 能力保留，`.env` 的 `AUTH_OIDC_*`/`AUTH_JWKS_*` 留空，将来需要时按下方「IdP 接入清单」接即可
 - 🔧 **期间发现并修复的测试陷阱**：`.env` 现在是生产配置（`AUTH_MODE=jwt`），本地 `pytest -q` 直接继承它 → **72 failed / 496 passed**（所有走 `/chat` 的测试都被 401）。在 `tests/conftest.py` 导入期（早于任何测试模块导入 `src`）强制 `AUTH_MODE=none`、清空 `AUTH_JWT_SECRET`/`AUTH_JWKS_*`，并在 fixture 里把 `AUTH_USERS_FILE` 指到临时目录；修复后 **568 passed**（与基线一致），`ruff` 干净。CI 本来没有 `.env`，但本地现在与 CI 行为一致了。
 - 顺带记录：colima 停过一次（`docker` 不可达），`colima start` 后所有容器按 `restart: unless-stopped` 自恢复，`/health` 200；Alertmanager 压测后已恢复 `noop` 并 `check-config` SUCCESS。
 

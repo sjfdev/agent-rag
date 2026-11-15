@@ -680,7 +680,7 @@ curl -s -X POST localhost:8000/chat -H 'Content-Type: application/json' \
 - [x] 接入具体 IdP：`AUTH_JWKS_URL` / `AUTH_JWKS_FILE` 用公钥校验（RS/ES），支持 `kid` 轮换与缓存；`AUTH_CLAIM_*`、`AUTH_ADMIN_ROLE`、`AUTH_ROLE_DEPT_PREFIX` 适配 Keycloak 等原生 claim
 - [x] 无账号验证：`scripts/check_oidc.py --self-test`（自签 RS256 走完整链路，5 项）；`--issuer/--jwks` 探测真实 IdP（已用 Microsoft common 端点验证）
 - [x] 生产切换到 jwt + 本地账号（2026-11-15）：`AUTH_MODE=jwt` + `AUTH_LOCAL_LOGIN_ENABLED`，验收见 `WORKLOG.md` §15（无 token 401、伪造部门不越权、禁用/删除即吊销）
-- [ ] 在真实租户上完成一次登录（需要 IdP 管理员创建 client 与角色；接入清单见 `WORKLOG.md` §15「IdP 接入清单」）
+- [x] 真实 IdP 登录（**已决策不做**，2026-11-15）：继续用本地账号（`config/users.json` + 管理台「账号」卡片）；OIDC/JWKS 代码保留，将来要接只需填 `.env` 的 `AUTH_OIDC_*`/`AUTH_JWKS_*`，清单见 `WORKLOG.md` §15
 - [x] 管理台前端登录页：`/admin/api/session` 探测身份；JWT/管理令牌二选一登录；右上角显示身份与退出；401 自动回登录框；审计 actor 改为 `user:<sub>`
 - [x] 离线登录（不接 IdP）：`AUTH_LOCAL_LOGIN_ENABLED` + `src/local_auth.py`（`hashlib.scrypt`，无新依赖），`POST /auth/login` 签普通 bearer token，token 带 `ver` 支持禁用/改密即时吊销；`scripts/manage_users.py` CLI 与管理台「账号」卡片均可建号；登录按 IP 限流并写审计；`/ui/` 补登录框与 `Authorization` 头（此前 jwt 模式下必然 401）；`tests/test_auth_local.py`（55 项）
 - [x] 浏览器 OIDC 登录：`/auth/login`（HMAC 签名 `state`）→ `/auth/callback`（code 换 token，校验 `id_token`）→ `/admin#token=...`；JWKS 模式复用 provider `id_token`，共享密钥模式重新签发；管理台读取 fragment 后立即清理地址栏，`next` 只接受站内路径；`/info.oidc_login` 控制 SSO 按钮，`tests/test_auth_oidc.py` 覆盖状态篡改、跨站 `next`、脚本转义、token 交换失败
@@ -796,7 +796,7 @@ curl -s -X POST localhost:8000/chat -H 'Content-Type: application/json' \
 
 **11.2.1 剩余项已完成（2026-11-14）。** Alertmanager 作为独立服务加入监控栈（`127.0.0.1:9093`），Prometheus `prometheus.yml` 通过 `alerting` 转发；`scripts/render_alertmanager.py` 从 `.env`/环境渲染到 gitignored 的 `monitoring/alertmanager/alertmanager.yml`，邮件/Slack/Webhook 三渠道按变量开启，缺 SMTP 主机或密码时直接报错，全部未配置时用 `noop` 接收器保证配置合法；路由对 `critical|warning` 全渠道分发（`continue: true`），分组 `alertname`+`severity`，并用 inhibit 规则让 `AgentRagMetricsDown` 压掉同实例的错误率/缓存/重建派生告警。日志侧新增 `promtail`（Docker socket 发现、只保留 `agent-rag-*`、解 json-file 信封、label `container`/`service`/`stream`）与单节点 `loki`（tsdb、`LOKI_RETENTION` 默认 720h、compactor 清理）；Grafana 增加 `loki` 数据源与日志面板，`|= "<request_id>"` 可追踪单请求。`scripts/check_monitoring.py` 从 28 项扩到 42 项（含渲染、路由引用、日志采集、compose 挂载与回环端口），`tests/test_monitoring.py` 从 7 项扩到 20 项，全套 **568 passed**。已知限制：Promtail 依赖 Docker socket 与 `/var/lib/docker/containers`，rootless/远程 daemon 需覆盖 `DOCKER_SOCKET`/`DOCKER_CONTAINERS_DIR`；只采集容器 stdout，应用未额外写文件日志。
 
-下一项：TLS 与开机自恢复/每日备份已完成（`WORKLOG.md` §17、§18）。剩下都要外部输入：真实 IdP client/角色、Alertmanager 真实渠道、2027-02-14 季度演练（异地副本已决策不做）。功能侧无新排期；11.3 规模化项按各自触发条件再启动。
+下一项：TLS、开机自恢复/每日备份已完成（`WORKLOG.md` §17、§18）；IdP 与异地副本均已决策不做。剩下只等两个外部输入：Alertmanager 真实渠道、2027-02-14 季度演练。功能侧无新排期；11.3 规模化项按各自触发条件再启动。
 
 演练环境注意：Docker/colima 只共享 `$HOME`，不要把演练卷放在 `/tmp`（容器里会看到空目录，误判为恢复失败）。
 
