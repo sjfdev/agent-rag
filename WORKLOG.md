@@ -1037,9 +1037,104 @@ v1.1.0 把本轮功能（`/chat/stream` 断开即取消、引用原文预览、�
 
 ---
 
-## 15. 相关文档
+## 15. 生产认证切换与明日计划（2026-11-15）
 
-- `AGENT_GUIDE.md`：安装、使用、接口、配置、FAQ、性能优化
-- `OPTIMIZATION_PLAN.md`：待办清单与历史进度；**下一次开发直接看第 11 节「后续待办（按优先级）」**
-- `DEPLOYMENT_CN.md` / `DEPLOYMENT.md`：私有化部署步骤
-- `AGENTS.md`：协作约定与常用命令
+生产此前一直是 `AUTH_MODE=none`：部门/身份由请求体自报，等于把部门隔离交给调用方。11-14 的 prod 卷备份恢复演练与 E2E 冒烟验收完成后，本轮把认证切到 jwt + 本地账号，IdP 留作外部依赖。
+
+### 已完成：生产启用 jwt + 本地账号
+
+- `.env` 新增 `AUTH_MODE=jwt`、`AUTH_JWT_SECRET`（64 位 hex）、`AUTH_LOCAL_LOGIN_ENABLED=true`、`AUTH_USERS_FILE=./config/users.json`；`.env` 与 `config/users.json` 权限收紧为 `600`（两者均 gitignored）
+- `docker compose -f docker-compose.prod.yml up -d --force-recreate app` 后：`/info` → `auth_mode=jwt`、`local_login=true`、`version=1.1.0`、`vector_store=milvus`、`hybrid.engine=milvus`
+- 验收（2026-11-15 00:00 前后实测）：
+  - `POST /auth/login` 200，token 带 `ver=1`；`GET /admin/api/session` 200，claims 为 admin / Tech,HR,Finance,Demo
+  - 无 token 时 `/chat`、`/chat/stream`、`/sources/content` 全部 401
+  - 用 `mint_token.py` 签一个 Tech-only token，请求体伪造 `user_dept=Finance`：来源仍只有 Tech（`security_policy.pdf` / `oncall_runbook.pdf` / `coding_standards.pdf`）；同一问题换 admin token 命中 `Finance/confidential_budget_2026.pdf`，证明隔离真实生效而非问题本身无结果
+  - 禁用账号后旧 token 约 0.5 秒转 401，删除账号后立即 401
+  - `/health`、`/ui/`、`/admin`、`/metrics` 均 200；Prometheus 两个 target up、无 firing；`scripts/doctor.py` RESULT: OK（2 账号 / 1 admin）
+- 已知细节：从宿主机改 `config/users.json` 到容器内生效有亚秒级延迟（colima 绑定挂载的 mtime 属性缓存）；运维改账号优先走管理台「账号」卡片或 `docker compose -f docker-compose.prod.yml exec app python scripts/manage_users.py ...`
+- `admin` 的密码本次为一次性随机值（只在会话里给过一次，未写进仓库），**明天第一步改成正式密码**
+
+### 明天（2026-11-16）计划
+
+| # | 事项 | 落点 | 验收 |
+|---|---|---|---|
+| 1 | 改 `admin` 正式密码；给实际使用人建独立账号（不要共用 admin） | `manage_users.py passwd/add` 或管理台「账号」卡片 | 旧密码 401、新密码可登录，每人有自己的 dept 集 |
+| 2 | 把 11-14 的 prod 卷备份/恢复演练补记成独立小节（归档名/大小/校验/步骤/`--verify OK`） | `WORKLOG.md` §14 之后 | 记录可复现，含 0.6MB vs 150MB 预分配的说明 |
+| 3 | 季度演练日期定死并勾掉排期项 | `OPTIMIZATION_PLAN.md` §11.1.4:705 | 写下下次日期（建议 2027-02-14），`doctor.py` 备份天数仍 OK |
+| 4 | 告警通知本地压测：渲染 Alertmanager 指向本地 webhook sink，`amtool` 造 warning，验证路由与 inhibit | `.env` `ALERTMANAGER_*` + `make monitor-config` | sink 收到 JSON；`scripts/check_monitoring.py` 仍全过；之后真实渠道只改 `.env` |
+| 5 | IdP 准备包：redirect URI / claim / 角色映射清单，用自签 JWKS 在 staging 走一遍 | `scripts/check_oidc.py --self-test` + 临时 profile | 清单可直接发给 IdP 管理员；真实登录继续等外部 |
+| 6 | 提交本轮文档改动 | `git commit` | 工作区干净；无代码变更，`pytest -q` 仍绿 |
+
+外部输入未到位、明天只做「准备到位」的三项：真实 IdP 租户登录（对方建 client/角色）、Alertmanager 真实渠道（邮箱/Slack webhook）、季度恢复演练（需停机窗口）。
+
+### 2026-11-15 晚：计划执行记录
+
+- ✅ **#2 备份/恢复演练补记** → 见 §16
+- ✅ **#3 季度演练排期** → `OPTIMIZATION_PLAN.md` §11.1.4:705 写入下次窗口 **2027-02-14**
+- ✅ **#4 告警通知本地压测**（未动 `.env`，事后已回 `noop`）：
+  - 在 `agent-rag-monitoring` 网络起一次性 sink（复用 `agent-rag:v1.1.0` 镜像的 stdlib HTTP server，`alert-sink:8899`）
+  - `ALERTMANAGER_WEBHOOK_URL=http://alert-sink:8899/hook ALERTMANAGER_GROUP_WAIT=5s python scripts/render_alertmanager.py` → `amtool check-config` SUCCESS（2 receivers）
+  - `amtool alert add AgentRagErrorRate severity=warning instance="app:8000"` → **sink 在 ~5s（group_wait）后收到 `POST /hook` 的 Alertmanager v4 JSON**（`status=firing`、labels/annotations 完整）
+  - inhibit 验证：同 `instance` 再加 `AgentRagMetricsDown` → `/api/v2/alerts` 显示 `AgentRagErrorRate suppressed`、`inhibitedBy=[a63825ae…]`，`AgentRagMetricsDown active`
+  - 收尾：用 `/api/v2/alerts`（body 是 `[alert,…]` 数组，**不是** `{"alerts":[…]}`）把两条都置为 `endsAt` 过去时间 → `remaining=[]`；`python scripts/render_alertmanager.py` 回到 `receiver: noop` 并重启 Alertmanager；停掉 sink
+  - `scripts/check_monitoring.py` 仍 `RESULT: OK (42 checks)`
+- ✅ **#5 IdP 准备包**：`scripts/check_oidc.py --self-test` → **5 passed, 0 failed**（无共享密钥配置合法 / JWKS 验签 / role→admin / role→dept / 伪造 token 拒绝）；接入清单见下
+- ⏳ **#1 admin 密码与使用人账号**：等待确认后执行（`config/users.json` 未提交，不影响文档提交）
+- ✅ **#6 提交**：本次提交含文档 + 一处测试隔离修复（见下）
+- 🔧 **期间发现并修复的测试陷阱**：`.env` 现在是生产配置（`AUTH_MODE=jwt`），本地 `pytest -q` 直接继承它 → **72 failed / 496 passed**（所有走 `/chat` 的测试都被 401）。在 `tests/conftest.py` 导入期（早于任何测试模块导入 `src`）强制 `AUTH_MODE=none`、清空 `AUTH_JWT_SECRET`/`AUTH_JWKS_*`，并在 fixture 里把 `AUTH_USERS_FILE` 指到临时目录；修复后 **568 passed**（与基线一致），`ruff` 干净。CI 本来没有 `.env`，但本地现在与 CI 行为一致了。
+- 顺带记录：colima 停过一次（`docker` 不可达），`colima start` 后所有容器按 `restart: unless-stopped` 自恢复，`/health` 200；Alertmanager 压测后已恢复 `noop` 并 `check-config` SUCCESS。
+
+### IdP 接入清单（可直接发给 IdP 管理员）
+
+需要对方提供/创建：
+
+- issuer URL 与 JWKS 地址（我方用 `AUTH_JWKS_URL` 拉取；离线可放 `AUTH_JWKS_FILE`）
+- 浏览器登录 client（confidential）：redirect URI 必须精确匹配 `https://<kb-host>/auth/callback`（本机联调用 `http://127.0.0.1:8000/auth/callback`），scopes `openid profile`（需要邮箱再加 `email`）
+- 角色/claim 约定：部门、组、管理员三项（Keycloak 可用 `realm_access.roles` + 角色前缀；Entra/Auth0 可直接放 `depts`/`groups` claim）
+- 时钟要求：IdP 与部署主机 NTP 同步（`iat`/`exp` 校验对时钟偏移敏感）
+
+我方 env 映射：
+
+| 用途 | 变量 |
+|---|---|
+| 信任公钥与签发方 | `AUTH_MODE=jwt`、`AUTH_JWKS_URL` 或 `AUTH_JWKS_FILE`、`AUTH_JWT_ISSUER`、`AUTH_JWT_AUDIENCE` |
+| 部门 | `AUTH_CLAIM_DEPTS=depts`；或用 `AUTH_CLAIM_ROLES=realm_access.roles` + `AUTH_ROLE_DEPT_PREFIX=kb:dept:` |
+| 管理员 | `AUTH_CLAIM_ADMIN=admin`；或 `AUTH_CLAIM_ROLES` + `AUTH_ADMIN_ROLE=kb-admin` |
+| ACL 组 | `AUTH_CLAIM_GROUPS=groups` |
+| 兜底/拒绝 | `AUTH_DEFAULT_DEPTS=Tech`、`AUTH_DENY_ROLE=guest` |
+| 浏览器登录 | `AUTH_OIDC_CLIENT_ID` / `SECRET` / `AUTHORIZE_URL` / `TOKEN_URL` / `REDIRECT_URI` / `SCOPE` |
+
+验收顺序（provider 可用后 1→4）：
+
+1. `~/miniconda3/envs/agent-rag/bin/python scripts/check_oidc.py --issuer <issuer> --jwks <jwks-url>`
+2. 配 `AUTH_JWKS_*` 重启 → `/info` 为 `auth_mode=jwt`，`oidc_login=true`，`/auth/login` 能跳转
+3. 浏览器登录 → `/admin/api/session` 核对 `depts`/`is_admin`
+4. 用两个不同部门的 IdP 账号各发一次 `/chat`，确认来源不越权
+
+共存说明：IdP token 没有 `ver` claim，不会去查 `AUTH_USERS_FILE`；本地账号 token 带 `ver`，两者可同时启用。
+
+---
+
+## 16. 生产备份/恢复演练（prod 卷，2026-11-14）
+
+承接 §14 的遗留：v1.1.0 上线后，对生产栈做了一次「停机 → 备份 → 恢复 → 验证」全链路演练。11-09 那次是在隔离沙箱里做的，这次直接覆盖 prod 的 `volumes-prod/{milvus,etcd}`。
+
+### 步骤与结果
+
+1. **E2E 基线**：`POST /chat`（Tech，"代码评审要求"）→ 200，3.9s，`degraded=false`，`llm_ms=1816.8`（GLM-4-Flash），来源两条均为 Tech：`coding_standards.pdf` p1、`security_policy.pdf` p1
+2. **停机**：停 prod 的 app/etcd/milvus，同时停开发栈 `milvus-standalone`/`milvus-etcd`，避免 `make backup` 抓到半写状态
+3. **备份**：`VECTOR_STORE_TYPE=milvus make backup` → `backups/agent-rag-backup-20261114-155312.tar.gz`
+   - 626,078 B（0.6 MB）；边车 `.sha256` = `d360c87f5bb910d4447c81ac048ce5b7178ef88c9984679eaaaa6d34d072062f`，`--verify` OK（本次复核一致）
+   - `manifest.json`：74 个文件 / 65,983,991 B 原始内容
+     - `data` 17 文件 / 100,276 B；`config` 2 / 1,066 B；`logs` 3 / 84,057 B
+     - `vector/milvus` 50 / 1,630,656 B；`vector/etcd` 2 / 64,167,936 B（prod 卷）
+4. **恢复**：prod 栈重新拉起后 `/health` 200 且报 28 chunks；`make doctor` → `RESULT: OK`，`Backup … 0 day(s) old`
+5. **0.6 MB 是否正常**：正常。RocksDB/etcd 的 `.log` 是预分配文件，磁盘块占用约 150 MB，但真实内容只有 ~0.6 MB；tar 打包的是内容而非块占用，逐文件 `SHA256SUMS` 全部通过
+
+### 结论
+
+prod 卷可以停机备份、恢复后直接对外服务（28 chunks、健康检查通过）。按季度节奏，下一次窗口定在 **2027-02-14**（`OPTIMIZATION_PLAN.md` §11.1.4）。
+
+---
+
+## 17. 相关文档

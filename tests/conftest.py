@@ -14,6 +14,15 @@ import pytest
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+# Applied at import time (before any test module imports the app): a developer's
+# real .env may enable jwt/local login and point at the live accounts file.
+# Tests start in the legacy "none" mode and opt in explicitly.
+os.environ["AUTH_MODE"] = "none"
+os.environ["AUTH_LOCAL_LOGIN_ENABLED"] = "false"
+os.environ["AUTH_JWT_SECRET"] = ""
+os.environ["AUTH_JWKS_URL"] = ""
+os.environ["AUTH_JWKS_FILE"] = ""
+
 
 @pytest.fixture(scope="session", autouse=True)
 def _offline_env(tmp_path_factory):
@@ -28,6 +37,8 @@ def _offline_env(tmp_path_factory):
     os.environ.setdefault("SESSION_SUMMARY_ENABLED", "false")
     os.environ.setdefault("HF_HUB_OFFLINE", "1")
     os.environ.setdefault("FAQ_CACHE_ENABLED", "true")
+    # A developer's real .env may point at the live accounts file.
+    os.environ["AUTH_USERS_FILE"] = str(root / "users.json")
     # Imported here so settings pick up the environment above.
     import src  # noqa: F401
     from src.config import settings
@@ -39,6 +50,12 @@ def _offline_env(tmp_path_factory):
     settings.BACKUP_DIR = str(root / "backups")
     settings.SESSIONS_DB_PATH = str(root / "sessions.db")
     settings.SESSION_SUMMARY_ENABLED = False
+    settings.AUTH_MODE = "none"
+    settings.AUTH_LOCAL_LOGIN_ENABLED = False
+    settings.AUTH_JWT_SECRET = ""
+    settings.AUTH_JWKS_URL = ""
+    settings.AUTH_JWKS_FILE = ""
+    settings.AUTH_USERS_FILE = str(root / "users.json")
     yield
 
 
