@@ -1206,6 +1206,8 @@ colima 今天停过一次，全靠手动 `colima start` 才恢复；`make backup
 ### 验证（本机实测）
 
 - `install_launchd.py install` 后两个 agent 均 loaded；`boot-recover` 在 load 时立即执行：`docker daemon is up` → `production stack requested` → `app is live`，约 3 秒
+- **冷启动实测**（模拟重启）：`colima stop` → `launchctl kickstart -k gui/$(id -u)/com.agent-rag.boot-recover`。20:24:10 检测到 docker 不可达 → `colima start` 65 秒 → `compose up -d` 45 秒 → 20:26:13 `app is live`，全程 **2 分 03 秒**；12 个容器（prod 4 + 监控 8）全部恢复，`/health` 200、`https://kb.internal/info` 200、Prometheus 两个 job `up`
+- **定时触发实测**：临时把 `StartCalendarInterval` 改到 20:28（`install --hour/--minute`），launchd 准点触发，归档 999,338 B（`vector/milvus` 65 文件）、停机 49 秒、`production stack restarted`；随后恢复 03:30。结论：不用等夜间窗口，整条链路已验证
 - `daily_backup.py` 实跑 2 次。**第一次暴露真实 bug**：宿主 `.env` 是 `VECTOR_STORE_TYPE=faiss`，归档成了 `vector/faiss`（而生产索引在 Milvus）。修复为「存在 `volumes-prod/milvus` 时强制按 milvus 打包」，第二次归档：`vector/milvus` 52 文件 + `vector/etcd` 2 文件，773,713 B，`backup.py --verify` OK
 - 停机窗口 63 秒（19:12:56 停 → 19:13:44 起）；恢复后 `/health` 200、`https://kb.internal/info` 200、Prometheus 两个 job `up`
 - silence 生效：`GET /api/v2/silences` 显示 `daily-backup` active；窗口内 `AgentRagHealthDown` 在 Alertmanager 被抑制（noop 通道，本来也不会发通知）。修复前那次实跑没 silence，告警先 firing 后自行 resolved，可复现
@@ -1216,7 +1218,6 @@ colima 今天停过一次，全靠手动 `colima start` 才恢复；`make backup
 
 - **不配告警推送渠道**（2026-11-15 确认）：保持 `noop`，告警只在 Alertmanager/Grafana 界面查看；投递链路已用本地 webhook 实测（见上），需要时在 `.env` 填渠道变量即可
 - **不做异地副本**（2026-11-15 确认）：单机部署接受「磁盘故障 = 备份一起丢」的风险；`OFFSITE_BACKUP_DIR` 能力保留但留空，将来要接外置盘/网盘只需写进 `.env`，脚本会自动复制并校验 sha256
-- 03:30 的夜间触发要等一晚；今天以 `--dry-run` + 两次手动实跑代替
 - LaunchAgent 在**登录后**执行：重启后需有人登录一次（合盖唤醒不算）；要完全无人值守得换 LaunchDaemon + 免登录 colima，不推荐
 - `volumes-prod/caddy` 与 `backups/` 不在归档内（后者本身就是备份目的地）
 
