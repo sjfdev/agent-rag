@@ -10,6 +10,36 @@ three agree before you push a tag.
 
 ## [Unreleased]
 
+### Added
+
+- **TLS edge**: the production compose adds a `caddy` sidecar (internal CA,
+  `KB_SITE_ADDRESS`, default `kb.internal`) and publishes only `:443`; the app
+  binds `127.0.0.1:8000`, so logins and chat never travel in cleartext. Caddy
+  overwrites `X-Forwarded-For` with the real hop (a caller cannot spoof it to
+  dodge per-IP limits) and answers `/metrics` with 404, keeping the scrape on
+  the container network.
+- **Boot recovery and the nightly backup** (macOS launchd,
+  `scripts/install_launchd.py`): `com.agent-rag.boot-recover` starts colima when
+  Docker is down, brings up the production and monitoring stacks and waits for
+  `/info`; `com.agent-rag.daily-backup` runs at 03:30, silences
+  `AgentRagHealthDown` for the window, pauses the stack, archives with
+  `scripts/backup.py`, keeps the newest `BACKUP_KEEP` archives (14 by default),
+  and restarts in a `finally` block. Entry points: `make daily-backup`,
+  `make boot-recover`, `make agents-install|status|uninstall`. Measured on this
+  host: cold start 2m03s, backup downtime about a minute.
+- **Backup freshness metrics**: `agent_rag_backup_age_seconds` and
+  `agent_rag_backup_archives` stat `BACKUP_DIR` on scrape (production mounts
+  `./backups` read-only at `/app/backups`); `AgentRagBackupStale` fires after
+  48 hours without a new archive and the dashboard gains a "Newest backup
+  (hours)" panel, so a silently failing nightly job is visible.
+
+### Fixed
+
+- **Image builds behind a flaky network**: the model-download layer sets
+  `HF_HUB_DISABLE_XET=1`. Hugging Face's Xet CDN (`transfer.xethub.hf.co`) was
+  dropping transfers mid-download even when the mirror itself worked, which
+  broke `docker compose build` before the app layers were reached.
+
 ## [1.1.0] - 2026-11-14
 
 ### Added

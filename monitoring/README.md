@@ -50,6 +50,7 @@ access; do not publish 3000/9090 directly.
 | `AgentRagErrorRate` | chat error ratio > 5% for 5m | critical |
 | `AgentRagCacheHitDrop` | 10m cache-hit ratio < half the 1h baseline for 15m | warning |
 | `AgentRagMaintenanceStuck` | rebuild flag held for 1h | warning |
+| `AgentRagBackupStale` | no archive, or the newest is older than 48h (1h) | warning |
 
 Rules live in `prometheus/alerts.yml`; Prometheus forwards firing alerts to
 Alertmanager (`alerting:` block in `prometheus.yml`). Delivery is opt-in and
