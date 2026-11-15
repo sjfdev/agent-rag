@@ -703,7 +703,7 @@ curl -s -X POST localhost:8000/chat -H 'Content-Type: application/json' \
 - [x] `make backup` / `make restore ARCHIVE=...`；`scripts/doctor.py` 增加「最近一次备份距今 N 天」（`BACKUP_WARN_DAYS`，默认 30）
 - [x] 演练（隔离沙箱，2026-11-09）：FAISS 恢复后 4 个目录逐字节一致，`verify_retrieval.py` OK、`eval_retrieval.py` hit@4=18/18、MRR 0.89、leaks 0；Milvus 恢复后 5 个目录逐字节一致，恢复卷启动 Milvus 可见 `enterprise_kb` 28 rows，eval 同样 18/18 / MRR 0.89 / leaks 0
 - [x] 验收：恢复后 `verify_retrieval.py` 与 `eval_retrieval.py` 通过（双后端）
-- [x] 每日自动备份 + 保留策略 + 异地副本（2026-11-15）：`scripts/daily_backup.py`（launchd 03:30，停机约 1 分钟、自动 silence 健康告警、`BACKUP_KEEP` 默认 14、`OFFSITE_BACKUP_DIR` 可选校验副本）；开机自恢复见 `scripts/boot_recover.py`，详见 `WORKLOG.md` §18
+- [x] 每日自动备份 + 保留策略（2026-11-15）：`scripts/daily_backup.py`（launchd 03:30，停机约 1 分钟、自动 silence 健康告警、`BACKUP_KEEP` 默认 14）；**异地副本按决策不做**（单机接受磁盘故障风险，`OFFSITE_BACKUP_DIR` 能力保留但留空）；开机自恢复见 `scripts/boot_recover.py`，详见 `WORKLOG.md` §18
 - [ ] 每季度演练「删库 → 恢复 → 验证」（流程已落地；prod 卷演练见 `WORKLOG.md` §16，下次窗口 **2027-02-14**）
 
 #### 11.1.5 部署加固（2026-11-01 补充）
@@ -795,7 +795,7 @@ curl -s -X POST localhost:8000/chat -H 'Content-Type: application/json' \
 
 **11.2.1 剩余项已完成（2026-11-14）。** Alertmanager 作为独立服务加入监控栈（`127.0.0.1:9093`），Prometheus `prometheus.yml` 通过 `alerting` 转发；`scripts/render_alertmanager.py` 从 `.env`/环境渲染到 gitignored 的 `monitoring/alertmanager/alertmanager.yml`，邮件/Slack/Webhook 三渠道按变量开启，缺 SMTP 主机或密码时直接报错，全部未配置时用 `noop` 接收器保证配置合法；路由对 `critical|warning` 全渠道分发（`continue: true`），分组 `alertname`+`severity`，并用 inhibit 规则让 `AgentRagMetricsDown` 压掉同实例的错误率/缓存/重建派生告警。日志侧新增 `promtail`（Docker socket 发现、只保留 `agent-rag-*`、解 json-file 信封、label `container`/`service`/`stream`）与单节点 `loki`（tsdb、`LOKI_RETENTION` 默认 720h、compactor 清理）；Grafana 增加 `loki` 数据源与日志面板，`|= "<request_id>"` 可追踪单请求。`scripts/check_monitoring.py` 从 28 项扩到 42 项（含渲染、路由引用、日志采集、compose 挂载与回环端口），`tests/test_monitoring.py` 从 7 项扩到 20 项，全套 **568 passed**。已知限制：Promtail 依赖 Docker socket 与 `/var/lib/docker/containers`，rootless/远程 daemon 需覆盖 `DOCKER_SOCKET`/`DOCKER_CONTAINERS_DIR`；只采集容器 stdout，应用未额外写文件日志。
 
-下一项：TLS 与开机自恢复/每日备份已完成（`WORKLOG.md` §17、§18）。剩下都要外部输入：真实 IdP client/角色、Alertmanager 真实渠道、`OFFSITE_BACKUP_DIR` 的外置盘/网盘、2027-02-14 季度演练。功能侧无新排期；11.3 规模化项按各自触发条件再启动。
+下一项：TLS 与开机自恢复/每日备份已完成（`WORKLOG.md` §17、§18）。剩下都要外部输入：真实 IdP client/角色、Alertmanager 真实渠道、2027-02-14 季度演练（异地副本已决策不做）。功能侧无新排期；11.3 规模化项按各自触发条件再启动。
 
 演练环境注意：Docker/colima 只共享 `$HOME`，不要把演练卷放在 `/tmp`（容器里会看到空目录，误判为恢复失败）。
 

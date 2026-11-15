@@ -1210,9 +1210,9 @@ colima 今天停过一次，全靠手动 `colima start` 才恢复；`make backup
 - silence 生效：`GET /api/v2/silences` 显示 `daily-backup` active；窗口内 `AgentRagHealthDown` 在 Alertmanager 被抑制（noop 通道，本来也不会发通知）。修复前那次实跑没 silence，告警先 firing 后自行 resolved，可复现
 - 开发栈 `milvus-standalone`/`milvus-etcd` 备份前被停、备份后 `docker start` 恢复，状态未被改变
 
-### 遗留
+### 决策与遗留
 
-- `OFFSITE_BACKUP_DIR` 还没配：目前仍只有本地一份，磁盘坏了两份一起没；外置盘/网盘就绪后写进 `.env` 即可（脚本会自动复制并校验）
+- **不做异地副本**（2026-11-15 确认）：单机部署接受「磁盘故障 = 备份一起丢」的风险；`OFFSITE_BACKUP_DIR` 能力保留但留空，将来要接外置盘/网盘只需写进 `.env`，脚本会自动复制并校验 sha256
 - 03:30 的夜间触发要等一晚；今天以 `--dry-run` + 两次手动实跑代替
 - LaunchAgent 在**登录后**执行：重启后需有人登录一次（合盖唤醒不算）；要完全无人值守得换 LaunchDaemon + 免登录 colima，不推荐
 - `volumes-prod/caddy` 与 `backups/` 不在归档内（后者本身就是备份目的地）
