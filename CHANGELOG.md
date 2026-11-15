@@ -12,6 +12,16 @@ three agree before you push a tag.
 
 ### Added
 
+- **Shared console login and section menu**: `/admin` and `/ui/` mirror the JWT
+  under a shared `ragBearer` sessionStorage key, so one login covers both pages
+  (same tab) and either logout clears both; `ADMIN_TOKEN` and the chat
+  `X-API-Key` stay page-local. The console also gained a sticky section menu
+  that scrolls to and highlights each card, hides entries for unavailable
+  panels, and turns into a horizontal menu on narrow screens.
+  <br>**管理台共享登录与分区菜单（中文）**：`/admin` 与 `/ui/` 用共享的
+  `ragBearer`（sessionStorage）复用 JWT，同标签页登录一次即可，任一页登出同时
+  清除；`ADMIN_TOKEN` 与聊天 `X-API-Key` 仍各自保存。管理台新增左侧固定分区
+  菜单，点击滚动到对应卡片并高亮当前分区，不可用入口自动隐藏，窄屏转横向。
 - **Console model overrides**: the admin console's new 模型 card changes the
   chat endpoint (`api_base`/`model`/`api_key`/`temperature`/`max_tokens`) without
   a restart. `GET/PUT/DELETE /admin/api/model` and `POST /admin/api/model/test`

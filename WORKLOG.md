@@ -1272,4 +1272,37 @@ reachable, not that the model supports tool calling.
 
 ---
 
-## 20. 相关文档
+## 20. 管理台登录共享与分区菜单（2026-11-15）
+
+`/admin` 登录后打开 `/ui/` 还要再登录一次；管理台又是个上千行的长页面，找卡片要滚很久。这轮把登录态改成两页共享，并加了左侧分区菜单。
+
+### 落点
+
+- `static/admin.html` + `static/index.html`：新增共享 key `ragBearer`；`storeBearer()` 同步页面专属副本（`adminBearer` / `chatBearer`）与共享副本，读取时先看自己的再看共享；`clearCredential()` 连共享 key 一起删，任一页登出即两页退出；管理令牌与聊天 `X-API-Key` 仍各自保存，不跨页共享
+- `static/admin.html`：`<aside id="sidebar">` + `nav .navBtn`，按 `data-target` 跳到 `deptCard/uploadCard/filesCard/modelCard/usersCard/rebuildCard/auditCard`；`IntersectionObserver` 高亮当前卡片；`syncNavVisibility()` 在 `refreshAll()` 后隐藏不可用入口（如未启用本地账号的「账号」）；`showGate()`/`hideGate()` 同步显隐侧栏；窄屏改横向菜单
+- `static/i18n.js`：新增 `admin.navTitle` / `admin.navAria` / `admin.nav.*` 中英词条
+- `tests/test_admin_ui_js.py`（7 项）：共享 key 的写入与登出、菜单目标与卡片 id 对齐、`nav` i18n key、侧栏门禁、隐藏入口联动、内联脚本 `node --check`
+
+### 验证
+
+- `node --check` 页面内联脚本与 `static/i18n.js` 通过；`pytest -q` **613 passed**；`ruff` 干净
+- 生产重建后 `/admin`、`/ui/` 均含 `ragBearer`；容器 `healthy`
+
+### 注意
+
+- `sessionStorage` 按标签页/源隔离：新标签页或 `kb.internal` 与 `127.0.0.1` 混用仍需再登录一次，这是「关闭标签页即失效」的权衡
+- 管理令牌（`ADMIN_TOKEN`）与聊天 API Key 仍分开存储，避免把无权访问聊天的令牌带过去
+
+### English summary
+
+`/admin` and `/ui/` now mirror the JWT under a shared `ragBearer` key
+(page-specific copies keep working), so one login covers both pages and either
+logout clears both; `ADMIN_TOKEN` and the chat `X-API-Key` stay per-page. The
+console also gained a sticky section menu that scrolls to and highlights each
+card, hides entries for unavailable panels, and turns into a horizontal menu on
+narrow screens. `tests/test_admin_ui_js.py` locks the shared key, menu targets
+and inline-script syntax (7 checks).
+
+---
+
+## 21. 相关文档

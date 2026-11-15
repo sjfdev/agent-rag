@@ -663,8 +663,9 @@ curl -s -X POST localhost:8000/chat -H 'Content-Type: application/json' \
 
 ## 11. 后续待办（按优先级，2026-11-01 之后）
 
-> 当前基线：**582 项测试、CI 全绿**；`milvus 2.5.4 + 服务端稀疏 BM25`；28 chunks；备份/恢复脚本已落地（`make backup` / `make restore`）；监控栈已落地（`make monitor-up` / `make monitor-check`）；服务端会话与前端会话栏已落地（`/sessions` + `ChatRequest.session_id` + 左侧侧栏）；`/chat/stream` 客户端断开即取消上游 LLM 调用。
+> 当前基线：**613 项测试、CI 全绿**；`milvus 2.5.4 + 服务端稀疏 BM25`；28 chunks；备份/恢复脚本已落地（`make backup` / `make restore`）；监控栈已落地（`make monitor-up` / `make monitor-check`）；服务端会话与前端会话栏已落地（`/sessions` + `ChatRequest.session_id` + 左侧侧栏）；`/chat/stream` 客户端断开即取消上游 LLM 调用。
 > 容器化交付已完成（`Dockerfile` / `docker-compose.prod.yml` / `PRODUCTIZATION.md`）。
+> 管理台已支持运行时模型覆盖、`/admin` 与 `/ui/` 共享登录态、左侧分区菜单（2026-11-15）。
 > 下面按「对外发布必须先做 → 产品化 → 规模化」排序，每项都有落点与验收方式。
 
 ### 11.1 P0 对外发布前必须先做
@@ -734,6 +735,7 @@ curl -s -X POST localhost:8000/chat -H 'Content-Type: application/json' \
 - [x] 中英文切换：`static/i18n.js` 覆盖聊天页与管理台，默认跟随浏览器语言、`localStorage` 记忆；`tests/test_i18n_js.py`
 - [x] 服务端会话列表与历史：`static/index.html` 左侧会话栏（新建/切换/删除/刷新），请求带 `session_id` 且不再发送本地 `history`；刷新后按 `localStorage` 记住的 id 从 `/sessions/{id}` 恢复；`/info` 暴露 `sessions_enabled`/`history_max_messages`，关闭时回退到原有 localStorage 历史；`static/sessions.js` 负责请求体构造，`tests/test_sessions_js.py`（5 项）与 `tests/test_ui_sessions.py`（3 项）校验
 - [x] 引用点击预览原文：`GET /sources/content`（`src/sources_api.py`）按 `source` + page/slide/sheet 从向量库取回完整 chunk 文本，先在引擎内做部门过滤、再做 ACL，最后返回；前端点击来源条目弹窗展示（`static/sources.js` 构造查询串），`textContent` 渲染避免注入；手机端改用 `100dvh`、safe-area 内边距、全屏弹窗、16px 输入框（避免 iOS 缩放）、预设问题横向滚动。`tests/test_sources_api.py`（10 项）+ `tests/test_sources_js.py`（4 项）+ `tests/test_ui_sources.py`（2 项）
+- [x] 管理台体验（2026-11-15）：运行时「模型」卡片（`GET/PUT/DELETE /admin/api/model`、`POST /admin/api/model/test`，覆盖项持久化且只回掩码 Key）；`/admin` 与 `/ui/` 用共享 `ragBearer`，同标签页登录一次即可，登出同时清除；左侧分区菜单滚动定位/高亮当前卡片、隐藏不可用入口、窄屏转横向。`tests/test_admin_ui_js.py`（7 项）校验共享 key、菜单目标、侧栏门禁与内联脚本语法
 
 #### 11.2.4 服务端会话存储（已完成 2026-11-10）
 - [x] 会话表 + 消息表（role/content/sources/degraded）：`src/sessions.py`（SQLite，`SESSIONS_DB_PATH`，默认 `./logs/sessions.db`；`SESSIONS_ENABLED` 可关）；`POST/GET/DELETE /sessions`，`ChatRequest.session_id` 带上后服务端拥有完整对话，请求体只传当前消息
