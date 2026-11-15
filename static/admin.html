@@ -31,7 +31,41 @@
   .meta { display: flex; gap: 14px; align-items: center; color: var(--muted); font-size: 12px; flex-wrap: wrap; }
   .meta b { color: var(--text); font-weight: 500; }
   .meta a { color: var(--accent); text-decoration: none; }
-  main { max-width: 1080px; margin: 0 auto; padding: 18px 20px 40px; display: grid; gap: 14px; }
+  /* Header stays full width; the console gets a sticky section menu. */
+  /* 顶部保持全宽，控制台区域加左侧固定分区菜单。 */
+  .shell {
+    max-width: 1180px; margin: 0 auto; padding: 18px 20px 40px;
+    display: grid; grid-template-columns: 190px minmax(0, 1fr); gap: 16px; align-items: start;
+  }
+  main { max-width: none; margin: 0; padding: 0; display: grid; gap: 14px; }
+  #console[hidden], #sidebar[hidden] { display: none; }
+  .sidebar {
+    position: sticky; top: 16px; background: var(--panel);
+    border: 1px solid #232833; border-radius: 10px; padding: 10px;
+  }
+  .sidebar h3 {
+    font-size: 12px; color: var(--muted); font-weight: 500;
+    letter-spacing: .5px; margin: 2px 0 8px; padding: 0 8px;
+  }
+  .sidebar nav { display: grid; gap: 2px; }
+  .navBtn {
+    display: block; width: 100%; text-align: left; background: transparent;
+    border: 1px solid transparent; border-radius: 8px; padding: 7px 10px;
+    color: var(--muted); cursor: pointer; font: inherit;
+  }
+  .navBtn:hover { background: var(--panel-2); color: var(--text); }
+  .navBtn.active {
+    background: #141c2b; color: var(--text);
+    border-color: #2a3444; box-shadow: inset 2px 0 0 var(--accent);
+  }
+  .navBtn[hidden] { display: none; }
+  .card { scroll-margin-top: 12px; }
+  @media (max-width: 760px) {
+    .shell { grid-template-columns: 1fr; padding: 12px 12px 32px; gap: 12px; }
+    .sidebar { position: static; }
+    .sidebar nav { display: flex; flex-wrap: wrap; }
+    .navBtn { width: auto; }
+  }
   .card { background: var(--panel); border: 1px solid #232833; border-radius: 10px; padding: 14px 16px; }
   h2 { font-size: 13px; margin: 0 0 10px; color: var(--muted); font-weight: 500; letter-spacing: .5px; }
   h2 .sub { color: var(--muted); font-weight: 400; margin-left: 6px; }
@@ -162,8 +196,22 @@
   </form>
 </div>
 
+<div class="shell">
+  <aside class="sidebar" id="sidebar" hidden aria-label="管理台分区" data-i18n-aria-label="admin.navAria">
+    <h3 data-i18n="admin.navTitle">分区</h3>
+    <nav id="nav">
+      <button class="navBtn" data-target="deptCard" data-i18n="admin.nav.dept">部门</button>
+      <button class="navBtn" data-target="uploadCard" data-i18n="admin.nav.upload">上传文件</button>
+      <button class="navBtn" data-target="filesCard" data-i18n="admin.nav.files">入库文件</button>
+      <button class="navBtn" data-target="modelCard" data-i18n="admin.nav.model">模型</button>
+      <button class="navBtn" id="navUsers" data-target="usersCard" data-i18n="admin.nav.accounts" hidden>账号</button>
+      <button class="navBtn" data-target="rebuildCard" data-i18n="admin.nav.rebuild">重建索引</button>
+      <button class="navBtn" data-target="auditCard" data-i18n="admin.nav.audit">操作审计</button>
+    </nav>
+  </aside>
+
 <main id="console" hidden>
-  <section class="card">
+  <section class="card" id="deptCard">
     <h2 data-i18n="admin.deptTitle">部门</h2>
     <div class="row">
       <select id="dept"></select>
@@ -174,7 +222,7 @@
     <div class="stats" id="stats"></div>
   </section>
 
-  <section class="card">
+  <section class="card" id="uploadCard">
     <h2 data-i18n="admin.uploadTitle">上传文件</h2>
     <div class="drop" id="drop">
       <span data-i18n="admin.dropText">拖拽文件到这里，或</span> <label><span data-i18n="admin.chooseFile">选择文件</span><input id="file" type="file" multiple hidden></label>
@@ -188,7 +236,7 @@
     <div class="bar" id="uploadBar" hidden><div class="fill" id="uploadFill"></div></div>
   </section>
 
-  <section class="card">
+  <section class="card" id="filesCard">
     <h2><span data-i18n="admin.filesTitle">入库文件</span><span class="sub" id="fileCount"></span></h2>
     <div class="row">
       <button id="ingestDept" data-i18n="admin.ingestDept">增量入库（当前部门）</button>
@@ -253,7 +301,7 @@
     <div class="msg" id="modelMsg"></div>
   </section>
 
-  <section class="card dangerZone">
+  <section class="card dangerZone" id="rebuildCard">
     <h2 data-i18n="admin.rebuildTitle">重建索引</h2>
     <p class="hint" style="margin:0 0 10px" data-i18n="admin.rebuildHint">
       删除当前索引/集合并重新入库全部部门。Embedding 会重新计算，期间检索结果可能不完整。
@@ -271,7 +319,7 @@
     <pre id="jobLog"></pre>
   </section>
 
-  <section class="card">
+  <section class="card" id="auditCard">
     <h2><span data-i18n="admin.auditTitle">操作审计</span><span class="sub" data-i18n="admin.auditRecent">最近 20 条</span></h2>
     <table>
       <thead>
@@ -283,6 +331,7 @@
     </table>
   </section>
 </main>
+</div>
 
 <script src="/ui/i18n.js"></script>
 <script>
@@ -327,17 +376,77 @@ function localizeDetail(detail) {
   return detail;
 }
 
+// --- section menu ----------------------------------------------------------
+// The console is one long page; the side menu scrolls to a card and highlights
+// the section currently in view. Hidden cards (e.g. 账号 when local login is
+// off) also hide their menu entry.
+// 控制台原来是长页面；左侧菜单负责跳转并高亮当前分区。卡片隐藏时（如未启用本地
+// 账号，“账号”入口也一并隐藏）。
+const navButtons = Array.from(document.querySelectorAll(".navBtn"));
+const navSections = navButtons.map((btn) => $(btn.dataset.target)).filter(Boolean);
+
+function setActiveNav(id) {
+  navButtons.forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.target === id);
+  });
+}
+
+function syncNavVisibility() {
+  navButtons.forEach((btn) => {
+    const target = $(btn.dataset.target);
+    btn.hidden = !target || target.hidden;
+  });
+}
+
+navButtons.forEach((btn) => {
+  btn.onclick = () => {
+    const target = $(btn.dataset.target);
+    if (!target || target.hidden) return;
+    setActiveNav(btn.dataset.target);
+    target.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+});
+
+if ("IntersectionObserver" in window) {
+  const observer = new IntersectionObserver(
+    (entries) => {
+      entries.forEach((entry) => {
+        if (entry.isIntersecting) setActiveNav(entry.target.id);
+      });
+    },
+    { rootMargin: "-15% 0px -70% 0px", threshold: 0 }
+  );
+  navSections.forEach((section) => observer.observe(section));
+}
+
 // The credential can be either a JWT bearer token (AUTH_MODE=jwt) or the
 // legacy ADMIN_TOKEN. It is stored per browser tab, never in a cookie.
+// 凭据可以是 JWT Bearer token（AUTH_MODE=jwt）或旧的 ADMIN_TOKEN；只存当前标签页，不写 Cookie。
 const TOKEN_KEY = "adminToken";
 const BEARER_KEY = "adminBearer";
+// `/admin` and `/ui/` share the bearer token so one login covers both pages.
+// `/admin` 与 `/ui/` 共享 Bearer token，登录一次即可覆盖两个页面。
+const SHARED_BEARER_KEY = "ragBearer";
 let token = sessionStorage.getItem(TOKEN_KEY) || "";
-let bearer = sessionStorage.getItem(BEARER_KEY) || "";
+let bearer =
+  sessionStorage.getItem(BEARER_KEY) || sessionStorage.getItem(SHARED_BEARER_KEY) || "";
 let session = null;
 let currentDept = "";
 let jobId = null;
 let pollTimer = null;
 let pendingFiles = [];
+
+// Keep the page-specific and shared copies in sync.
+// 同步页面专属副本与共享副本。
+function storeBearer(value) {
+  bearer = value || "";
+  sessionStorage.setItem(BEARER_KEY, bearer);
+  if (bearer) {
+    sessionStorage.setItem(SHARED_BEARER_KEY, bearer);
+  } else {
+    sessionStorage.removeItem(SHARED_BEARER_KEY);
+  }
+}
 
 function authHeaders() {
   const headers = {};
@@ -438,6 +547,7 @@ function badge(status) {
 function showGate(message) {
   $("gate").hidden = false;
   $("console").hidden = true;
+  $("sidebar").hidden = true;
   $("identity").hidden = true;
   $("logout").hidden = true;
   if (message) $("gateErr").textContent = message;
@@ -446,6 +556,7 @@ function showGate(message) {
 function hideGate() {
   $("gate").hidden = true;
   $("console").hidden = false;
+  $("sidebar").hidden = false;
 }
 
 function renderIdentity(info) {
@@ -515,6 +626,7 @@ function clearCredential() {
   token = "";
   sessionStorage.removeItem(TOKEN_KEY);
   sessionStorage.removeItem(BEARER_KEY);
+  sessionStorage.removeItem(SHARED_BEARER_KEY);
   renderIdentity(null);
 }
 
@@ -544,8 +656,14 @@ function consumeTokenFragment() {
     token = value;
     bearer = "";
   }
+  // A token-only login keeps the chat page's shared bearer untouched.
+  // 仅用管理令牌登录时，不动聊天页共享的 Bearer。
+  if (bearer) {
+    storeBearer(bearer);
+  } else {
+    sessionStorage.removeItem(BEARER_KEY);
+  }
   sessionStorage.setItem(TOKEN_KEY, token);
-  sessionStorage.setItem(BEARER_KEY, bearer);
   return value;
 }
 
@@ -590,8 +708,12 @@ async function login(raw) {
   }
   const ok = await resolveSession();
   if (!ok) return false;
+  if (bearer) {
+    storeBearer(bearer);
+  } else {
+    sessionStorage.removeItem(BEARER_KEY);
+  }
   sessionStorage.setItem(TOKEN_KEY, token);
-  sessionStorage.setItem(BEARER_KEY, bearer);
   $("credential").value = "";
   await refreshAll();
   return true;
@@ -620,8 +742,8 @@ async function passwordLogin(username, password) {
   }
   bearer = data.token;
   token = "";
+  storeBearer(bearer);
   sessionStorage.setItem(TOKEN_KEY, token);
-  sessionStorage.setItem(BEARER_KEY, bearer);
   $("password").value = "";
   const ok = await resolveSession();
   if (!ok) return false;
@@ -804,6 +926,7 @@ async function refreshAll() {
   if (failed.length) {
     console.warn("panels failed to load:", failed.join(", "));
   }
+  syncNavVisibility();
 }
 
 // --- accounts --------------------------------------------------------------
