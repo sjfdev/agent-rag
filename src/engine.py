@@ -132,6 +132,16 @@ class BaseVectorStore(ABC):
         """
         raise NotImplementedError
 
+    def fetch_doc_chunks(
+        self, doc_id: str, *, offset: int = 0, limit: int = 50
+    ) -> List[Document]:
+        """Chunks of one `doc_id` for the console's vector browser."""
+        raise NotImplementedError
+
+    def vector_info(self) -> Dict[str, Any]:
+        """Backend/collection details for the console's vector card."""
+        return {}
+
     def hybrid_search(
         self, query: str, user_dept, k: int, candidates: int
     ) -> Optional[List[Document]]:
@@ -634,6 +644,55 @@ class MilvusDriver(BaseVectorStore):
         docs.sort(key=lambda doc: int(doc.metadata.get("chunk_index") or 0))
         return docs[:limit]
 
+    def fetch_doc_chunks(
+        self, doc_id: str, *, offset: int = 0, limit: int = 50
+    ) -> List[Document]:
+        if not doc_id:
+            return []
+        offset = max(0, int(offset or 0))
+        limit = max(1, min(int(limit or 50), 200))
+        target = (
+            self.shadow_collection
+            if getattr(self, "_rebuild_target", None) is not None
+            else self.collection
+        )
+        try:
+            rows = self._query_in(
+                target,
+                f"doc_id == {_quote_expr(doc_id)}",
+                self._FETCH_FIELDS,
+                min(_PREVIEW_SCAN_LIMIT, offset + limit),
+            )
+        except Exception:
+            logger.warning("failed to fetch chunks for doc_id=%s", doc_id, exc_info=True)
+            return []
+        docs: List[Document] = []
+        for row in rows:
+            text = row.pop("text", "")
+            docs.append(Document(page_content=text, metadata=row))
+        docs.sort(key=lambda doc: int(doc.metadata.get("chunk_index") or 0))
+        return docs[offset : offset + limit]
+
+    def vector_info(self) -> Dict[str, Any]:
+        info: Dict[str, Any] = {
+            "backend": "milvus",
+            "collection": self.collection,
+            "write_collection": self._write_collection,
+            "sparse_field": settings.HYBRID_SPARSE_FIELD,
+            "sparse_ready": bool(getattr(self.capabilities, "sparse_ready", False)),
+        }
+        try:
+            schema = self.vector_db.client.describe_collection(self.collection)
+            for field in schema.get("fields", []):
+                if field.get("name") == "vector":
+                    dim = (field.get("params") or {}).get("dim")
+                    if dim:
+                        info["dimension"] = int(dim)
+                    break
+        except Exception:
+            logger.debug("could not read the milvus schema", exc_info=True)
+        return info
+
     def _query_in(self, collection: str, expr: str, fields: List[str], limit: int):
         client = self.vector_db.client
         if not client.has_collection(collection):
@@ -1021,6 +1080,30 @@ class FAISSDriver(BaseVectorStore):
         matched.sort(key=lambda doc: int(doc.metadata.get("chunk_index") or 0))
         return matched[:limit]
 
+    def fetch_doc_chunks(
+        self, doc_id: str, *, offset: int = 0, limit: int = 50
+    ) -> List[Document]:
+        if not doc_id:
+            return []
+        offset = max(0, int(offset or 0))
+        limit = max(1, min(int(limit or 50), 200))
+        docs = [
+            doc
+            for doc in self._write_docs().values()
+            if (doc.metadata or {}).get("doc_id") == doc_id
+        ]
+        docs.sort(key=lambda doc: int(doc.metadata.get("chunk_index") or 0))
+        return docs[offset : offset + limit]
+
+    def vector_info(self) -> Dict[str, Any]:
+        index = getattr(self.vector_db, "index", None) if self.vector_db else None
+        return {
+            "backend": "faiss",
+            "collection": str(settings.DB_PATH),
+            "index_type": type(index).__name__ if index is not None else None,
+            "dimension": int(getattr(index, "d", 0) or 0) or None,
+        }
+
     def get_doc_hash(self, doc_id: str) -> Optional[str]:
         for doc in self._write_docs().values():
             if doc.metadata.get("doc_id") == doc_id:
@@ -1222,6 +1305,18 @@ class KnowledgeBaseEngine:
             sheet=sheet,
             limit=limit,
         )
+
+    def fetch_doc_chunks(
+        self, doc_id: str, *, offset: int = 0, limit: int = 50
+    ) -> List[Document]:
+        return self.driver.fetch_doc_chunks(doc_id, offset=offset, limit=limit)
+
+    def vector_info(self) -> Dict[str, Any]:
+        info = self.driver.vector_info()
+        info.setdefault("backend", settings.VECTOR_STORE_TYPE)
+        info["hybrid"] = self.hybrid_status()
+        info["rebuilding"] = self.is_rebuilding
+        return info
 
     @property
     def hybrid_mode(self) -> str:

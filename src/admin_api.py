@@ -863,3 +863,228 @@ def test_model(body: Optional[Dict[str, Any]] = None):
         return model_settings.probe(body or None)
     except ValueError as exc:
         raise _bad_request(exc)
+
+
+# --- vector store management ------------------------------------------------
+# The files card manages what is on disk; this block exposes what is actually
+# indexed, including chunks whose source file is gone ("orphans").
+# 文件卡片管磁盘上的文件；这里查看真正入库的向量，包括源文件已丢失的孤儿。
+
+_DOC_ID_RE = re.compile(r"^[0-9a-f]{40}$")
+_MAX_CHUNK_CHARS = 2000
+_MAX_ORPHAN_ENRICH = 200
+
+
+class VectorSearchRequest(BaseModel):
+    dept: Optional[str] = Field(default=None, max_length=64)
+    query: str = Field(min_length=1, max_length=500)
+    k: int = Field(default=8, ge=1, le=20)
+
+
+def _vector_catalog(dept: Optional[str] = None) -> Dict[str, Dict[str, Any]]:
+    """doc_id -> file description, for every supported file on disk."""
+    catalog: Dict[str, Dict[str, Any]] = {}
+    for item in _iter_files(dept):
+        doc_id = item.get("doc_id")
+        if doc_id:
+            catalog[doc_id] = item
+    return catalog
+
+
+def _chunk_payload(doc: Any, *, max_chars: int = _MAX_CHUNK_CHARS) -> Dict[str, Any]:
+    meta = doc.metadata or {}
+    text = doc.page_content or ""
+    payload = {
+        "chunk_index": meta.get("chunk_index"),
+        "doc_id": meta.get("doc_id"),
+        "dept": meta.get("dept"),
+        "source": meta.get("source"),
+        "kind": meta.get("kind"),
+        "page": meta.get("page"),
+        "slide": meta.get("slide"),
+        "sheet": meta.get("sheet"),
+        "title": meta.get("title"),
+        "doc_hash": meta.get("doc_hash"),
+        "chars": len(text),
+        "truncated": len(text) > max_chars,
+        "text": text[:max_chars],
+    }
+    if "retrieval_score" in meta:
+        payload["score"] = meta["retrieval_score"]
+    return payload
+
+
+def _vector_documents(
+    catalog: Optional[Dict[str, Dict[str, Any]]] = None,
+) -> tuple[Dict[str, Any], List[Dict[str, Any]]]:
+    """Return the store summary plus existing and orphaned documents."""
+    summary = kb_engine.doc_summary()
+    if catalog is None:
+        catalog = _vector_catalog()
+    existing: List[Dict[str, Any]] = []
+    for doc_id, item in catalog.items():
+        existing.append(
+            {
+                "doc_id": doc_id,
+                "dept": item.get("dept"),
+                "source": item.get("source"),
+                "name": item.get("name"),
+                "ext": item.get("ext"),
+                "size": item.get("size"),
+                "mtime": item.get("mtime"),
+                "chunks": int(item.get("chunks") or 0),
+                "doc_hash": summary.get(doc_id, {}).get("doc_hash"),
+                "status": item.get("status"),
+                "exists": True,
+            }
+        )
+
+    orphan_ids = sorted(set(summary) - set(catalog))
+    orphans: List[Dict[str, Any]] = []
+    for index, doc_id in enumerate(orphan_ids):
+        meta: Dict[str, Any] = {}
+        if index < _MAX_ORPHAN_ENRICH:
+            chunks = kb_engine.fetch_doc_chunks(doc_id, offset=0, limit=1)
+            if chunks:
+                meta = chunks[0].metadata or {}
+        entry = summary.get(doc_id) or {}
+        orphans.append(
+            {
+                "doc_id": doc_id,
+                "dept": meta.get("dept"),
+                "source": meta.get("source"),
+                "name": None,
+                "ext": None,
+                "size": None,
+                "mtime": None,
+                "chunks": int(entry.get("chunks") or 0),
+                "doc_hash": entry.get("doc_hash"),
+                "status": "orphan",
+                "exists": False,
+            }
+        )
+    documents = existing + orphans
+    documents.sort(key=lambda item: (item.get("dept") or "", item.get("source") or "", item["doc_id"]))
+    return summary, documents
+
+
+@router.get("/vectors")
+def list_vectors(dept: Optional[str] = None, status: Optional[str] = None):
+    """Vector stats plus per-document chunk counts.
+
+    向量统计与按文档的 chunk 数；`status` 可筛 indexed/changed/pending/orphan。
+    """
+    if dept:
+        dept = validate_dept(dept)
+    if status:
+        status = status.strip().lower()
+        if status not in {"all", "indexed", "changed", "pending", "orphan"}:
+            raise HTTPException(status_code=400, detail="invalid vector status")
+
+    catalog = _vector_catalog()
+    summary, documents = _vector_documents(catalog)
+    info = kb_engine.vector_info()
+    stats: Dict[str, Any] = {
+        "backend": info.get("backend"),
+        "collection": info.get("collection"),
+        "chunks": int(kb_engine.count()),
+        "live_chunks": int(kb_engine.live_count()),
+        "documents": len(summary),
+        "orphans": len(set(summary) - set(catalog)),
+        "depts": sorted(kb_engine.list_depts()),
+        "dimension": info.get("dimension"),
+        "index_type": info.get("index_type"),
+        "sparse_ready": info.get("sparse_ready"),
+        "hybrid": info.get("hybrid"),
+        "rebuilding": info.get("rebuilding"),
+    }
+    if dept:
+        documents = [item for item in documents if item.get("dept") == dept]
+    if status and status != "all":
+        documents = [item for item in documents if item.get("status") == status]
+    return {"stats": stats, "documents": documents}
+
+
+@router.get("/vectors/chunks")
+def list_vector_chunks(doc_id: str, offset: int = 0, limit: int = 50):
+    """Chunk metadata and text for one document.
+
+    单个文档的 chunk 元数据与正文（正文按 2000 字截断）。
+    """
+    if not _DOC_ID_RE.match(doc_id or ""):
+        raise HTTPException(status_code=400, detail="invalid doc_id")
+    offset = max(0, int(offset or 0))
+    limit = max(1, min(int(limit or 50), 200))
+    total = int(kb_engine.count_by_doc_id(doc_id))
+    docs = kb_engine.fetch_doc_chunks(doc_id, offset=offset, limit=limit)
+    return {
+        "doc_id": doc_id,
+        "total": total,
+        "offset": offset,
+        "limit": limit,
+        "chunks": [_chunk_payload(doc) for doc in docs],
+    }
+
+
+@router.post("/vectors/search")
+def search_vectors(req: VectorSearchRequest):
+    """Run a retrieval query and return the scored chunks.
+
+    执行一次检索并返回带分数的 chunk，用于核对召回。
+    """
+    depts: Any
+    if req.dept:
+        dept = validate_dept(req.dept)
+        if dept not in kb_engine.list_depts():
+            raise HTTPException(status_code=404, detail="department not found")
+        depts = dept
+    else:
+        depts = sorted(kb_engine.list_depts())
+    if not depts:
+        return {"query": req.query, "depts": [], "k": req.k, "results": []}
+    docs = kb_engine.search(req.query, depts, req.k)
+    return {
+        "query": req.query,
+        "depts": depts,
+        "k": req.k,
+        "results": [_chunk_payload(doc, max_chars=600) for doc in docs],
+    }
+
+
+@router.delete("/vectors/{doc_id}")
+def delete_vectors(doc_id: str, request: Request):
+    """Delete every chunk of one document, leaving the file on disk.
+
+    只删向量不删文件；再次增量入库会重新写入。
+    """
+    if not _DOC_ID_RE.match(doc_id or ""):
+        raise HTTPException(status_code=400, detail="invalid doc_id")
+    if _ingest_lock.locked():
+        raise HTTPException(status_code=409, detail="an ingestion job is already running")
+    removed = int(kb_engine.delete_by_doc_id(doc_id))
+    audit.log_event(
+        "vector.delete",
+        _actor(request),
+        detail={"doc_id": doc_id, "chunks_removed": removed},
+    )
+    return {"doc_id": doc_id, "chunks_removed": removed}
+
+
+@router.post("/vectors/prune")
+def prune_vectors(request: Request):
+    """Delete orphan chunks whose source file is no longer on disk.
+
+    清理源文件已不存在的孤儿向量。
+    """
+    if _ingest_lock.locked():
+        raise HTTPException(status_code=409, detail="an ingestion job is already running")
+    summary = kb_engine.doc_summary()
+    catalog = _vector_catalog()
+    orphan_ids = sorted(set(summary) - set(catalog))
+    removed = int(kb_engine.delete_by_doc_ids(orphan_ids)) if orphan_ids else 0
+    audit.log_event(
+        "vector.prune",
+        _actor(request),
+        detail={"documents_removed": len(orphan_ids), "chunks_removed": removed},
+    )
+    return {"documents_removed": len(orphan_ids), "chunks_removed": removed}

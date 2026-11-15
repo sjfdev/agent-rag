@@ -12,6 +12,24 @@ three agree before you push a tag.
 
 ### Added
 
+- **Console file & vector management**: the 入库文件 card and the vector
+  browser are merged into one 文件与向量 card that inspects what is actually
+  indexed: `GET /admin/api/vectors` returns backend
+  stats plus per-document chunk counts (`indexed`/`changed`/`pending`/`orphan`,
+  filterable by department), `GET /admin/api/vectors/chunks` pages through the
+  stored text for one `doc_id`, and `POST /admin/api/vectors/search` replays a
+  retrieval query with scores. `DELETE /admin/api/vectors/{doc_id}` drops only
+  the vectors (the file stays, so the next incremental ingestion rebuilds them)
+  and `POST /admin/api/vectors/prune` removes orphan chunks whose source file is
+  gone; both audit as `vector.delete`/`vector.prune` and return 409 while an
+  ingestion job is running.
+  <br>**管理台文件与向量管理（中文）**：把「入库文件」与向量浏览合并成一张
+  「文件与向量」卡片，查看真正入库的数据：`GET /admin/api/vectors` 返回后端统计与按文档的 chunk 数（`indexed`/
+  `changed`/`pending`/`orphan`，可按部门筛选），`GET /admin/api/vectors/chunks`
+  分页查看某个 `doc_id` 的原文，`POST /admin/api/vectors/search` 重放一次检索
+  并显示分数。`DELETE /admin/api/vectors/{doc_id}` 只删向量、保留磁盘文件（再
+  次增量入库会重建），`POST /admin/api/vectors/prune` 清理源文件已不存在的孤儿
+  向量；两者审计为 `vector.delete`/`vector.prune`，入库任务运行时返回 409。
 - **Shared console login and section menu**: `/admin` and `/ui/` mirror the JWT
   under a shared `ragBearer` sessionStorage key, so one login covers both pages
   (same tab) and either logout clears both; `ADMIN_TOKEN` and the chat

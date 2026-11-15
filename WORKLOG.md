@@ -1305,4 +1305,36 @@ and inline-script syntax (7 checks).
 
 ---
 
-## 21. 相关文档
+## 21. 管理台文件与向量合并管理（2026-11-15）
+
+「入库文件」只说明磁盘上有什么，回答不了「索引里到底有什么」：文件删了向量可能还在，重建失败也会留下孤儿。这轮把向量浏览并入「入库文件」卡片（改名「入库文件与向量」），一张表同时列出磁盘文件、索引状态和孤儿向量。
+
+### 落点
+
+- `src/engine.py`：`BaseVectorStore` 新增 `fetch_doc_chunks(doc_id, offset, limit)` 与 `vector_info()`；Milvus 版查 write/shadow collection（`_PREVIEW_SCAN_LIMIT=200` 内排序后分页），FAISS 版遍历 `_write_docs()`，`KnowledgeBaseEngine` 补 `backend`/`hybrid`/`rebuilding`
+- `src/admin_api.py`：`GET /admin/api/vectors`（stats + 文档列表，按 `dept`/`status` 过滤；孤儿最多反查 200 条来源）、`GET /admin/api/vectors/chunks`（正文按 2000 字截断）、`POST /admin/api/vectors/search`（`k<=20`，部门校验后走 `kb_engine.search`）、`DELETE /admin/api/vectors/{doc_id}`（只删向量，不删文件）、`POST /admin/api/vectors/prune`（清理孤儿）；写入类接口在 `_ingest_lock` 时 409，审计 `vector.delete`/`vector.prune`
+- `static/admin.html` + `static/i18n.js`：在 `#filesCard` 内合并展示；统计 pill（后端/向量/文档/孤儿/部门/维度）、状态筛选、检索框、文档表（查看分片/删除向量/删除文件）、分片分页与检索结果的弹窗；导航只保留「文件与向量」
+- `tests/test_admin_vectors.py`（7）+ `tests/test_admin_ui_js.py` 菜单目标/词条更新：统计、孤儿筛选、分片分页与截断、部门隔离检索、删向量保留文件、清理孤儿、入库时 409
+
+### 验证
+
+- `pytest -q` **620 passed**；`ruff` 干净；`node --check` 页面内联脚本与 `static/i18n.js` 通过
+
+### 注意
+
+- 删除向量不会动磁盘文件，状态会变成 `pending`，下次增量入库即可恢复
+- 孤儿向量的部门/来源靠 `fetch_doc_chunks` 反查，最多 200 条；更多时列表仍显示但来源为空
+- Milvus 分页只在扫描上限内排序，单个文档超过 200 chunk 时深页可能不完整
+
+### English summary
+
+The merged 文件与向量 card inspects the live index: stats and per-document chunk
+counts (filterable by department/status), paged chunk text, and a scored
+retrieval replay. Deleting vectors keeps the source file (the next ingestion
+rebuilds them), pruning drops orphans whose file is gone, and both are audited
+and rejected with 409 while ingestion runs. The engine gained
+`fetch_doc_chunks()` / `vector_info()` for both backends.
+
+---
+
+## 22. 相关文档

@@ -59,6 +59,32 @@
     border-color: #2a3444; box-shadow: inset 2px 0 0 var(--accent);
   }
   .navBtn[hidden] { display: none; }
+  /* Chunk preview modal: same pattern as the chat citation preview. */
+  /* 分片预览弹窗，与聊天引用预览保持一致的交互。 */
+  .modal {
+    position: fixed; inset: 0; z-index: 60; display: flex;
+    align-items: center; justify-content: center; padding: 20px;
+    background: rgba(7, 9, 13, .62);
+  }
+  .modal[hidden] { display: none; }
+  .modalCard {
+    width: min(920px, 100%); max-height: min(82vh, 900px); display: flex;
+    flex-direction: column; background: var(--panel); border: 1px solid #2a3444;
+    border-radius: 12px; box-shadow: 0 20px 60px rgba(0, 0, 0, .5); overflow: hidden;
+  }
+  .modalHead {
+    display: flex; align-items: flex-start; gap: 12px; padding: 14px 18px 8px;
+    border-bottom: 1px solid #232833;
+  }
+  .modalHead h2 { margin: 0; font-size: 14px; color: var(--text); flex: 1; word-break: break-all; }
+  .modalTools { padding: 8px 18px 0; }
+  .modalMeta { padding: 8px 18px 0; font-size: 12px; color: var(--muted); }
+  .modalBody { padding: 4px 18px 18px; overflow: auto; }
+  .modalClose { flex: none; }
+  @media (max-width: 760px) {
+    .modal { padding: 0; }
+    .modalCard { width: 100%; max-height: 100%; height: 100%; border-radius: 0; }
+  }
   .card { scroll-margin-top: 12px; }
   @media (max-width: 760px) {
     .shell { grid-template-columns: 1fr; padding: 12px 12px 32px; gap: 12px; }
@@ -105,7 +131,7 @@
   .b-indexed { color: var(--ok); border-color: #1e4636; background: #12261e; }
   .b-pending { color: var(--warn); border-color: #4a3a1e; background: #241f14; }
   .b-changed { color: #ff9f43; border-color: #4a3320; background: #241b13; }
-  .b-unsupported, .b-unknown { color: var(--muted); border-color: #2a3444; background: var(--panel-2); }
+  .b-unsupported, .b-unknown, .b-orphan { color: var(--muted); border-color: #2a3444; background: var(--panel-2); }
   .msg { font-size: 12px; color: var(--muted); margin-top: 8px; min-height: 18px; }
   .msg.error { color: var(--bad); }
   .msg.ok { color: var(--ok); }
@@ -202,7 +228,7 @@
     <nav id="nav">
       <button class="navBtn" data-target="deptCard" data-i18n="admin.nav.dept">部门</button>
       <button class="navBtn" data-target="uploadCard" data-i18n="admin.nav.upload">上传文件</button>
-      <button class="navBtn" data-target="filesCard" data-i18n="admin.nav.files">入库文件</button>
+      <button class="navBtn" data-target="filesCard" data-i18n="admin.nav.files">文件与向量</button>
       <button class="navBtn" data-target="modelCard" data-i18n="admin.nav.model">模型</button>
       <button class="navBtn" id="navUsers" data-target="usersCard" data-i18n="admin.nav.accounts" hidden>账号</button>
       <button class="navBtn" data-target="rebuildCard" data-i18n="admin.nav.rebuild">重建索引</button>
@@ -236,12 +262,31 @@
     <div class="bar" id="uploadBar" hidden><div class="fill" id="uploadFill"></div></div>
   </section>
 
+  <!-- Files & vectors: one row per document, whether the file still exists. / 文件与向量：每个文档一行，包含源文件已丢失的孤儿向量。 -->
   <section class="card" id="filesCard">
-    <h2><span data-i18n="admin.filesTitle">入库文件</span><span class="sub" id="fileCount"></span></h2>
+    <h2><span data-i18n="admin.filesTitle">入库文件与向量</span><span class="sub" id="fileCount"></span></h2>
+    <p class="hint" style="margin:0 0 10px" data-i18n="admin.filesHint">
+      状态来自索引；删除向量不会删除磁盘文件，再次增量入库会重新写入。
+    </p>
     <div class="row">
       <button id="ingestDept" data-i18n="admin.ingestDept">增量入库（当前部门）</button>
       <button id="ingestAll" data-i18n="admin.ingestAll">增量入库（全部）</button>
     </div>
+    <div class="row">
+      <select id="fileStatus">
+        <option value="all" data-i18n="admin.vectorStatusAll">全部状态</option>
+        <option value="indexed" data-i18n="admin.vectorStatusIndexed">已入库</option>
+        <option value="changed" data-i18n="admin.vectorStatusChanged">已变更</option>
+        <option value="pending" data-i18n="admin.vectorStatusPending">待入库</option>
+        <option value="orphan" data-i18n="admin.vectorStatusOrphan">孤儿</option>
+      </select>
+      <input id="vectorQuery" type="text" placeholder="检索词，如 VPN 申请" data-i18n-placeholder="admin.vectorQueryPlaceholder" maxlength="500">
+      <button id="vectorSearch" class="primary" data-i18n="admin.vectorSearch">检索向量</button>
+      <button id="vectorRefresh" data-i18n="common.refresh">刷新</button>
+      <button id="vectorPrune" class="danger" data-i18n="admin.vectorPrune">清理孤儿向量</button>
+    </div>
+    <div class="stats" id="vectorStats"></div>
+    <div class="msg" id="fileMsg"></div>
     <table>
       <thead>
         <tr>
@@ -250,7 +295,6 @@
       </thead>
       <tbody id="fileBody"></tbody>
     </table>
-    <div class="msg" id="fileMsg"></div>
   </section>
 
   <section class="card" id="usersCard" hidden>
@@ -331,6 +375,29 @@
     </table>
   </section>
 </main>
+</div>
+
+<div class="modal" id="vectorModal" hidden role="dialog" aria-modal="true" aria-labelledby="vectorResultTitle">
+  <div class="modalCard">
+    <div class="modalHead">
+      <h2><span id="vectorResultTitle" data-i18n="admin.vectorResultsTitle">分片</span><span class="sub" id="vectorResultMeta"></span></h2>
+      <button id="vectorClose" class="modalClose" data-i18n="common.close" data-i18n-aria-label="common.close" aria-label="关闭">关闭</button>
+    </div>
+    <div class="row modalTools" id="vectorPager">
+      <button id="vectorPrev" data-i18n="admin.vectorPrev">上一页</button>
+      <button id="vectorNext" data-i18n="admin.vectorNext">下一页</button>
+    </div>
+    <div class="modalBody">
+      <table>
+        <thead>
+          <tr>
+            <th data-i18n="admin.vectorResult.source">来源</th><th data-i18n="admin.vectorResult.location">位置</th><th data-i18n="admin.vectorResult.score">分数</th><th data-i18n="admin.vectorResult.text">内容</th>
+          </tr>
+        </thead>
+        <tbody id="vectorResultBody"></tbody>
+      </table>
+    </div>
+  </div>
 </div>
 
 <script src="/ui/i18n.js"></script>
@@ -545,6 +612,8 @@ function badge(status) {
 }
 
 function showGate(message) {
+  const modal = $("vectorModal");
+  if (modal) modal.hidden = true;
   $("gate").hidden = false;
   $("console").hidden = true;
   $("sidebar").hidden = true;
@@ -803,12 +872,44 @@ async function loadMeta() {
 }
 
 async function loadFiles() {
-  const query = currentDept ? "?dept=" + encodeURIComponent(currentDept) : "";
-  const data = await api("/admin/api/files" + query);
-  fileBody.innerHTML = "";
-  $("fileCount").textContent = currentDept ? t("admin.deptInParens", { dept: currentDept }) : t("admin.all");
+  // One card, one request: `/vectors` already merges on-disk files with
+  // orphan chunks, so the table never disagrees with the stats above it.
+  // 文件与向量合并展示：以 /vectors 为准，孤儿向量也出现在同一张表里。
+  const status = $("fileStatus").value;
+  const fileParams = new URLSearchParams();
+  if (currentDept) fileParams.set("dept", currentDept);
+  const vectorParams = new URLSearchParams(fileParams);
+  if (status && status !== "all") vectorParams.set("status", status);
+  const fileSuffix = fileParams.toString() ? "?" + fileParams.toString() : "";
+  const vectorSuffix = vectorParams.toString() ? "?" + vectorParams.toString() : "";
+  const [vector, files] = await Promise.all([
+    api("/admin/api/vectors" + vectorSuffix),
+    api("/admin/api/files" + fileSuffix),
+  ]);
+  const rows = vector.documents.slice();
+  const known = new Set(rows.map((item) => item.doc_id));
+  for (const file of files.files) {
+    // Unsupported formats have no doc_id and never appear in /vectors; keep
+    // them so they can still be deleted from disk.
+    // 不支持预览的格式也保留在表里，至少还能删除文件。
+    if (file.doc_id && known.has(file.doc_id)) continue;
+    if (status && status !== "all" && file.status !== status) continue;
+    rows.push({ ...file, exists: true });
+  }
+  rows.sort((a, b) =>
+    String(a.dept || "").localeCompare(String(b.dept || "")) ||
+    String(a.source || "").localeCompare(String(b.source || ""))
+  );
+  renderVectorStats(vector.stats);
+  $("fileCount").textContent = currentDept
+    ? t("admin.deptInParens", { dept: currentDept })
+    : t("admin.all");
+  renderFileRows(rows);
+}
 
-  if (!data.files.length) {
+function renderFileRows(documents) {
+  fileBody.innerHTML = "";
+  if (!documents.length) {
     const tr = document.createElement("tr");
     const td = document.createElement("td");
     td.colSpan = 7;
@@ -819,23 +920,25 @@ async function loadFiles() {
     return;
   }
 
-  for (const file of data.files) {
+  for (const file of documents) {
     const tr = document.createElement("tr");
 
     const name = document.createElement("td");
     name.className = "name";
-    name.textContent = file.source;
-    name.title = file.source;
+    name.textContent = file.source || t("admin.vectorUnknownSource");
+    name.title = file.source || "";
     tr.appendChild(name);
 
     const kind = document.createElement("td");
     kind.className = "mono";
-    kind.textContent = file.ext.replace(".", "") || "-";
+    kind.textContent = file.ext ? file.ext.replace(".", "") : "-";
     tr.appendChild(kind);
 
     const size = document.createElement("td");
     size.className = "mono";
-    size.textContent = fmtBytes(file.size);
+    size.textContent = file.size === null || file.size === undefined
+      ? "-"
+      : fmtBytes(file.size);
     tr.appendChild(size);
 
     const status = document.createElement("td");
@@ -849,15 +952,40 @@ async function loadFiles() {
 
     const mtime = document.createElement("td");
     mtime.className = "mono";
-    mtime.textContent = (file.mtime || "").replace("T", " ");
+    mtime.textContent = (file.mtime || "-").replace("T", " ");
     tr.appendChild(mtime);
 
     const actions = document.createElement("td");
-    const del = document.createElement("button");
-    del.className = "tiny danger";
-    del.textContent = t("common.delete");
-    del.onclick = () => removeFile(file);
-    actions.appendChild(del);
+    actions.className = "actions";
+    if (file.doc_id) {
+      const view = document.createElement("button");
+      view.className = "tiny";
+      view.textContent = t("admin.vectorViewChunks");
+      view.onclick = () => {
+        openVectorChunks(file.doc_id, file.source).catch((error) =>
+          setMsg($("fileMsg"), error.message, "error")
+        );
+      };
+      actions.appendChild(view);
+    }
+    if (file.chunks) {
+      const removeVectors = document.createElement("button");
+      removeVectors.className = "tiny danger";
+      removeVectors.textContent = t("admin.vectorDelete");
+      removeVectors.onclick = () => {
+        deleteVector(file.doc_id, file.source).catch((error) =>
+          setMsg($("fileMsg"), error.message, "error")
+        );
+      };
+      actions.appendChild(removeVectors);
+    }
+    if (file.exists) {
+      const del = document.createElement("button");
+      del.className = "tiny danger";
+      del.textContent = t("common.delete");
+      del.onclick = () => removeFile(file);
+      actions.appendChild(del);
+    }
     tr.appendChild(actions);
 
     fileBody.appendChild(tr);
@@ -1301,6 +1429,180 @@ async function resetModel() {
   }
 }
 
+// --- files & vectors -------------------------------------------------------
+// One table shows both. Deleting vectors keeps the source file, so the next
+// ingestion rebuilds them; orphan rows are file-less vectors that can be pruned.
+// 同一张表展示文件与向量；删除向量不删文件，孤儿行可直接清理。
+const VECTOR_PAGE = 20;
+let vectorChunkDoc = "";
+let vectorChunkSource = "";
+let vectorChunkOffset = 0;
+let vectorChunkTotal = 0;
+
+function vectorLocation(item) {
+  if (item.sheet) return "sheet " + item.sheet;
+  if (item.slide) return "slide " + item.slide;
+  if (item.page) return "p" + item.page;
+  return item.kind || "-";
+}
+
+function vectorPill(label, value) {
+  const pill = document.createElement("span");
+  pill.className = "pill";
+  const bold = document.createElement("b");
+  bold.textContent = value === null || value === undefined ? "-" : String(value);
+  pill.append(label + " ", bold);
+  return pill;
+}
+
+function renderVectorStats(stats) {
+  const box = $("vectorStats");
+  box.innerHTML = "";
+  box.appendChild(vectorPill(t("admin.vectorBackend"), stats.backend));
+  box.appendChild(vectorPill(t("admin.vectorChunks"), stats.live_chunks));
+  box.appendChild(vectorPill(t("admin.vectorDocuments"), stats.documents));
+  box.appendChild(vectorPill(t("admin.vectorOrphans"), stats.orphans));
+  box.appendChild(vectorPill(t("admin.vectorDepts"), (stats.depts || []).length));
+  if (stats.dimension) box.appendChild(vectorPill(t("admin.vectorDimension"), stats.dimension));
+}
+
+function renderVectorResults(results) {
+  const body = $("vectorResultBody");
+  body.innerHTML = "";
+  if (!results.length) {
+    const tr = document.createElement("tr");
+    const td = document.createElement("td");
+    td.colSpan = 4;
+    td.className = "hint";
+    td.textContent = t("admin.vectorNoResults");
+    tr.appendChild(td);
+    body.appendChild(tr);
+    return;
+  }
+  for (const item of results) {
+    const tr = document.createElement("tr");
+    const source = document.createElement("td");
+    source.className = "name";
+    source.textContent = item.source || t("admin.vectorUnknownSource");
+    source.title = item.source || "";
+    const location = document.createElement("td");
+    location.className = "mono";
+    location.textContent = vectorLocation(item);
+    const score = document.createElement("td");
+    score.className = "mono";
+    score.textContent = item.score === undefined ? "-" : Number(item.score).toFixed(3);
+    const text = document.createElement("td");
+    text.textContent = item.text || "";
+    tr.append(source, location, score, text);
+    body.appendChild(tr);
+  }
+}
+
+function updateVectorPager() {
+  const paged = Boolean(vectorChunkDoc);
+  $("vectorPrev").disabled = !paged || vectorChunkOffset <= 0;
+  $("vectorNext").disabled =
+    !paged || vectorChunkOffset + VECTOR_PAGE >= vectorChunkTotal;
+}
+
+async function openVectorChunks(docId, source, offset = 0) {
+  if (!docId) return;
+  const url =
+    "/admin/api/vectors/chunks?doc_id=" +
+    encodeURIComponent(docId) +
+    "&offset=" +
+    offset +
+    "&limit=" +
+    VECTOR_PAGE;
+  const data = await api(url);
+  vectorChunkDoc = docId;
+  vectorChunkSource = source || docId.slice(0, 10);
+  vectorChunkOffset = data.offset;
+  vectorChunkTotal = data.total;
+  $("vectorPager").hidden = false;
+  $("vectorModal").hidden = false;
+  $("vectorClose").focus();
+  $("vectorResultTitle").textContent = t("admin.vectorChunksTitle", {
+    source: vectorChunkSource,
+  });
+  $("vectorResultMeta").textContent = data.total
+    ? t("admin.vectorChunkMeta", {
+        from: data.offset + 1,
+        to: data.offset + data.chunks.length,
+        total: data.total,
+      })
+    : "";
+  renderVectorResults(data.chunks);
+  updateVectorPager();
+}
+
+async function searchVectors() {
+  const query = $("vectorQuery").value.trim();
+  if (!query) {
+    setMsg($("fileMsg"), t("admin.vectorQueryRequired"), "error");
+    return;
+  }
+  setMsg($("fileMsg"), t("admin.vectorSearching"), "ok");
+  try {
+    const data = await api("/admin/api/vectors/search", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ dept: currentDept || null, query, k: 8 }),
+      timeoutMs: 60000,
+    });
+    vectorChunkDoc = "";
+    vectorChunkTotal = 0;
+    vectorChunkOffset = 0;
+    $("vectorPager").hidden = true;
+    $("vectorModal").hidden = false;
+    $("vectorResultTitle").textContent = t("admin.vectorSearchTitle");
+    $("vectorResultMeta").textContent = t("admin.vectorSearchMeta", {
+      count: data.results.length,
+      depts: Array.isArray(data.depts) ? data.depts.join(", ") : data.depts,
+    });
+    renderVectorResults(data.results);
+    updateVectorPager();
+    setMsg($("fileMsg"), "", "ok");
+  } catch (error) {
+    setMsg($("fileMsg"), error.message, "error");
+  }
+}
+
+async function deleteVector(docId, source) {
+  if (!docId) return;
+  const label = source || docId.slice(0, 10);
+  if (!confirm(t("admin.vectorDeleteConfirm", { source: label }))) return;
+  const data = await api("/admin/api/vectors/" + encodeURIComponent(docId), {
+    method: "DELETE",
+  });
+  setMsg(
+    $("fileMsg"),
+    t("admin.vectorDeleted", { chunks: data.chunks_removed, source: label }),
+    "ok"
+  );
+  if (vectorChunkDoc === docId) {
+    vectorChunkDoc = "";
+    $("vectorModal").hidden = true;
+  }
+  await loadFiles();
+}
+
+async function pruneVectors() {
+  if (!confirm(t("admin.vectorPruneConfirm"))) return;
+  const data = await api("/admin/api/vectors/prune", { method: "POST" });
+  setMsg(
+    $("fileMsg"),
+    t("admin.vectorPruned", {
+      docs: data.documents_removed,
+      chunks: data.chunks_removed,
+    }),
+    "ok"
+  );
+  vectorChunkDoc = "";
+  $("vectorModal").hidden = true;
+  await loadFiles();
+}
+
 deptSel.onchange = () => {
   currentDept = deptSel.value;
   loadFiles().catch((e) => setMsg($("fileMsg"), e.message, "error"));
@@ -1311,6 +1613,32 @@ $("refresh").onclick = refreshAll;
 $("modelTest").onclick = testModel;
 $("modelSave").onclick = saveModel;
 $("modelReset").onclick = resetModel;
+
+$("vectorRefresh").onclick = () =>
+  loadFiles().catch((e) => setMsg($("fileMsg"), e.message, "error"));
+$("vectorSearch").onclick = () => searchVectors();
+$("vectorPrune").onclick = () =>
+  pruneVectors().catch((e) => setMsg($("fileMsg"), e.message, "error"));
+$("fileStatus").onchange = () =>
+  loadFiles().catch((e) => setMsg($("fileMsg"), e.message, "error"));
+$("vectorPrev").onclick = () =>
+  openVectorChunks(vectorChunkDoc, vectorChunkSource, Math.max(0, vectorChunkOffset - VECTOR_PAGE))
+    .catch((e) => setMsg($("fileMsg"), e.message, "error"));
+$("vectorNext").onclick = () =>
+  openVectorChunks(vectorChunkDoc, vectorChunkSource, vectorChunkOffset + VECTOR_PAGE)
+    .catch((e) => setMsg($("fileMsg"), e.message, "error"));
+function closeVectorModal() {
+  vectorChunkDoc = "";
+  $("vectorModal").hidden = true;
+}
+
+$("vectorClose").onclick = closeVectorModal;
+$("vectorModal").addEventListener("click", (event) => {
+  if (event.target === $("vectorModal")) closeVectorModal();
+});
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && !$("vectorModal").hidden) closeVectorModal();
+});
 
 $("createUser").onclick = () => {
   createUser().catch((e) => setMsg($("userMsg"), t("admin.createFailed", { error: e.message }), "error"));

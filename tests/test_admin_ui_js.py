@@ -59,7 +59,8 @@ def test_menu_entries_use_bilingual_nav_keys():
     text = ADMIN.read_text()
     keys = set(re.findall(r'data-i18n="(admin\.nav\.[^"]+)"', text))
     assert keys == {f"admin.nav.{name}" for name in
-                    ("dept", "upload", "files", "model", "accounts", "rebuild", "audit")}
+                    ("dept", "upload", "files", "model", "accounts", "rebuild",
+                     "audit")}
 
 
 def test_sidebar_is_hidden_until_authenticated():
