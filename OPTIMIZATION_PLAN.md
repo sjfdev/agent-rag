@@ -721,6 +721,7 @@ curl -s -X POST localhost:8000/chat -H 'Content-Type: application/json' \
 - [x] Prometheus 抓取 `/metrics` + Grafana 面板：`docker-compose.monitoring.yml` + `monitoring/`（Prometheus/blackbox/Grafana，`make monitor-up|monitor-down|monitor-check`），预置「Agent RAG」面板（请求量/错误率/P95/首 token/缓存命中/索引块数/就绪/引擎）
 - [x] 告警项（`monitoring/prometheus/alerts.yml`）：`AgentRagErrorRate`（5 分钟错误率 >5%）、`AgentRagCacheHitDrop`（10 分钟命中率低于 1 小时基线一半）、`AgentRagIndexEmpty`（`agent_rag_index_chunks == 0` 持续 5 分钟）、`AgentRagHealthDown`（blackbox 探测 `/health` 连续 3 次非 2xx）、`AgentRagMetricsDown`、`AgentRagMaintenanceStuck`
 - [x] 离线校验：`scripts/check_monitoring.py`（检查告警/面板引用的 `agent_rag_*` 指标都存在于 `src/metrics.py`，有 promtool 时额外跑 `promtool check rules`），`tests/test_monitoring.py`（7 项）
+- [x] 告警推送渠道（**已决策不配**，2026-11-15）：保持 `noop` 接收器，告警只在 Alertmanager `127.0.0.1:9093` 与 Grafana 面板里看；投递链路已用本地 webhook 实测通过（见 `WORKLOG.md` §18），将来要接只需在 `.env` 填 `ALERTMANAGER_EMAIL_*` / `SLACK_WEBHOOK_URL` / `WEBHOOK_URL` 后 `make monitor-config`
 - [x] 告警通知落地：Alertmanager（`docker-compose.monitoring.yml`，`127.0.0.1:9093`）接收 Prometheus `alerting` 转发；`scripts/render_alertmanager.py`（`make monitor-config`，`monitor-up`/`monitor-check` 也会执行）从 `.env` 渲染 gitignored 的 `monitoring/alertmanager/alertmanager.yml`——邮件（`ALERTMANAGER_EMAIL_TO` + SMTP，密码放 `monitoring/alertmanager/smtp_password`）、Slack、通用 Webhook 三类渠道按需开启，全未配置时落到 `noop` 接收器；分组 `alertname`+`severity`，`AgentRagMetricsDown` 抑制同一实例的派生告警；`amtool check-config` 可用时额外校验
 - [x] 日志接入 Loki：`monitoring/loki/loki.yml`（单节点 tsdb、`LOKI_RETENTION` 默认 720h、compactor 清理）+ `monitoring/promtail/promtail.yml`（Docker socket 发现、只保留 `agent-rag-*`、解 json-file 信封、label `container`/`service`/`stream`）；Grafana 增加 `loki` 数据源与「Application logs (Loki)」面板（`{service="app"}`，可用 `|= "<request_id>"` 追单请求）；`DOCKER_SOCKET`/`DOCKER_CONTAINERS_DIR` 适配 rootless/远程 daemon，Promtail 可单独不启动；`request_id` 在应用日志与 `X-Request-ID` 中贯穿
 
@@ -796,7 +797,7 @@ curl -s -X POST localhost:8000/chat -H 'Content-Type: application/json' \
 
 **11.2.1 剩余项已完成（2026-11-14）。** Alertmanager 作为独立服务加入监控栈（`127.0.0.1:9093`），Prometheus `prometheus.yml` 通过 `alerting` 转发；`scripts/render_alertmanager.py` 从 `.env`/环境渲染到 gitignored 的 `monitoring/alertmanager/alertmanager.yml`，邮件/Slack/Webhook 三渠道按变量开启，缺 SMTP 主机或密码时直接报错，全部未配置时用 `noop` 接收器保证配置合法；路由对 `critical|warning` 全渠道分发（`continue: true`），分组 `alertname`+`severity`，并用 inhibit 规则让 `AgentRagMetricsDown` 压掉同实例的错误率/缓存/重建派生告警。日志侧新增 `promtail`（Docker socket 发现、只保留 `agent-rag-*`、解 json-file 信封、label `container`/`service`/`stream`）与单节点 `loki`（tsdb、`LOKI_RETENTION` 默认 720h、compactor 清理）；Grafana 增加 `loki` 数据源与日志面板，`|= "<request_id>"` 可追踪单请求。`scripts/check_monitoring.py` 从 28 项扩到 42 项（含渲染、路由引用、日志采集、compose 挂载与回环端口），`tests/test_monitoring.py` 从 7 项扩到 20 项，全套 **568 passed**。已知限制：Promtail 依赖 Docker socket 与 `/var/lib/docker/containers`，rootless/远程 daemon 需覆盖 `DOCKER_SOCKET`/`DOCKER_CONTAINERS_DIR`；只采集容器 stdout，应用未额外写文件日志。
 
-下一项：TLS、开机自恢复/每日备份已完成（`WORKLOG.md` §17、§18）；IdP 与异地副本均已决策不做。剩下只等两个外部输入：Alertmanager 真实渠道、2027-02-14 季度演练。功能侧无新排期；11.3 规模化项按各自触发条件再启动。
+下一项：TLS、开机自恢复/每日备份已完成（`WORKLOG.md` §17、§18）；IdP 与异地副本均已决策不做。告警渠道已决策不配（`noop`）；只剩 2027-02-14 季度演练一个排期项。功能侧无新排期；11.3 规模化项按各自触发条件再启动。
 
 演练环境注意：Docker/colima 只共享 `$HOME`，不要把演练卷放在 `/tmp`（容器里会看到空目录，误判为恢复失败）。
 
