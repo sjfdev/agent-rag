@@ -14,7 +14,7 @@ from fastapi.responses import (
 )
 from fastapi.staticfiles import StaticFiles
 
-from src import acl, auth, chat_service, local_auth, metrics
+from src import acl, auth, chat_service, local_auth, metrics, model_settings
 from src.admin_api import _job_store
 from src.admin_api import router as admin_router
 from src.admin_api import session_router as admin_session_router
@@ -100,7 +100,7 @@ def info():
     return {
         "version": __version__,
         "vector_store": settings.VECTOR_STORE_TYPE,
-        "llm_model": settings.LLM_MODEL,
+        "llm_model": model_settings.effective()["model"],
         "embedding_backend": settings.EMBEDDING_BACKEND,
         "hybrid": kb_engine.hybrid_status(),
         "auth_mode": settings.AUTH_MODE,

@@ -39,6 +39,8 @@ def _offline_env(tmp_path_factory):
     os.environ.setdefault("FAQ_CACHE_ENABLED", "true")
     # A developer's real .env may point at the live accounts file.
     os.environ["AUTH_USERS_FILE"] = str(root / "users.json")
+    # Never read or write the developer's real console overrides.
+    os.environ.setdefault("MODEL_SETTINGS_FILE", str(root / "model_settings.json"))
     # Imported here so settings pick up the environment above.
     import src  # noqa: F401
     from src.config import settings
@@ -56,6 +58,10 @@ def _offline_env(tmp_path_factory):
     settings.AUTH_JWKS_URL = ""
     settings.AUTH_JWKS_FILE = ""
     settings.AUTH_USERS_FILE = str(root / "users.json")
+    settings.MODEL_SETTINGS_FILE = os.environ["MODEL_SETTINGS_FILE"]
+    from src import model_settings
+
+    model_settings.reset_state()
     yield
 
 

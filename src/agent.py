@@ -15,6 +15,7 @@ from langgraph.graph import END, StateGraph
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode
 
+from src import model_settings
 from src.config import settings
 from src.engine import get_engine
 from src.errors import is_transport_error
@@ -58,16 +59,47 @@ Rules:
 """
 
 
-llm = ChatOpenAI(
-    model=settings.LLM_MODEL,
-    openai_api_base=settings.LLM_API_BASE,
-    openai_api_key=settings.LLM_API_KEY,
-    temperature=0,
-    max_tokens=settings.LLM_MAX_TOKENS,
-    timeout=settings.LLM_TIMEOUT,
-    max_retries=settings.LLM_MAX_RETRIES,
-    streaming=True,  # lets LangGraph stream tokens via stream_mode="messages"
-).bind_tools(agent_tools)
+def build_llm():
+    """Build the chat model from `.env` plus any console overrides."""
+    config = model_settings.effective()
+    return ChatOpenAI(
+        model=config["model"],
+        openai_api_base=config["api_base"],
+        openai_api_key=config["api_key"],
+        temperature=config["temperature"],
+        max_tokens=config["max_tokens"],
+        timeout=settings.LLM_TIMEOUT,
+        max_retries=settings.LLM_MAX_RETRIES,
+        streaming=True,  # lets LangGraph stream tokens via stream_mode="messages"
+    ).bind_tools(agent_tools)
+
+
+_llm_cache: Dict[str, Any] = {"key": None, "client": None}
+
+
+def current_llm():
+    """The model for the next turn, rebuilt when the console saves a change."""
+    key = model_settings.cache_key()
+    if _llm_cache["client"] is None or _llm_cache["key"] != key:
+        _llm_cache["client"] = build_llm()
+        _llm_cache["key"] = key
+    return _llm_cache["client"]
+
+
+class _LLMProxy:
+    """Keeps the old ``agent.llm`` call sites (and test stubs) working."""
+
+    def invoke(self, *args, **kwargs):
+        return current_llm().invoke(*args, **kwargs)
+
+    def ainvoke(self, *args, **kwargs):
+        return current_llm().ainvoke(*args, **kwargs)
+
+    def __getattr__(self, name):
+        return getattr(current_llm(), name)
+
+
+llm = _LLMProxy()
 
 
 # Personal pronouns almost always refer to something in the previous turn.

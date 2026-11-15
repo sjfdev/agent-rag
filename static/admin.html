@@ -230,6 +230,28 @@
     <div class="msg" id="userMsg"></div>
   </section>
 
+  <section class="card" id="modelCard">
+    <h2><span data-i18n="admin.modelTitle">模型</span><span class="sub" id="modelSource"></span></h2>
+    <p class="hint" style="margin:0 0 10px" data-i18n="admin.modelHint">
+      只影响对话生成；入库与检索仍用 EMBEDDING_* 设置。保存后下一轮对话立即生效，重启后仍保留。
+    </p>
+    <div class="row">
+      <input id="modelBase" type="text" placeholder="API Base，如 https://open.bigmodel.cn/api/paas/v4" data-i18n-placeholder="admin.modelBasePlaceholder" maxlength="300" autocomplete="off">
+      <input id="modelName" type="text" placeholder="模型名，如 glm-4-flash" data-i18n-placeholder="admin.modelNamePlaceholder" maxlength="200" autocomplete="off">
+    </div>
+    <div class="row">
+      <input id="modelKey" type="password" placeholder="API Key（留空保持不变）" data-i18n-placeholder="admin.modelKeyPlaceholder" maxlength="512" autocomplete="new-password">
+      <input id="modelTemp" type="number" step="0.1" min="0" max="2" placeholder="temperature" style="max-width:150px">
+      <input id="modelTokens" type="number" step="1" min="1" max="32768" placeholder="max tokens" style="max-width:170px">
+    </div>
+    <div class="row">
+      <button id="modelTest" data-i18n="admin.modelTest">测试连接</button>
+      <button id="modelSave" class="primary" data-i18n="admin.modelSave">保存</button>
+      <button id="modelReset" data-i18n="admin.modelReset">恢复 .env</button>
+    </div>
+    <div class="msg" id="modelMsg"></div>
+  </section>
+
   <section class="card dangerZone">
     <h2 data-i18n="admin.rebuildTitle">重建索引</h2>
     <p class="hint" style="margin:0 0 10px" data-i18n="admin.rebuildHint">
@@ -761,6 +783,7 @@ async function refreshAll() {
     { name: "admin.panel.files", run: loadFiles, msg: "fileMsg" },
     { name: "admin.panel.audit", run: loadAudit, msg: null },
     { name: "admin.panel.accounts", run: loadUsers, msg: "userMsg" },
+    { name: "admin.panel.model", run: loadModel, msg: "modelMsg" },
   ];
   const results = await Promise.allSettled(panels.map((panel) => panel.run()));
   const failed = [];
@@ -1068,12 +1091,90 @@ async function pollJob() {
   pollTimer = setTimeout(pollJob, 800);
 }
 
+// --- chat model overrides --------------------------------------------------
+// Only chat generation is affected; ingestion and retrieval keep EMBEDDING_*.
+function modelPayload() {
+  return {
+    api_base: $("modelBase").value.trim(),
+    model: $("modelName").value.trim(),
+    api_key: $("modelKey").value.trim() || null,
+    temperature: Number($("modelTemp").value || 0),
+    max_tokens: Number($("modelTokens").value || 256),
+  };
+}
+
+function renderModel(data) {
+  $("modelBase").value = data.api_base || "";
+  $("modelName").value = data.model || "";
+  $("modelTemp").value = data.temperature ?? 0;
+  $("modelTokens").value = data.max_tokens ?? 256;
+  $("modelKey").value = "";
+  $("modelKey").placeholder = data.has_api_key
+    ? t("admin.modelKeyKeep", { hint: data.api_key_hint || "****" })
+    : t("admin.modelKeyPlaceholder");
+  $("modelSource").textContent =
+    data.source === "override" ? t("admin.modelSourceOverride") : t("admin.modelSourceEnv");
+}
+
+async function loadModel() {
+  renderModel(await api("/admin/api/model"));
+}
+
+async function testModel() {
+  setMsg($("modelMsg"), t("admin.modelTesting"), "ok");
+  try {
+    const result = await api("/admin/api/model/test", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(modelPayload()),
+      timeoutMs: 40000,
+    });
+    if (result.ok) {
+      setMsg($("modelMsg"), t("admin.modelTestOk", { model: result.model, ms: result.latency_ms }), "ok");
+    } else {
+      setMsg($("modelMsg"), t("admin.modelTestFailed", { error: result.error || "?" }), "error");
+    }
+  } catch (error) {
+    setMsg($("modelMsg"), error.message, "error");
+  }
+}
+
+async function saveModel() {
+  try {
+    const data = await api("/admin/api/model", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(modelPayload()),
+    });
+    renderModel(data);
+    setMsg($("modelMsg"), t("admin.modelSaved", { model: data.model }), "ok");
+    await loadMeta();
+  } catch (error) {
+    setMsg($("modelMsg"), error.message, "error");
+  }
+}
+
+async function resetModel() {
+  try {
+    const data = await api("/admin/api/model", { method: "DELETE" });
+    renderModel(data);
+    setMsg($("modelMsg"), t("admin.modelResetDone"), "ok");
+    await loadMeta();
+  } catch (error) {
+    setMsg($("modelMsg"), error.message, "error");
+  }
+}
+
 deptSel.onchange = () => {
   currentDept = deptSel.value;
   loadFiles().catch((e) => setMsg($("fileMsg"), e.message, "error"));
 };
 
 $("refresh").onclick = refreshAll;
+
+$("modelTest").onclick = testModel;
+$("modelSave").onclick = saveModel;
+$("modelReset").onclick = resetModel;
 
 $("createUser").onclick = () => {
   createUser().catch((e) => setMsg($("userMsg"), t("admin.createFailed", { error: e.message }), "error"));

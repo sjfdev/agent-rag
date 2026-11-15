@@ -12,6 +12,15 @@ three agree before you push a tag.
 
 ### Added
 
+- **Console model overrides**: the admin console's new 模型 card changes the
+  chat endpoint (`api_base`/`model`/`api_key`/`temperature`/`max_tokens`) without
+  a restart. `GET/PUT/DELETE /admin/api/model` and `POST /admin/api/model/test`
+  (an 8-token probe) persist to `config/model_settings.json` (0600, gitignored),
+  return only a masked key hint, and audit `model.update`/`model.reset` without
+  the secret. `src/agent.py` rebuilds the bound model when the file changes, so
+  the next turn uses it; `.env` stays the default and `DELETE` reverts. Ingestion
+  and retrieval keep the `EMBEDDING_*` settings. `LLM_TEMPERATURE` is now
+  configurable (default `0.0`).
 - **TLS edge**: the production compose adds a `caddy` sidecar (internal CA,
   `KB_SITE_ADDRESS`, default `kb.internal`) and publishes only `:443`; the app
   binds `127.0.0.1:8000`, so logins and chat never travel in cleartext. Caddy

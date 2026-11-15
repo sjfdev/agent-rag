@@ -13,10 +13,14 @@ class Settings(BaseSettings):
     LLM_API_BASE: str = "http://localhost:11434/v1"
     LLM_API_KEY: str = "ollama"
     LLM_MODEL: str = "qwen2.5:latest"
+    LLM_TEMPERATURE: float = 0.0
     LLM_TIMEOUT: int = 30
     LLM_MAX_TOKENS: int = 256
     LLM_MAX_RETRIES: int = 2
     AGENT_RECURSION_LIMIT: int = 6
+    # Runtime overrides written by the admin console (see src/model_settings.py).
+    # Kept under config/ so it is mounted, backed up and gitignored.
+    MODEL_SETTINGS_FILE: str = "./config/model_settings.json"
 
     # Ingestion / admin
     DATA_DIR: str = "./data"

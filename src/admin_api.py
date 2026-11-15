@@ -18,7 +18,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from pydantic import BaseModel, Field
 
-from src import audit, auth, local_auth
+from src import audit, auth, local_auth, model_settings
 from src.config import settings
 from src.engine import kb_engine
 from src.etl import EnterpriseETL, doc_id_for
@@ -406,7 +406,7 @@ def admin_meta():
     return {
         "vector_store": settings.VECTOR_STORE_TYPE,
         "embedding_backend": settings.EMBEDDING_BACKEND,
-        "llm_model": settings.LLM_MODEL,
+        "llm_model": model_settings.effective()["model"],
         "data_dir": str(_data_root().resolve()),
         "max_upload_mb": settings.MAX_UPLOAD_MB,
         "max_upload_total_mb": settings.MAX_UPLOAD_TOTAL_MB,
@@ -798,3 +798,54 @@ def delete_user(username: str, request: Request):
         raise _bad_request(exc)
     audit.log_event("user.delete", _actor(request), detail={"username": username})
     return {"deleted": deleted, "username": username}
+
+
+# --- chat model overrides ---------------------------------------------------
+# `.env` remains the default; these endpoints change what chat generation uses
+# (never embeddings). The API key is write-only: responses carry a masked hint.
+
+
+class ModelSettingsRequest(BaseModel):
+    api_base: str = Field(min_length=1, max_length=300)
+    model: str = Field(min_length=1, max_length=200)
+    api_key: Optional[str] = Field(default=None, max_length=512)
+    temperature: float = 0.0
+    max_tokens: int = 256
+
+
+@router.get("/model")
+def get_model():
+    return model_settings.describe()
+
+
+@router.put("/model")
+def put_model(req: ModelSettingsRequest, request: Request):
+    try:
+        saved = model_settings.save(req.model_dump())
+    except ValueError as exc:
+        raise _bad_request(exc)
+    audit.log_event(
+        "model.update",
+        _actor(request),
+        detail={"model": saved["model"], "api_base": saved["api_base"]},
+    )
+    return saved
+
+
+@router.delete("/model")
+def reset_model(request: Request):
+    saved = model_settings.clear()
+    audit.log_event("model.reset", _actor(request), detail={"model": saved["model"]})
+    return saved
+
+
+@router.post("/model/test")
+def test_model(body: Optional[Dict[str, Any]] = None):
+    """Probe the endpoint; an unsaved payload tests before saving.
+
+    An empty body (or `{}`) tests the currently effective configuration.
+    """
+    try:
+        return model_settings.probe(body or None)
+    except ValueError as exc:
+        raise _bad_request(exc)

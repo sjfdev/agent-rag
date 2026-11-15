@@ -1236,4 +1236,29 @@ colima 今天停过一次，全靠手动 `colima start` 才恢复；`make backup
 
 ---
 
-## 19. 相关文档
+## 19. 管理台自定义模型（2026-11-15）
+
+`.env` 里的 `LLM_*` 改一次要重启容器，试用别的模型/厂商很不方便。本轮给管理台加了「模型」卡片：改完点保存，下一轮对话立即生效，重启后仍在。
+
+### 落点
+
+- `src/model_settings.py`（新）：`env_defaults()` 读 `.env`，`effective()` 合并磁盘覆盖；`_read()` 按 `mtime_ns` 缓存、坏文件只警告不生效；`save()` 原子写（tmp + `os.replace`，0600）、空 key 保留原值；`describe()` 只回 `****后四位` 掩码 + `source=env|override`；`probe()` 用 `openai.OpenAI` 发一条 8 token 的 `ping`，返回 `ok/latency_ms/error`
+- `src/config.py`：`LLM_TEMPERATURE=0.0`、`MODEL_SETTINGS_FILE=./config/model_settings.json`（`config/` 已挂载、进备份、已 gitignore）
+- `src/agent.py`：模块级 `llm` 换成 `_LLMProxy`，`invoke/ainvoke/__getattr__` 委托给 `current_llm()`；后者按 `model_settings.cache_key()`（路径+generation）缓存 `ChatOpenAI(...).bind_tools()`，保存即重建。原有 11 处 `monkeypatch.setattr(agent_module, "llm", stub)` 无需改动
+- `src/admin_api.py`：`GET/PUT/DELETE /admin/api/model`、`POST /admin/api/model/test`（可带未保存的候选参数）；审计 `model.update` / `model.reset`，**不记录 key**；`/admin/api/meta` 与 `/info` 的 `llm_model` 改为生效值
+- `static/admin.html` + `static/i18n.js`：卡片含 API Base / 模型名 / API Key（密码框，留空保持）/ temperature / max_tokens，按钮「测试连接」「保存」「恢复 .env」，右上角标注 `来自 .env` / `已覆盖 .env`
+- `tests/test_model_settings.py`（16）+ `tests/test_admin_model.py`（7）：校验矩阵、掩码、0600、空 key 保留、generation 变化、reset、损坏文件、probe 成功/失败、PUT 后 `/info`/meta/`current_llm()` 同步、审计不含 key、权限门禁
+
+### 验证
+
+- `pytest -q` **605 passed**（+23），`ruff` 干净，`check_release` 6 项通过
+- 只影响对话生成：入库/检索仍走 `EMBEDDING_*`；`LLM_TIMEOUT`/`LLM_MAX_RETRIES` 仍只在 `.env`
+
+### 注意
+
+- 覆盖文件可能含 API Key，权限 0600 且已 gitignore；`make backup` 会把它打进 `config/`，恢复时一并回来
+- 「测试连接」只验证 `/chat/completions` 可达，不校验工具调用（function calling）能力；换不支持 tools 的模型会在真实对话时报错
+
+---
+
+## 20. 相关文档
