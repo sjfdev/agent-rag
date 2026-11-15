@@ -69,6 +69,19 @@ VECTOR_STORE_TYPE=milvus make run
 
 Milvus 2.5+ 会自动启用服务端稀疏 BM25；用 `GET /info` 的 `hybrid.engine` 确认。
 
+## 7. 可选：登录（`AUTH_MODE=jwt`）
+
+默认 `AUTH_MODE=none`（请求体自报身份，适合本机试用）。多人共用或对公网时改成
+`AUTH_MODE=jwt` + `AUTH_LOCAL_LOGIN_ENABLED=true`，然后建第一个管理员：
+
+```bash
+python scripts/manage_users.py add admin --dept Tech --admin
+```
+
+之后 `/ui/` 与 `/admin` 都会先要求登录，管理台「账号」卡片可继续加人、改密、停用。
+不接 IdP 也能长期用（本地账号）；要接 Keycloak/Entra/Auth0 见 `WORKLOG.md` §15「IdP 接入清单」。
+生产栈的 TLS 入口（`https://kb.internal`）、开机自恢复与每日备份见 `DEPLOYMENT_CN.md` §4.1.5/§4.1.6。
+
 ## 常见问题
 
 | 现象 | 排查 |
