@@ -78,6 +78,7 @@ services:
       HF_HUB_OFFLINE: "1"
       # Local accounts (AUTH_LOCAL_LOGIN_ENABLED) and the optional ACL live here.
       AUTH_USERS_FILE: /app/config/users.json
+      BACKUP_DIR: /app/backups
       ACL_FILE: /app/config/acl.json
     volumes:
       - ${DOCKER_VOLUME_DIRECTORY:-.}/data:/app/data
@@ -86,6 +87,9 @@ services:
       # persistent, otherwise recreating the container wipes every account.
       # Read-write because the console/CLI writes users.json at runtime.
       - ${DOCKER_CONFIG_DIRECTORY:-./config}:/app/config
+      # Read-only view of the nightly archives so /metrics can report their age
+      # (AgentRagBackupStale). The host-side job writes here, not the container.
+      - ${DOCKER_VOLUME_DIRECTORY:-.}/backups:/app/backups:ro
     ports:
       # Loopback only: clients reach the app through `caddy` below, which
       # terminates TLS. Host-side scripts (doctor, check_health) still work.

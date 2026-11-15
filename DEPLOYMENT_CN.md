@@ -204,8 +204,8 @@ docker compose -f docker-compose.prod.yml up -d   # 先起应用，创建 agent-
 make monitor-up                                   # 启动监控，加入同一网络
 make monitor-check                                # 离线校验配置（CI 可跑）
 ```
-- Grafana `http://127.0.0.1:3000`：预置 **Agent RAG** 面板（请求量/错误率/P95/缓存命中/索引块数/就绪探针）
-- Prometheus `http://127.0.0.1:9090`：6 条告警（抓取失败、`/health` 连续非 2xx、索引为空、错误率 >5%、缓存命中骤降、重建卡住）
+- Grafana `http://127.0.0.1:3000`：预置 **Agent RAG** 面板（请求量/错误率/P95/缓存命中/索引块数/就绪探针/最近备份距今小时数）
+- Prometheus `http://127.0.0.1:9090`：7 条告警（抓取失败、`/health` 连续非 2xx、索引为空、错误率 >5%、缓存命中骤降、重建卡住、备份超过 48 小时未更新）
 - 两个端口默认只绑 `127.0.0.1`；对外访问请加 TLS 反向代理
 - 当前部署**按决策保持 `noop`**（告警只在 Alertmanager/Grafana 界面看）；渠道在 `.env` 配 `ALERTMANAGER_EMAIL_*` / `ALERTMANAGER_SLACK_WEBHOOK_URL` / `ALERTMANAGER_WEBHOOK_URL`，`make monitor-config` 后 `docker restart agent-rag-alertmanager` 生效；全空时落 `noop`
 - 接真实渠道前先本地验收投递（换渠道后同样适用）：

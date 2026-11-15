@@ -126,3 +126,18 @@ def test_index_gauge_is_throttled(monkeypatch):
     metrics.render()
     metrics.render()
     assert calls["n"] == 0
+
+
+def test_backup_gauges_track_the_newest_archive(monkeypatch, tmp_path):
+    from src.config import settings
+
+    archive = tmp_path / "agent-rag-backup-20260101-000000.tar.gz"
+    archive.write_bytes(b"x")
+    monkeypatch.setattr(settings, "BACKUP_DIR", str(tmp_path), raising=False)
+    metrics._backup_state["at"] = 0.0
+    try:
+        text = metrics.render().decode()
+    finally:
+        metrics._backup_state["at"] = 0.0
+    assert "agent_rag_backup_archives 1.0" in text
+    assert "agent_rag_backup_age_seconds " in text

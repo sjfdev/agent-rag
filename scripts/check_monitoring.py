@@ -44,6 +44,8 @@ REQUIRED_ALERTS = {
     "AgentRagIndexEmpty",
     "AgentRagErrorRate",
     "AgentRagCacheHitDrop",
+    "AgentRagMaintenanceStuck",
+    "AgentRagBackupStale",
 }
 
 # Metrics that come from Prometheus itself or blackbox_exporter, not the app.

@@ -119,6 +119,16 @@ _CANCELLED = Counter(
     ["endpoint"],
     registry=REGISTRY,
 )
+_BACKUP_AGE = Gauge(
+    "agent_rag_backup_age_seconds",
+    "Age of the newest backup archive in BACKUP_DIR (refreshed on scrape).",
+    registry=REGISTRY,
+)
+_BACKUP_COUNT = Gauge(
+    "agent_rag_backup_archives",
+    "Backup archives currently present in BACKUP_DIR.",
+    registry=REGISTRY,
+)
 
 
 def set_build_info(version: str) -> None:
@@ -151,6 +161,30 @@ def _refresh_index_gauge() -> None:
     finally:
         _index_state["at"] = time.monotonic()
         _index_state["refreshing"] = False
+
+
+_BACKUP_REFRESH_SECONDS = 5.0
+_backup_state = {"at": 0.0}
+
+
+def _refresh_backup_gauges() -> None:
+    """Stat the backup directory at most every few seconds, and never raise."""
+    now = time.monotonic()
+    if now - _backup_state["at"] < _BACKUP_REFRESH_SECONDS:
+        return
+    _backup_state["at"] = now
+    try:
+        from pathlib import Path
+
+        from src.config import settings
+
+        archives = list(Path(settings.BACKUP_DIR).expanduser().glob("agent-rag-backup-*.tar.gz"))
+        _BACKUP_COUNT.set(len(archives))
+        _BACKUP_AGE.set(
+            max(time.time() - max(p.stat().st_mtime for p in archives), 0.0) if archives else 0.0
+        )
+    except Exception:
+        pass
 
 
 def observe_request(
@@ -238,4 +272,5 @@ def render() -> bytes:
     except Exception:
         pass
     _refresh_index_gauge()
+    _refresh_backup_gauges()
     return generate_latest(REGISTRY)

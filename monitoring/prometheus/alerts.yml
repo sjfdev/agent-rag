@@ -56,6 +56,19 @@ groups:
             hour. Check the ingestion job log and disk space; a stuck rebuild
             usually means Milvus is refusing writes.
 
+      - alert: AgentRagBackupStale
+        expr: agent_rag_backup_archives == 0 or agent_rag_backup_age_seconds > 172800
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: "agent-rag has no recent backup"
+          description: >-
+            The newest archive in BACKUP_DIR is older than 48 hours (or there is
+            none). The nightly job may be failing: check
+            `logs/backup-agent.log`, `make agents-status` and disk space, then
+            run `make daily-backup` manually.
+
   - name: agent-rag-quality
     rules:
       - alert: AgentRagErrorRate

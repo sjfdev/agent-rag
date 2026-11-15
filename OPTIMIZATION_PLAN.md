@@ -663,7 +663,7 @@ curl -s -X POST localhost:8000/chat -H 'Content-Type: application/json' \
 
 ## 11. 后续待办（按优先级，2026-11-01 之后）
 
-> 当前基线：**581 项测试、CI 全绿**；`milvus 2.5.4 + 服务端稀疏 BM25`；28 chunks；备份/恢复脚本已落地（`make backup` / `make restore`）；监控栈已落地（`make monitor-up` / `make monitor-check`）；服务端会话与前端会话栏已落地（`/sessions` + `ChatRequest.session_id` + 左侧侧栏）；`/chat/stream` 客户端断开即取消上游 LLM 调用。
+> 当前基线：**582 项测试、CI 全绿**；`milvus 2.5.4 + 服务端稀疏 BM25`；28 chunks；备份/恢复脚本已落地（`make backup` / `make restore`）；监控栈已落地（`make monitor-up` / `make monitor-check`）；服务端会话与前端会话栏已落地（`/sessions` + `ChatRequest.session_id` + 左侧侧栏）；`/chat/stream` 客户端断开即取消上游 LLM 调用。
 > 容器化交付已完成（`Dockerfile` / `docker-compose.prod.yml` / `PRODUCTIZATION.md`）。
 > 下面按「对外发布必须先做 → 产品化 → 规模化」排序，每项都有落点与验收方式。
 
@@ -703,7 +703,7 @@ curl -s -X POST localhost:8000/chat -H 'Content-Type: application/json' \
 - [x] `make backup` / `make restore ARCHIVE=...`；`scripts/doctor.py` 增加「最近一次备份距今 N 天」（`BACKUP_WARN_DAYS`，默认 30）
 - [x] 演练（隔离沙箱，2026-11-09）：FAISS 恢复后 4 个目录逐字节一致，`verify_retrieval.py` OK、`eval_retrieval.py` hit@4=18/18、MRR 0.89、leaks 0；Milvus 恢复后 5 个目录逐字节一致，恢复卷启动 Milvus 可见 `enterprise_kb` 28 rows，eval 同样 18/18 / MRR 0.89 / leaks 0
 - [x] 验收：恢复后 `verify_retrieval.py` 与 `eval_retrieval.py` 通过（双后端）
-- [x] 每日自动备份 + 保留策略（2026-11-15）：`scripts/daily_backup.py`（launchd 03:30，停机约 1 分钟、自动 silence 健康告警、`BACKUP_KEEP` 默认 14）；**异地副本按决策不做**（单机接受磁盘故障风险，`OFFSITE_BACKUP_DIR` 能力保留但留空）；开机自恢复见 `scripts/boot_recover.py`，详见 `WORKLOG.md` §18
+- [x] 每日自动备份 + 保留策略（2026-11-15）：`scripts/daily_backup.py`（launchd 03:30，停机约 1 分钟、自动 silence 健康告警、`BACKUP_KEEP` 默认 14）；**异地副本按决策不做**（单机接受磁盘故障风险，`OFFSITE_BACKUP_DIR` 能力保留但留空）；开机自恢复见 `scripts/boot_recover.py`；`/metrics` 暴露 `agent_rag_backup_age_seconds`/`agent_rag_backup_archives`，`AgentRagBackupStale` 在 48 小时无新归档时告警（prod 以只读方式挂载 `./backups`），详见 `WORKLOG.md` §18
 - [ ] 每季度演练「删库 → 恢复 → 验证」（流程已落地；prod 卷演练见 `WORKLOG.md` §16，下次窗口 **2027-02-14**）
 
 #### 11.1.5 部署加固（2026-11-01 补充）

@@ -442,6 +442,44 @@
       "type": "table"
     },
     {
+      "datasource": { "type": "prometheus", "uid": "agent-rag-prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 24 },
+              { "color": "red", "value": 48 }
+            ]
+          },
+          "unit": "h"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 5, "w": 12, "x": 0, "y": 53 },
+      "id": 14,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "agent-rag-prometheus" },
+          "expr": "agent_rag_backup_age_seconds / 3600",
+          "legendFormat": "newest archive",
+          "refId": "A"
+        }
+      ],
+      "title": "Newest backup (hours)",
+      "type": "stat"
+    },
+    {
       "datasource": { "type": "loki", "uid": "loki" },
       "gridPos": { "h": 8, "w": 24, "x": 0, "y": 45 },
       "id": 13,
