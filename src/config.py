@@ -20,6 +20,8 @@ class Settings(BaseSettings):
     AGENT_RECURSION_LIMIT: int = 6
     # Runtime overrides written by the admin console (see src/model_settings.py).
     # Kept under config/ so it is mounted, backed up and gitignored.
+    # 管理台写入的运行时覆盖配置（见 src/model_settings.py）。
+    # 放在 config/ 下，便于挂载、备份并被 gitignore。
     MODEL_SETTINGS_FILE: str = "./config/model_settings.json"
 
     # Ingestion / admin

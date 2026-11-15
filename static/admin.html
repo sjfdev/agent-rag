@@ -230,6 +230,7 @@
     <div class="msg" id="userMsg"></div>
   </section>
 
+  <!-- Chat model card: overrides `.env` at runtime. / 模型卡片：运行时覆盖 `.env`。 -->
   <section class="card" id="modelCard">
     <h2><span data-i18n="admin.modelTitle">模型</span><span class="sub" id="modelSource"></span></h2>
     <p class="hint" style="margin:0 0 10px" data-i18n="admin.modelHint">
@@ -1093,7 +1094,11 @@ async function pollJob() {
 
 // --- chat model overrides --------------------------------------------------
 // Only chat generation is affected; ingestion and retrieval keep EMBEDDING_*.
+// --- 对话模型覆盖配置 ------------------------------------------------------
+// 只影响对话生成；入库与检索仍使用 EMBEDDING_*。
 function modelPayload() {
+  // A blank key becomes null so the server keeps the saved one.
+  // 密钥留空时传 null，由服务端保留已保存的 Key。
   return {
     api_base: $("modelBase").value.trim(),
     model: $("modelName").value.trim(),
@@ -1104,6 +1109,8 @@ function modelPayload() {
 }
 
 function renderModel(data) {
+  // Never echo the secret; only render its masked hint as a placeholder.
+  // 不回显密钥，只把掩码提示写进输入框 placeholder。
   $("modelBase").value = data.api_base || "";
   $("modelName").value = data.model || "";
   $("modelTemp").value = data.temperature ?? 0;
@@ -1121,6 +1128,8 @@ async function loadModel() {
 }
 
 async function testModel() {
+  // Probe with the (possibly unsaved) form values; 40s covers slow cold starts.
+  // 用表单里的（可能未保存的）配置测试；40 秒超时覆盖冷启动较慢的情况。
   setMsg($("modelMsg"), t("admin.modelTesting"), "ok");
   try {
     const result = await api("/admin/api/model/test", {
@@ -1140,6 +1149,8 @@ async function testModel() {
 }
 
 async function saveModel() {
+  // Persist now; the next chat turn rebuilds the bound model automatically.
+  // 立即持久化；下一轮对话会自动重建绑定的模型。
   try {
     const data = await api("/admin/api/model", {
       method: "PUT",
@@ -1155,6 +1166,8 @@ async function saveModel() {
 }
 
 async function resetModel() {
+  // DELETE drops the overrides file; values fall back to `.env`.
+  // DELETE 会删除覆盖文件，配置回退到 `.env`。
   try {
     const data = await api("/admin/api/model", { method: "DELETE" });
     renderModel(data);

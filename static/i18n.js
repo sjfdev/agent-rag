@@ -159,6 +159,7 @@
       "admin.table.status": "状态",
       "admin.table.chunks": "chunks",
       "admin.table.modified": "修改时间",
+      // 模型卡片（中） / model card (zh)
       "admin.modelTitle": "模型",
       "admin.modelHint": "只影响对话生成；入库与检索仍用 EMBEDDING_* 设置。保存后下一轮对话立即生效，重启后仍保留。",
       "admin.modelBasePlaceholder": "API Base，如 https://open.bigmodel.cn/api/paas/v4",
@@ -439,6 +440,7 @@
       "admin.table.status": "Status",
       "admin.table.chunks": "Chunks",
       "admin.table.modified": "Modified",
+      // Model card (en) / 模型卡片（英）
       "admin.modelTitle": "Model",
       "admin.modelHint": "Affects chat generation only; ingestion and retrieval keep the EMBEDDING_* settings. Saving takes effect on the next turn and survives a restart.",
       "admin.modelBasePlaceholder": "API base, e.g. https://api.openai.com/v1",

@@ -100,6 +100,8 @@ def info():
     return {
         "version": __version__,
         "vector_store": settings.VECTOR_STORE_TYPE,
+        # Effective model after console overrides, not just the `.env` value.
+        # 返回管理台覆盖后的生效模型，而非仅 `.env` 的值。
         "llm_model": model_settings.effective()["model"],
         "embedding_backend": settings.EMBEDDING_BACKEND,
         "hybrid": kb_engine.hybrid_status(),

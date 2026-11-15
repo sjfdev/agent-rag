@@ -21,6 +21,13 @@ three agree before you push a tag.
   the next turn uses it; `.env` stays the default and `DELETE` reverts. Ingestion
   and retrieval keep the `EMBEDDING_*` settings. `LLM_TEMPERATURE` is now
   configurable (default `0.0`).
+  <br>**管理台模型覆盖（中文）**：管理台新增「模型」卡片，可不重启地修改对话端点
+  （`api_base`/`model`/`api_key`/`temperature`/`max_tokens`）。
+  `GET/PUT/DELETE /admin/api/model` 与 `POST /admin/api/model/test`（8 token 探测）
+  将配置持久化到 `config/model_settings.json`（0600、已 gitignore），响应只返回
+  掩码密钥提示，审计 `model.update`/`model.reset` 但不含密钥。`src/agent.py` 在文件
+  变化后重建绑定模型，下一轮对话即生效；`.env` 仍为默认，`DELETE` 回退。入库与检索
+  继续使用 `EMBEDDING_*`。`LLM_TEMPERATURE` 现可配置（默认 `0.0`）。
 - **TLS edge**: the production compose adds a `caddy` sidecar (internal CA,
   `KB_SITE_ADDRESS`, default `kb.internal`) and publishes only `:443`; the app
   binds `127.0.0.1:8000`, so logins and chat never travel in cleartext. Caddy

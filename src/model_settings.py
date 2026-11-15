@@ -1,5 +1,7 @@
 """Runtime LLM overrides set from the admin console.
 
+管理台运行时 LLM 覆盖配置。
+
 `.env` stays the default (`LLM_API_BASE` / `LLM_API_KEY` / `LLM_MODEL` /
 `LLM_TEMPERATURE` / `LLM_MAX_TOKENS`). The console can point chat generation at
 a different endpoint or model without a restart: overrides are persisted to
@@ -7,13 +9,25 @@ a different endpoint or model without a restart: overrides are persisted to
 gitignored because it may hold an API key) and picked up by `src/agent.py` on
 the next turn.
 
+`.env` 仍是默认值（`LLM_API_BASE` / `LLM_API_KEY` / `LLM_MODEL` /
+`LLM_TEMPERATURE` / `LLM_MAX_TOKENS`）。管理台可以不改重启地把对话生成指向
+其他端点或模型：覆盖项持久化到 `MODEL_SETTINGS_FILE`（默认
+`./config/model_settings.json`，权限 0600，因可能含 API Key 而 gitignore），
+由 `src/agent.py` 在下一轮对话读取。
+
 Only chat generation is affected. Ingestion and retrieval keep using the
 `EMBEDDING_*` settings, and `LLM_TIMEOUT` / `LLM_MAX_RETRIES` remain
 environment-only knobs. Deleting the file (or `DELETE /admin/api/model`) falls
 back to `.env`.
 
+只影响对话生成。入库与检索仍使用 `EMBEDDING_*` 设置，
+`LLM_TIMEOUT` / `LLM_MAX_RETRIES` 仍只从环境变量读取。删除该文件
+（或调用 `DELETE /admin/api/model`）即回退到 `.env`。
+
 The API key never leaves the process: `describe()` returns a masked hint, and
 saving with an empty key keeps the current one.
+
+API Key 不会明文离开进程：`describe()` 只返回掩码提示；保存时留空则保留原 Key。
 """
 
 from __future__ import annotations
@@ -44,6 +58,10 @@ def _path() -> Path:
 
 
 def env_defaults() -> Dict[str, Any]:
+    """Defaults from `.env` (`LLM_*`).
+
+    从 `.env` 的 `LLM_*` 读取默认配置。
+    """
     return {
         "api_base": str(settings.LLM_API_BASE).rstrip("/"),
         "api_key": settings.LLM_API_KEY,
@@ -54,7 +72,10 @@ def env_defaults() -> Dict[str, Any]:
 
 
 def _validate(payload: Dict[str, Any], *, require_key: bool = False) -> Dict[str, Any]:
-    """Return the normalised subset of `payload`; raise ValueError on bad input."""
+    """Return the normalised subset of `payload`; raise ValueError on bad input.
+
+    返回 `payload` 规范化后的字段子集；输入非法时抛出 ValueError。
+    """
     base = str(payload.get("api_base") or "").strip()
     if not base:
         raise ValueError("api_base is required")
@@ -101,7 +122,10 @@ def _validate(payload: Dict[str, Any], *, require_key: bool = False) -> Dict[str
 
 
 def _read() -> Dict[str, Any]:
-    """Overrides on disk, re-read when the file changes. Corrupt files are ignored."""
+    """Overrides on disk, re-read when the file changes. Corrupt files are ignored.
+
+    读取磁盘上的覆盖配置；文件变化时重新读取，损坏文件直接忽略。
+    """
     path = _path()
     try:
         mtime = path.stat().st_mtime_ns
@@ -125,20 +149,29 @@ def _read() -> Dict[str, Any]:
 
 
 def reset_state() -> None:
-    """Drop the in-process cache (tests and admin tooling only)."""
+    """Drop the in-process cache (tests and admin tooling only).
+
+    清除进程内缓存（仅测试与管理工具使用）。
+    """
     with _lock:
         _state.update({"path": None, "mtime": None, "data": {}, "generation": 0})
 
 
 def generation() -> int:
-    """Bumped whenever the effective configuration changes (cache key)."""
+    """Bumped whenever the effective configuration changes (cache key).
+
+    生效配置每次变化时自增（用作缓存键）。
+    """
     _read()
     with _lock:
         return int(_state["generation"])
 
 
 def cache_key():
-    """Identity of the current configuration (path + generation)."""
+    """Identity of the current configuration (path + generation).
+
+    当前配置的身份标识（路径 + generation）。
+    """
     _read()
     with _lock:
         return str(_state["path"]), int(_state["generation"])
@@ -149,17 +182,26 @@ def overrides() -> Dict[str, Any]:
 
 
 def effective() -> Dict[str, Any]:
+    """`.env` defaults merged with on-disk overrides.
+
+    合并 `.env` 默认值与磁盘覆盖项。
+    """
     config = env_defaults()
     config.update(_read())
     return config
 
 
 def describe() -> Dict[str, Any]:
-    """What the console may see: no raw secret, plus where each value came from."""
+    """What the console may see: no raw secret, plus where each value came from.
+
+    管理台可见的视图：不含明文密钥，并标明取值来源（env / override）。
+    """
     config = effective()
     overrides_on_disk = _read()
     key = config.get("api_key") or ""
     hint = f"****{key[-4:]}" if len(key) > 8 else ("****" if key else "")
+    # Never return the raw secret: only a "****1234" style hint.
+    # 绝不返回明文密钥，只返回 "****1234" 形式的提示。
     return {
         "source": "override" if overrides_on_disk else "env",
         "api_base": config["api_base"],
@@ -179,13 +221,18 @@ def describe() -> Dict[str, Any]:
 
 
 def save(payload: Dict[str, Any]) -> Dict[str, Any]:
-    """Persist overrides. A blank api_key keeps the currently effective one."""
+    """Persist overrides. A blank api_key keeps the currently effective one.
+
+    持久化覆盖配置；api_key 留空时保留当前生效的 Key。
+    """
     cleaned = _validate(payload)
     if "api_key" not in cleaned:
         cleaned["api_key"] = effective().get("api_key", "")
 
     path = _path()
     path.parent.mkdir(parents=True, exist_ok=True)
+    # Write a temp file, chmod/lock it down, then atomically replace the target.
+    # 先写临时文件、收紧权限，再原子替换目标文件，避免读到半截内容。
     tmp = path.with_name(path.name + ".tmp")
     body = json.dumps({"version": 1, **cleaned}, ensure_ascii=False, indent=2, sort_keys=True)
     with _lock:
@@ -211,7 +258,10 @@ def save(payload: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def clear() -> Dict[str, Any]:
-    """Remove the overrides file and fall back to `.env`."""
+    """Remove the overrides file and fall back to `.env`.
+
+    删除覆盖文件并回退到 `.env`。
+    """
     path = _path()
     with _lock:
         try:
@@ -223,7 +273,10 @@ def clear() -> Dict[str, Any]:
 
 
 def probe(candidate: Optional[Dict[str, Any]] = None, timeout: float = 15.0) -> Dict[str, Any]:
-    """Send a minimal completion so the console can test before/after saving."""
+    """Send a minimal completion so the console can test before/after saving.
+
+    发送一次最小补全请求，供管理台在保存前后测试连接。
+    """
     merged = dict(effective())
     if candidate:
         merged.update({k: v for k, v in candidate.items() if v is not None})

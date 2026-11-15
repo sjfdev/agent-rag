@@ -60,7 +60,10 @@ Rules:
 
 
 def build_llm():
-    """Build the chat model from `.env` plus any console overrides."""
+    """Build the chat model from `.env` plus any console overrides.
+
+    用 `.env` 默认值叠加管理台覆盖项构建对话模型。
+    """
     config = model_settings.effective()
     return ChatOpenAI(
         model=config["model"],
@@ -70,7 +73,9 @@ def build_llm():
         max_tokens=config["max_tokens"],
         timeout=settings.LLM_TIMEOUT,
         max_retries=settings.LLM_MAX_RETRIES,
-        streaming=True,  # lets LangGraph stream tokens via stream_mode="messages"
+        # Lets LangGraph stream tokens via stream_mode="messages".
+        # 让 LangGraph 通过 stream_mode="messages" 流式输出 token。
+        streaming=True,
     ).bind_tools(agent_tools)
 
 
@@ -78,7 +83,10 @@ _llm_cache: Dict[str, Any] = {"key": None, "client": None}
 
 
 def current_llm():
-    """The model for the next turn, rebuilt when the console saves a change."""
+    """The model for the next turn, rebuilt when the console saves a change.
+
+    下一轮对话使用的模型；管理台保存新配置后自动重建。
+    """
     key = model_settings.cache_key()
     if _llm_cache["client"] is None or _llm_cache["key"] != key:
         _llm_cache["client"] = build_llm()
@@ -87,7 +95,10 @@ def current_llm():
 
 
 class _LLMProxy:
-    """Keeps the old ``agent.llm`` call sites (and test stubs) working."""
+    """Keeps the old ``agent.llm`` call sites (and test stubs) working.
+
+    保留旧 ``agent.llm`` 调用点与测试桩，使其无需改动。
+    """
 
     def invoke(self, *args, **kwargs):
         return current_llm().invoke(*args, **kwargs)

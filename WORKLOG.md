@@ -1251,13 +1251,24 @@ colima 今天停过一次，全靠手动 `colima start` 才恢复；`make backup
 
 ### 验证
 
-- `pytest -q` **605 passed**（+23），`ruff` 干净，`check_release` 6 项通过
+- `pytest -q` **606 passed**（+24），`ruff` 干净，`check_release` 6 项通过
 - 只影响对话生成：入库/检索仍走 `EMBEDDING_*`；`LLM_TIMEOUT`/`LLM_MAX_RETRIES` 仍只在 `.env`
 
 ### 注意
 
 - 覆盖文件可能含 API Key，权限 0600 且已 gitignore；`make backup` 会把它打进 `config/`，恢复时一并回来
 - 「测试连接」只验证 `/chat/completions` 可达，不校验工具调用（function calling）能力；换不支持 tools 的模型会在真实对话时报错
+
+### English summary
+
+The 模型 card lets the console change chat generation (`api_base` / `model` /
+`api_key` / `temperature` / `max_tokens`) without a restart. Overrides persist
+to `config/model_settings.json` (0600, gitignored, backed up); `.env` stays the
+default and `DELETE /admin/api/model` reverts. Responses only expose a masked
+key hint, audits omit the secret, and `src/agent.py` rebuilds the bound model
+on the next turn via a `cache_key` (path + generation). Ingestion and retrieval
+keep `EMBEDDING_*`, and the test button only proves `/chat/completions` is
+reachable, not that the model supports tool calling.
 
 ---
 

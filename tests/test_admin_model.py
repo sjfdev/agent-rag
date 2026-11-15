@@ -1,4 +1,7 @@
-"""Admin console endpoints for the chat model overrides."""
+"""Admin console endpoints for the chat model overrides.
+
+管理台对话模型覆盖接口测试。
+"""
 
 import importlib
 

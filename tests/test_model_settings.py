@@ -1,4 +1,7 @@
-"""Runtime model overrides: validation, masking, persistence and cache keys."""
+"""Runtime model overrides: validation, masking, persistence and cache keys.
+
+运行时模型覆盖：校验、掩码、持久化与缓存键。
+"""
 
 import json
 

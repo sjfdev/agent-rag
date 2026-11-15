@@ -40,6 +40,7 @@ def _offline_env(tmp_path_factory):
     # A developer's real .env may point at the live accounts file.
     os.environ["AUTH_USERS_FILE"] = str(root / "users.json")
     # Never read or write the developer's real console overrides.
+    # 绝不读写开发者本机真实的控制台覆盖文件。
     os.environ.setdefault("MODEL_SETTINGS_FILE", str(root / "model_settings.json"))
     # Imported here so settings pick up the environment above.
     import src  # noqa: F401

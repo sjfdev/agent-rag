@@ -803,9 +803,17 @@ def delete_user(username: str, request: Request):
 # --- chat model overrides ---------------------------------------------------
 # `.env` remains the default; these endpoints change what chat generation uses
 # (never embeddings). The API key is write-only: responses carry a masked hint.
+# --- 对话模型覆盖配置 ------------------------------------------------------
+# `.env` 仍是默认值；这些接口只改对话生成（不影响向量化/检索）。API Key 只写不读，
+# 响应里仅返回掩码提示。
 
 
 class ModelSettingsRequest(BaseModel):
+    """Validated payload for `PUT /admin/api/model`.
+
+    `PUT /admin/api/model` 的入参校验模型。
+    """
+
     api_base: str = Field(min_length=1, max_length=300)
     model: str = Field(min_length=1, max_length=200)
     api_key: Optional[str] = Field(default=None, max_length=512)
@@ -815,11 +823,13 @@ class ModelSettingsRequest(BaseModel):
 
 @router.get("/model")
 def get_model():
+    """Effective settings with a masked key hint. / 返回生效配置（密钥掩码）。"""
     return model_settings.describe()
 
 
 @router.put("/model")
 def put_model(req: ModelSettingsRequest, request: Request):
+    """Persist overrides; audited without the key. / 持久化覆盖项；审计不含密钥。"""
     try:
         saved = model_settings.save(req.model_dump())
     except ValueError as exc:
@@ -834,6 +844,7 @@ def put_model(req: ModelSettingsRequest, request: Request):
 
 @router.delete("/model")
 def reset_model(request: Request):
+    """Drop the overrides and fall back to `.env`. / 删除覆盖项，回退到 `.env`。"""
     saved = model_settings.clear()
     audit.log_event("model.reset", _actor(request), detail={"model": saved["model"]})
     return saved
@@ -844,6 +855,9 @@ def test_model(body: Optional[Dict[str, Any]] = None):
     """Probe the endpoint; an unsaved payload tests before saving.
 
     An empty body (or `{}`) tests the currently effective configuration.
+
+    探测端点可用性；可先测未保存的候选配置。
+    空 body（或 `{}`）表示测试当前生效配置。
     """
     try:
         return model_settings.probe(body or None)
