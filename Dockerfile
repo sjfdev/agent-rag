@@ -49,7 +49,10 @@ COPY eval ./eval
 #   docker build --build-arg HF_ENDPOINT=https://hf-api.gitee.com -t agent-rag:dev .
 ARG EMBEDDING_MODEL=BAAI/bge-small-zh-v1.5
 ARG HF_ENDPOINT=https://hf-mirror.com
-RUN HF_HUB_OFFLINE=0 HF_ENDPOINT="${HF_ENDPOINT}" \
+# HF_HUB_DISABLE_XET: the Xet CDN (transfer.xethub.hf.co) is frequently
+# blocked even when the mirror itself works; the plain CDN is slower but
+# reachable.
+RUN HF_HUB_OFFLINE=0 HF_ENDPOINT="${HF_ENDPOINT}" HF_HUB_DISABLE_XET=1 \
     python -c "from sentence_transformers import SentenceTransformer as S; S('${EMBEDDING_MODEL}')"
 
 # Non-root runtime user; /app/data and /app/logs stay writable for ingestion.
