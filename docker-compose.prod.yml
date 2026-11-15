@@ -87,7 +87,9 @@ services:
       # Read-write because the console/CLI writes users.json at runtime.
       - ${DOCKER_CONFIG_DIRECTORY:-./config}:/app/config
     ports:
-      - "${APP_PORT:-8000}:8000"
+      # Loopback only: clients reach the app through `caddy` below, which
+      # terminates TLS. Host-side scripts (doctor, check_health) still work.
+      - "127.0.0.1:${APP_PORT:-8000}:8000"
     depends_on:
       milvus:
         condition: service_healthy
@@ -103,6 +105,32 @@ services:
       driver: json-file
       options:
         max-size: "50m"
+        max-file: "3"
+
+  caddy:
+    container_name: agent-rag-caddy
+    image: ${CADDY_IMAGE:-caddy:2.10.2-alpine}
+    restart: unless-stopped
+    environment:
+      # Site address (and certificate name). Change it and clients must use the
+      # matching hostname; there is no public domain on a single machine.
+      KB_SITE_ADDRESS: ${KB_SITE_ADDRESS:-kb.internal}
+    volumes:
+      - ${DOCKER_CONFIG_DIRECTORY:-./config}/Caddyfile:/etc/caddy/Caddyfile:ro
+      # Internal CA key and issued certificates: losing this directory means
+      # clients have to trust the new root once (it is not part of `make backup`).
+      - ${DOCKER_VOLUME_DIRECTORY:-.}/volumes-prod/caddy/data:/data
+      - ${DOCKER_VOLUME_DIRECTORY:-.}/volumes-prod/caddy/config:/config
+    ports:
+      # Only 443 is published: macOS ships its own Apache on host port 80, so
+      # the 80 mapping would be dead weight (and a redirect nobody can reach).
+      - "443:443"
+    depends_on:
+      - app
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
         max-file: "3"
 
 networks:

@@ -712,6 +712,7 @@ curl -s -X POST localhost:8000/chat -H 'Content-Type: application/json' \
 - [x] `scripts/doctor.py` 增加 `Local accounts` 检查（启用但无账号 / 无可用管理员 → FAIL）
 - [x] 备份 `config/`（账号库与 ACL）纳入例行流程——`make backup` 已覆盖，见 11.1.4
 - [x] **磁盘余量哨兵**：`/health` 增加 `storage` 块（`DATA_DIR`/`DB_PATH`/任务与审计日志取最小余量，低于 `HEALTH_MIN_FREE_MB` → `degraded`），`scripts/doctor.py` 增加 `Disk space` 检查。起因：磁盘写满时 `/health` 全程 `ok`，Milvus 把首次 ENOSPC 缓存进 RocksDB，释放空间后仍拒绝写入，必须重启容器才恢复（实测 `docker restart milvus-standalone` 后 19/19 hybrid 检查通过）
+- [x] **TLS 入口**（2026-11-15）：生产 compose 加 `caddy` 边车（内部 CA，`KB_SITE_ADDRESS` 默认 `kb.internal`），`app` 只绑 `127.0.0.1`，`/metrics` 用 `METRICS_TOKEN` 抓取；Caddy 覆盖 `X-Forwarded-For` 防伪造。已知限制（Docker 网关 IP 使按 IP 限流成单桶、`volumes-prod/caddy` 不在备份）见 `WORKLOG.md` §17
 
 ### 11.2 P1 产品化与稳定性
 
@@ -793,7 +794,7 @@ curl -s -X POST localhost:8000/chat -H 'Content-Type: application/json' \
 
 **11.2.1 剩余项已完成（2026-11-14）。** Alertmanager 作为独立服务加入监控栈（`127.0.0.1:9093`），Prometheus `prometheus.yml` 通过 `alerting` 转发；`scripts/render_alertmanager.py` 从 `.env`/环境渲染到 gitignored 的 `monitoring/alertmanager/alertmanager.yml`，邮件/Slack/Webhook 三渠道按变量开启，缺 SMTP 主机或密码时直接报错，全部未配置时用 `noop` 接收器保证配置合法；路由对 `critical|warning` 全渠道分发（`continue: true`），分组 `alertname`+`severity`，并用 inhibit 规则让 `AgentRagMetricsDown` 压掉同实例的错误率/缓存/重建派生告警。日志侧新增 `promtail`（Docker socket 发现、只保留 `agent-rag-*`、解 json-file 信封、label `container`/`service`/`stream`）与单节点 `loki`（tsdb、`LOKI_RETENTION` 默认 720h、compactor 清理）；Grafana 增加 `loki` 数据源与日志面板，`|= "<request_id>"` 可追踪单请求。`scripts/check_monitoring.py` 从 28 项扩到 42 项（含渲染、路由引用、日志采集、compose 挂载与回环端口），`tests/test_monitoring.py` 从 7 项扩到 20 项，全套 **568 passed**。已知限制：Promtail 依赖 Docker socket 与 `/var/lib/docker/containers`，rootless/远程 daemon 需覆盖 `DOCKER_SOCKET`/`DOCKER_CONTAINERS_DIR`；只采集容器 stdout，应用未额外写文件日志。
 
-下一项：见 `WORKLOG.md` §15「明天（2026-11-16）计划」——改 admin 密码与建账号、补记 11-14 备份恢复演练、定死季度演练日期、Alertmanager 本地压测、IdP 准备包、提交文档。功能侧无新排期；真实 IdP 登录/告警渠道/季度演练仍需外部输入。
+下一项：**B 项运维收尾**——宿主机开机自恢复（colima/Docker + `compose up -d`）与每日 `make backup` + 异地副本；TLS 已完成（`WORKLOG.md` §17）。功能侧无新排期；真实 IdP 登录/告警渠道/季度演练仍需外部输入。
 
 演练环境注意：Docker/colima 只共享 `$HOME`，不要把演练卷放在 `/tmp`（容器里会看到空目录，误判为恢复失败）。
 

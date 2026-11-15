@@ -1,0 +1,33 @@
+# Production edge. The only service published on the LAN; the app itself is
+# bound to 127.0.0.1 (see docker-compose.prod.yml) so plaintext HTTP never
+# leaves the host.
+#
+# The site address comes from KB_SITE_ADDRESS (default kb.internal). There is
+# no public domain on a single-machine deployment, so Caddy signs with its
+# internal CA: install that root certificate on client machines to avoid
+# browser warnings (see DEPLOYMENT_CN.md).
+{
+	admin off
+}
+
+{$KB_SITE_ADDRESS:kb.internal} {
+	encode zstd gzip
+	tls internal
+
+	# Prometheus scrapes app:8000 over the Docker network; /metrics has no
+	# business being reachable from the LAN. (Set METRICS_TOKEN + the scrape
+	# `authorization` block if you ever need it from outside instead.)
+	@metrics path /metrics
+	respond @metrics 404
+
+	reverse_proxy app:8000 {
+		# Overwrite instead of appending: the app derives per-IP rate limits
+		# (and audit actors) from X-Forwarded-For, and a client-supplied value
+		# would let callers evade them.
+		header_up X-Forwarded-For {remote_host}
+	}
+	log {
+		output stdout
+		format json
+	}
+}

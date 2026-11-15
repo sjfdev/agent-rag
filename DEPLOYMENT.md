@@ -162,6 +162,18 @@ uvicorn main:app --host 127.0.0.1 --port 8000
 ### 4.1.1 Web test console
 Open `http://localhost:8000/ui/` after starting the API. Pick a department, chat multi-turn, and inspect per-answer timings (total / retrieval / LLM).
 
+### 4.1.2 TLS edge (Caddy, internal CA)
+The production compose publishes the app on `127.0.0.1` only and puts Caddy on `:443`, so credentials never travel over plaintext HTTP:
+- `config/Caddyfile` uses `tls internal`: a single machine has no public domain, so Caddy signs its own certificate.
+- The hostname comes from `KB_SITE_ADDRESS` (default `kb.internal`). Add a hosts entry on each client: `<server-ip> kb.internal`.
+- Install the root certificate (host path `volumes-prod/caddy/data/caddy/pki/authorities/local/root.crt`) on clients to avoid warnings.
+- Visit `https://kb.internal/ui/` and `https://kb.internal/admin`; verify with `curl -k https://kb.internal/info`.
+- When configuring OIDC, `AUTH_OIDC_REDIRECT_URI` must be `https://kb.internal/auth/callback`.
+- Host port 80 is not published (macOS ships Apache on `:80`); always use https.
+- `/metrics` is answered with 404 at the edge; Prometheus scrapes `app:8000` over the Docker network. If LAN access is needed, use `METRICS_TOKEN` + the scrape `authorization` block (`monitoring/README.md`).
+- Known limitation: Docker's port forwarding makes every client appear as the Docker gateway IP, so per-IP login limits and audit IPs share one bucket. Fine for a 2-4 person LAN; raise `AUTH_LOGIN_RATE_LIMIT` otherwise.
+- `volumes-prod/caddy` is not in `make backup`: losing it just issues a new root certificate (clients re-trust once).
+
 ### 4.2 Verification
 First run the **offline retrieval check** (no LLM needed; validates ingestion + department isolation):
 ```bash

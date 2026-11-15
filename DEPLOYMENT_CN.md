@@ -225,6 +225,23 @@ curl -s -X DELETE 'localhost:8000/sessions/<id>?user_id=u1'
 - 会话按 `user_id` 隔离，跨用户返回 404；`SESSIONS_ENABLED=false` 关闭后回退到客户端回传 `history`
 - 超过 `2 × HISTORY_MAX_MESSAGES` 自动生成 running summary（每个窗口多一次 LLM 调用，`SESSION_SUMMARY_*`），失败则只保留最近窗口
 
+### 4.1.5 TLS 入口（Caddy，内部 CA）
+
+生产 compose 把应用端口收到 `127.0.0.1`，对外只发布 Caddy 的 `:443`——登录密码不再走明文：
+
+- `caddy` 服务用 `config/Caddyfile` 起（`tls internal`）。单机没有公网域名，所以是内部 CA 自签
+- 入口主机名由 `.env` 的 `KB_SITE_ADDRESS` 决定（默认 `kb.internal`）；每台客户端加一条 hosts 记录：`<服务器IP> kb.internal`
+- 根证书在宿主机 `volumes-prod/caddy/data/caddy/pki/authorities/local/root.crt`；装到客户端可消除浏览器警告：
+  ```bash
+  sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain root.crt
+  ```
+- 验证：`curl -k https://kb.internal/info`、浏览器打开 `https://kb.internal/ui/` 与 `https://kb.internal/admin`
+- 配置 OIDC 时 `AUTH_OIDC_REDIRECT_URI` 要写成 `https://kb.internal/auth/callback`（协议/主机必须与客户端访问一致）
+- 宿主 `:80` 未发布（macOS 自带 Apache 占用），入口一律用 https；要改端口/域名改 `KB_SITE_ADDRESS` 后 `docker compose -f docker-compose.prod.yml up -d caddy`
+- `/metrics` 在 Caddy 层直接返回 404（Prometheus 走容器网络直连 `app:8000`）；确实需要从局域网抓时，用 `METRICS_TOKEN` + `authorization` 方案（见 `monitoring/README.md`）
+- 已知限制：容器化端口转发让应用看到的客户端 IP 都是 Docker 网关（如 `172.25.0.1`），所以按 IP 的登录限流/审计 IP 对所有客户端是同一个桶；单机 2~4 人可接受，放宽到多人用时把 `AUTH_LOGIN_RATE_LIMIT` 调大
+- `volumes-prod/caddy` 不在 `make backup` 里：丢了会重新签发自签根证书，客户端重装一次根证书即可
+
 ### 4.2 功能验证
 先做**离线检索验证**（不需要 LLM，检查入库与部门隔离）：
 ```bash

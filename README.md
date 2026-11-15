@@ -50,6 +50,8 @@ docker compose -f docker-compose.prod.yml up -d --build
 docker compose -f docker-compose.prod.yml exec app python run_ingestion.py
 ```
 
+生产栈的入口是 `https://kb.internal`（Caddy 内部 CA，客户端需 hosts 记录 + 信任根证书；详见 `DEPLOYMENT_CN.md` §4.1.5），应用端口只在 `127.0.0.1:8000` 上供本机脚本使用。
+
 完整步骤与排错见 **[QUICKSTART.md](QUICKSTART.md)**；单机交付、登录、可观测性与发布流程见 **[PRODUCTIZATION.md](PRODUCTIZATION.md)**（已取消 SaaS 多租户/计费方向）。
 
 ## 接口

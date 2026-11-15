@@ -1150,4 +1150,44 @@ prod 卷可以停机备份、恢复后直接对外服务（28 chunks、健康检
 
 ---
 
-## 17. 相关文档
+## 17. 生产 TLS 入口（Caddy，2026-11-15）
+
+登录启用后，密码原本走 `0.0.0.0:8000` 的明文 HTTP，局域网可嗅探。本轮把应用端口收回 loopback、加 Caddy 边车终止 TLS，并给 `/metrics` 加 Bearer。
+
+### 落点
+
+- `docker-compose.prod.yml`：`app` 端口改为 `127.0.0.1:${APP_PORT:-8000}:8000`；新增 `caddy` 服务（`caddy:2.10.2-alpine`），只发布 `:443`，卷 `volumes-prod/caddy/{data,config}`，`depends_on: app`
+- `config/Caddyfile`（新，纳入版本管理）：`{$KB_SITE_ADDRESS:kb.internal}` + `tls internal`；`reverse_proxy app:8000`，并用 `header_up X-Forwarded-For {remote_host}` **覆盖**客户端自带值
+- `.env`：新增 `KB_SITE_ADDRESS=kb.internal`；`/metrics` 由 Caddy 直接 404（Prometheus 在容器网络直连 `app:8000`，不需要 token）。曾试过 `METRICS_TOKEN` + `credentials_file`，但文件缺失会让抓取失败、新鲜 clone 会误报 `AgentRagMetricsDown`，因此改为边缘拦截
+- 宿主 `:80` 不发布：macOS 自带 Apache/2.4.67 占着（`/usr/sbin/httpd`，root + `_www`），实测 80 返回 Apache 404，说明 80 映射不可达，因此删掉该映射
+- 容器名 `agent-rag-caddy` 匹配 Promtail 的 `agent-rag-*` 规则，access log 自动进 Loki
+
+### 验证
+
+- `curl -k --resolve kb.internal:443:127.0.0.1 https://kb.internal/info` → 200；证书 issuer `Caddy Local Authority - ECC Intermediate`、SAN `DNS:kb.internal`
+- `https://kb.internal/ui/`、`/admin`、`/ui/i18n.js`、`/ui/sessions.js` 均 200；`POST https://kb.internal/auth/login` 200
+- `/metrics`：`https://kb.internal/metrics` → 404，`http://127.0.0.1:8000/metrics` → 200；Prometheus 两个 job 均 `up`（无 token 配置）
+- 隔离仍成立：`http://127.0.0.1:8000/info` 200，`http://172.20.10.3:8000/info` → `000`（局域网只能走 443）
+- XFF 防伪造：带 `X-Forwarded-For: 1.2.3.4` / `9.9.9.9` 的登录请求，应用日志都记 `ip=172.25.0.1`（Caddy 覆盖生效）
+- `scripts/check_monitoring.py` 42 项 OK；`scripts/doctor.py` OK
+
+### 已知限制
+
+- 容器化端口转发让所有客户端在应用侧都表现为 Docker 网关 `172.25.0.1`：按 IP 的登录限流（`AUTH_LOGIN_RATE_LIMIT=10`）成了全局一个桶，审计 IP 也相同。单机 2~4 人可接受；人多时调大限流，或把 Caddy 挪到宿主机（才能拿到真实 IP）
+- `kb.internal` 不是公网名，客户端要 hosts 记录 + 信任根证书 `volumes-prod/caddy/data/caddy/pki/authorities/local/root.crt`
+- 没有 HTTP→HTTPS 跳转（80 让给 macOS Apache），入口直接用 `https://`
+- `volumes-prod/caddy` 不在 `make backup`；丢失只会重签根证书，客户端重装一次
+- 接入 OIDC 时 `AUTH_OIDC_REDIRECT_URI` 必须与 `https://kb.internal/auth/callback` 完全一致
+
+### 运维备忘
+
+```bash
+# 改主机名后重建边缘
+docker compose -f docker-compose.prod.yml up -d caddy
+# 本机验证（无需 hosts）
+curl -k --resolve kb.internal:443:127.0.0.1 https://kb.internal/info
+```
+
+---
+
+## 18. 相关文档
