@@ -1190,4 +1190,33 @@ curl -k --resolve kb.internal:443:127.0.0.1 https://kb.internal/info
 
 ---
 
-## 18. 相关文档
+## 18. 开机自恢复与每日备份（2026-11-15）
+
+colima 今天停过一次，全靠手动 `colima start` 才恢复；`make backup` 又要求向量库停机，没人值守的时段根本跑不起来。本轮把两件事交给 launchd。
+
+### 落点
+
+- `scripts/boot_recover.py`：docker 不可达 → `colima start` → 等 daemon（默认 240s）→ `compose up -d` 生产栈 + 监控栈 → 等 `/info` 200。监控栈失败只警告，不让开机流程失败。退出码 0/1/2
+- `scripts/daily_backup.py`：给 Alertmanager 建 `AgentRagHealthDown` silence（默认 15 分钟，`--silence-minutes 0` 关闭）→ 停生产栈（app/milvus/etcd）和开发栈里**正在跑**的 Milvus（先记录状态）→ 调 `backup.py` 打包 → 按 `BACKUP_KEEP` 保留最新 → 有 `OFFSITE_BACKUP_DIR` 就复制并校验 sha256 → `finally` 重启生产栈、`docker start` 恢复开发容器。`--dry-run` / `--no-stop` / `--dest` 可调
+- `scripts/install_launchd.py`：写 `~/Library/LaunchAgents/com.agent-rag.{boot-recover,daily-backup}.plist` 并 `launchctl bootstrap`；`status` / `uninstall`；非 macOS 直接拒绝
+- `src/config.py`：新增 `BACKUP_KEEP=14`、`OFFSITE_BACKUP_DIR=""`；`Makefile` 新增 `daily-backup` / `boot-recover` / `agents-install|status|uninstall`
+- `tests/test_ops_agents.py`：13 项（plist 结构、保留策略、异地副本、失败仍重启、dry-run、silence payload、按生产向量库打包）
+
+### 验证（本机实测）
+
+- `install_launchd.py install` 后两个 agent 均 loaded；`boot-recover` 在 load 时立即执行：`docker daemon is up` → `production stack requested` → `app is live`，约 3 秒
+- `daily_backup.py` 实跑 2 次。**第一次暴露真实 bug**：宿主 `.env` 是 `VECTOR_STORE_TYPE=faiss`，归档成了 `vector/faiss`（而生产索引在 Milvus）。修复为「存在 `volumes-prod/milvus` 时强制按 milvus 打包」，第二次归档：`vector/milvus` 52 文件 + `vector/etcd` 2 文件，773,713 B，`backup.py --verify` OK
+- 停机窗口 63 秒（19:12:56 停 → 19:13:44 起）；恢复后 `/health` 200、`https://kb.internal/info` 200、Prometheus 两个 job `up`
+- silence 生效：`GET /api/v2/silences` 显示 `daily-backup` active；窗口内 `AgentRagHealthDown` 在 Alertmanager 被抑制（noop 通道，本来也不会发通知）。修复前那次实跑没 silence，告警先 firing 后自行 resolved，可复现
+- 开发栈 `milvus-standalone`/`milvus-etcd` 备份前被停、备份后 `docker start` 恢复，状态未被改变
+
+### 遗留
+
+- `OFFSITE_BACKUP_DIR` 还没配：目前仍只有本地一份，磁盘坏了两份一起没；外置盘/网盘就绪后写进 `.env` 即可（脚本会自动复制并校验）
+- 03:30 的夜间触发要等一晚；今天以 `--dry-run` + 两次手动实跑代替
+- LaunchAgent 在**登录后**执行：重启后需有人登录一次（合盖唤醒不算）；要完全无人值守得换 LaunchDaemon + 免登录 colima，不推荐
+- `volumes-prod/caddy` 与 `backups/` 不在归档内（后者本身就是备份目的地）
+
+---
+
+## 19. 相关文档

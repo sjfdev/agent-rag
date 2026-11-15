@@ -174,6 +174,18 @@ The production compose publishes the app on `127.0.0.1` only and puts Caddy on `
 - Known limitation: Docker's port forwarding makes every client appear as the Docker gateway IP, so per-IP login limits and audit IPs share one bucket. Fine for a 2-4 person LAN; raise `AUTH_LOGIN_RATE_LIMIT` otherwise.
 - `volumes-prod/caddy` is not in `make backup`: losing it just issues a new root certificate (clients re-trust once).
 
+### 4.1.3 Boot recovery and the nightly backup (macOS)
+Two launchd agents (`scripts/install_launchd.py`, installed under `~/Library/LaunchAgents`) run after login:
+```bash
+make agents-install     # boot recovery (com.agent-rag.boot-recover)
+make agents-status      # is each agent loaded?
+make agents-uninstall
+```
+- boot-recover: starts colima when Docker is down, waits for the daemon, runs `compose up -d` for the production and monitoring stacks, then waits for `/info` (log: `logs/boot-agent.log`).
+- daily-backup: at 03:30 it silences `AgentRagHealthDown` for 15 minutes, pauses the stack, archives with `backup.py`, keeps `BACKUP_KEEP` (default 14) archives, copies to `OFFSITE_BACKUP_DIR` with a sha256 check, then restarts everything in a `finally` block (log: `logs/backup-agent.log`). Run it manually with `make daily-backup`; the downtime is about a minute.
+- The prod compose pins Milvus, so the archive holds `volumes-prod/{milvus,etcd}` even when the host `.env` says `faiss`.
+- LaunchAgents run after login: a reboot needs one login (a lid-open wake is not a login).
+
 ### 4.2 Verification
 First run the **offline retrieval check** (no LLM needed; validates ingestion + department isolation):
 ```bash

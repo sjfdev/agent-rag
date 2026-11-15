@@ -45,6 +45,10 @@ class Settings(BaseSettings):
     # the newest archive is older than BACKUP_WARN_DAYS.
     BACKUP_DIR: str = "./backups"
     BACKUP_WARN_DAYS: int = 30
+    # Daily job (scripts/daily_backup.py, installed by scripts/install_launchd.py):
+    # how many archives to keep and where to drop an extra copy (empty = skip).
+    BACKUP_KEEP: int = 14
+    OFFSITE_BACKUP_DIR: str = ""
     # Comma-separated paths to include instead of auto-detecting the vector
     # store (DB_PATH for FAISS, volumes{,-prod}/{milvus,etcd} for Milvus).
     BACKUP_VECTOR_PATHS: str = ""

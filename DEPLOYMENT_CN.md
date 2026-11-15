@@ -242,6 +242,25 @@ curl -s -X DELETE 'localhost:8000/sessions/<id>?user_id=u1'
 - 已知限制：容器化端口转发让应用看到的客户端 IP 都是 Docker 网关（如 `172.25.0.1`），所以按 IP 的登录限流/审计 IP 对所有客户端是同一个桶；单机 2~4 人可接受，放宽到多人用时把 `AUTH_LOGIN_RATE_LIMIT` 调大
 - `volumes-prod/caddy` 不在 `make backup` 里：丢了会重新签发自签根证书，客户端重装一次根证书即可
 
+### 4.1.6 开机自恢复与每日备份（macOS）
+
+宿主重启后 colima 不会自己起来，而 `make backup` 要求 Milvus 停机，所以这两件事由 launchd 自动化（`scripts/install_launchd.py`，装到 `~/Library/LaunchAgents`，登录即生效）：
+
+```bash
+make agents-install     # com.agent-rag.boot-recover + com.agent-rag.daily-backup
+make agents-status      # 两个 agent 是否 loaded
+make agents-uninstall   # 卸载
+```
+
+- **boot-recover**：登录时跑 `scripts/boot_recover.py`。docker 不可达就先 `colima start`，等 daemon 起来后 `compose up -d` 生产栈与监控栈，最后等 `http://127.0.0.1:8000/info` 返回 200；监控栈失败只记警告。日志 `logs/boot-agent.log`
+- **daily-backup**：每天 03:30（`--hour/--minute` 可改）跑 `scripts/daily_backup.py`：先给 Alertmanager 建一条 15 分钟的 `AgentRagHealthDown` silence（`--silence-minutes`，0 关闭）→ 停生产栈（app/milvus/etcd）和开发栈里正在跑的 Milvus → `backup.py` 打包 → 保留 `BACKUP_KEEP`（默认 14）个最新归档 → 配了 `OFFSITE_BACKUP_DIR` 就复制并校验 sha256 → `finally` 重启生产栈、恢复原先在跑的开发容器。日志 `logs/backup-agent.log`
+- 向量库自动识别：生产 compose 固定 `VECTOR_STORE_TYPE=milvus`，所以宿主 `.env` 即使写的是 `faiss`，日备份仍打包 `volumes-prod/{milvus,etcd}`
+- 停机窗口约 1 分钟（Milvus 健康检查 120s start_period、app 冷启动 40~60s），期间入口 502，silence 让告警不通知
+- 手动执行：`make daily-backup`；只看计划：`python scripts/daily_backup.py --dry-run`
+- Linux 没有 launchd，把两条命令挂到 cron 即可：
+  `30 3 * * * cd /path/to/agent-rag && /path/to/python scripts/daily_backup.py`
+- 注意：LaunchAgent 在**登录后**执行，重启后需要有人登录一次（合盖唤醒不算登录）
+
 ### 4.2 功能验证
 先做**离线检索验证**（不需要 LLM，检查入库与部门隔离）：
 ```bash

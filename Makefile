@@ -7,7 +7,8 @@ endif
 
 .PHONY: help install data ingest run test lint cov milvus-up milvus-down milvus-logs \
         reset-faiss reset-milvus doctor check eval clean release release-check \
-        backup restore monitor-config monitor-up monitor-down monitor-logs monitor-check
+        backup restore daily-backup boot-recover agents-install agents-uninstall \
+        agents-status monitor-config monitor-up monitor-down monitor-logs monitor-check
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | \
@@ -57,6 +58,21 @@ doctor: ## Environment / dependency / connectivity health check
 
 backup: ## Archive data, config, logs and the vector store (checksummed)
 	$(PYTHON) scripts/backup.py
+
+daily-backup: ## Consistent backup + retention + offsite copy (pauses the prod stack)
+	$(PYTHON) scripts/daily_backup.py
+
+boot-recover: ## Start colima and the prod + monitoring stacks after a reboot
+	$(PYTHON) scripts/boot_recover.py
+
+agents-install: ## Install launchd agents (login boot recovery + 03:30 backup)
+	$(PYTHON) scripts/install_launchd.py install
+
+agents-status: ## Show whether the launchd agents are loaded
+	$(PYTHON) scripts/install_launchd.py status
+
+agents-uninstall: ## Remove the launchd agents
+	$(PYTHON) scripts/install_launchd.py uninstall
 
 restore: ## Restore an archive (make restore ARCHIVE=backups/<file>.tar.gz)
 	@test -n "$(ARCHIVE)" || (echo "usage: make restore ARCHIVE=backups/<file>.tar.gz"; exit 1)
