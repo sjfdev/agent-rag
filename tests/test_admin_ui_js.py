@@ -16,6 +16,7 @@ import pytest
 ROOT = Path(__file__).resolve().parent.parent
 ADMIN = ROOT / "static" / "admin.html"
 INDEX = ROOT / "static" / "index.html"
+THEME = ROOT / "static" / "theme.js"
 NODE = shutil.which("node")
 
 pytestmark = pytest.mark.skipif(NODE is None, reason="node is not installed")
@@ -23,12 +24,12 @@ pytestmark = pytest.mark.skipif(NODE is None, reason="node is not installed")
 SHARED_KEY = "ragBearer"
 NAV_TARGETS = [
     "deptCard",
-    "uploadCard",
     "filesCard",
     "modelCard",
     "usersCard",
-    "rebuildCard",
+    "indexCard",
     "auditCard",
+    "rebuildCard",
 ]
 INLINE_SCRIPT = re.compile(r"<script(?:\s[^>]*)?>(.*?)</script>", re.S)
 
@@ -37,14 +38,24 @@ def test_both_pages_define_and_read_the_shared_bearer():
     for page in (ADMIN, INDEX):
         text = page.read_text()
         assert f'const SHARED_BEARER_KEY = "{SHARED_KEY}";' in text
-        assert "sessionStorage.getItem(SHARED_BEARER_KEY)" in text
+        assert "authStore.get(SHARED_BEARER_KEY)" in text
 
 
 def test_login_mirrors_and_logout_clears_the_shared_bearer():
     for page in (ADMIN, INDEX):
         text = page.read_text()
-        assert "sessionStorage.setItem(SHARED_BEARER_KEY, bearer);" in text
-        assert "sessionStorage.removeItem(SHARED_BEARER_KEY);" in text
+        assert "authStore.set(SHARED_BEARER_KEY, bearer);" in text
+        assert "authStore.remove(SHARED_BEARER_KEY);" in text
+
+
+def test_credentials_persist_across_tabs_via_local_storage():
+    for page in (ADMIN, INDEX):
+        text = page.read_text()
+        assert "localStorage.getItem(key)" in text
+        assert "localStorage.setItem(key, value);" in text
+        assert "localStorage.removeItem(key);" in text
+        # Older per-tab sessions must still be honoured once.
+        assert "sessionStorage.getItem(key)" in text
 
 
 def test_menu_targets_match_existing_cards():
@@ -59,8 +70,8 @@ def test_menu_entries_use_bilingual_nav_keys():
     text = ADMIN.read_text()
     keys = set(re.findall(r'data-i18n="(admin\.nav\.[^"]+)"', text))
     assert keys == {f"admin.nav.{name}" for name in
-                    ("dept", "upload", "files", "model", "accounts", "rebuild",
-                     "audit")}
+                    ("dept", "files", "model", "accounts", "index",
+                     "rebuild", "audit")}
 
 
 def test_sidebar_is_hidden_until_authenticated():
@@ -73,7 +84,101 @@ def test_sidebar_is_hidden_until_authenticated():
 def test_hidden_cards_hide_their_menu_entry():
     text = ADMIN.read_text()
     assert "btn.hidden = !target || target.hidden;" in text
-    assert 'id="navUsers" data-target="usersCard" data-i18n="admin.nav.accounts" hidden' in text
+    assert 'data-target="usersCard" hidden' in text
+
+
+def test_console_information_architecture():
+    text = ADMIN.read_text()
+    for key in ("admin.navGroup.content", "admin.navGroup.config", "admin.navGroup.ops"):
+        assert f'data-i18n="{key}"' in text
+    # Tabs expose semantics and keyboard switching.
+    assert 'role="tablist"' in text
+    assert 'role="tab"' in text
+    assert '"ArrowDown"' in text
+    # Header shows the current department, job indicator and folded status.
+    assert 'id="currentDeptBadge"' in text
+    assert 'id="jobPill"' in text
+    assert 'class="statusPop"' in text
+    # Retrieval replay is collapsed; model form has labels and a dirty badge.
+    assert '<details class="searchBox">' in text
+    assert 'id="modelDirty"' in text
+    assert 'data-i18n="admin.modelBaseLabel"' in text
+    assert 'data-i18n="admin.newUserLabel"' in text
+
+
+def test_console_global_department_and_split_index_card():
+    text = ADMIN.read_text()
+    # The header owns the global department chooser.
+    assert 'id="deptHeader"' in text
+    assert "function changeDept(" in text
+    # Index maintenance is its own section/card.
+    assert 'id="indexCard"' in text
+    assert 'data-target="indexCard"' in text
+    assert 'id="indexMsg"' in text
+    # Tables share skeleton / empty / error+retry primitives.
+    assert "function renderSkeleton(" in text
+    assert "function emptyRow(" in text
+    assert "function errorMsg(" in text
+    assert 't("common.retry")' in text
+
+
+def test_console_p2_responsive_and_tables():
+    text = ADMIN.read_text()
+    # Below 1000px the menu becomes a sticky horizontal tab bar.
+    assert "@media (max-width: 1000px)" in text
+    assert "overflow-x: auto" in text
+    # Panels expose a loading state and the header shows the last refresh.
+    assert 'id="lastRefresh"' in text
+    assert 'classList.toggle("loading"' in text
+    # File table supports sorting and pagination.
+    assert 'data-sort="mtime"' in text
+    assert 'id="filePager"' in text
+    assert "const FILE_PAGE_SIZE = 50;" in text
+    # Audit can be filtered by time and text.
+    assert 'id="auditSearch"' in text
+    assert 'id="auditSince"' in text
+    # Theme dialog has presets, live preview and a scope hint.
+    assert 'id="themePresets"' in text
+    assert "applyTheme(\"custom\", themeInputsValue())" in text
+    assert 'data-i18n="admin.theme.scope"' in text
+
+
+def test_admin_has_dark_light_and_custom_themes():
+    text = ADMIN.read_text()
+    assert '<script src="/ui/theme.js"></script>' in text
+    assert 'id="theme"' in text
+    assert 'id="themeModal"' in text
+    assert 'value="dark"' in text and 'value="light"' in text and 'value="custom"' in text
+    assert "applyTheme(" in text
+    assert "loadCustomTheme()" in text
+    assert "localStorage" in THEME.read_text()
+
+
+def test_theme_script_parses():
+    result = subprocess.run(
+        [NODE, "--check", str(THEME)],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_console_ux_guards():
+    text = ADMIN.read_text()
+    # Primary buttons derive their text color from the accent luminance.
+    assert "color: var(--accent-fg)" in text
+    assert '"--accent-fg"' in THEME.read_text()
+    # Section choice is remembered and switching refreshes that panel.
+    assert 'const SECTION_KEY = "adminSection";' in text
+    assert "refreshSection(activeSection)" in text
+    assert "rememberSection(activeSection);" in text
+    # Wide tables scroll horizontally; results are mirrored in a toast.
+    assert '<div class="tableWrap">' in text
+    assert ".tableWrap { width: 100%; overflow-x: auto;" in text
+    assert '<div class="toast" id="toast" role="status" aria-live="polite" hidden></div>' in text
+    assert 'aria-live="polite"' in text
 
 
 def test_inline_scripts_parse():
@@ -91,3 +196,43 @@ def test_inline_scripts_parse():
             check=False,
         )
         assert result.returncode == 0, f"{page.name}: {result.stderr}"
+
+
+def test_console_uses_themed_confirmation_everywhere():
+    text = ADMIN.read_text()
+    assert 'id="confirmModal"' in text
+    assert "function askConfirm(" in text
+    assert "!confirm(" not in text
+    assert "confirm(t(" not in text
+    assert text.count("await askConfirm(") == 4
+
+
+def test_running_ingest_job_is_restored():
+    text = ADMIN.read_text()
+    assert 'JOB_KEY = "adminJobId"' in text
+    assert "await restoreJob();" in text
+    assert "localStorage.removeItem(JOB_KEY)" in text
+
+
+def test_document_title_follows_the_active_section():
+    text = ADMIN.read_text()
+    assert "function updateDocumentTitle()" in text
+    assert "updateDocumentTitle();" in text
+
+
+def test_upload_is_inline_with_the_file_list():
+    text = ADMIN.read_text()
+    assert 'id="uploadCard"' not in text
+    assert 'id="uploadDept"' in text
+    start = text.index('id="filesCard"')
+    end = text.index('id="modelCard"')
+    assert 'id="drop"' in text[start:end]
+    assert 'id="uploadDept"' in text[start:end]
+
+
+def test_header_groups_account_controls_and_merges_theme_edit():
+    text = ADMIN.read_text()
+    assert 'id="userMenu"' in text
+    assert '<option value="custom-edit"' in text
+    assert 'id="themeEdit"' not in text
+    assert text.index('id="lang"') < text.index('id="userMenu"')

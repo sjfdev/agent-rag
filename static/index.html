@@ -437,11 +437,37 @@ let sessionsCache = [];
 const TOKEN_KEY = "chatToken";
 const BEARER_KEY = "chatBearer";
 // `/ui/` and `/admin` share the bearer token so one login covers both pages.
-// `/ui/` 与 `/admin` 共享 Bearer token，登录一次即可覆盖两个页面。
+// It lives in localStorage so it survives new tabs and browser restarts;
+// sessionStorage is only read once to migrate older sessions.
+// `/ui/` 与 `/admin` 共享 Bearer token，登录一次即可覆盖两个页面；保存在
+// localStorage 以跨标签页/重启保持，sessionStorage 仅用于旧会话迁移。
 const SHARED_BEARER_KEY = "ragBearer";
-let token = sessionStorage.getItem(TOKEN_KEY) || "";
-let bearer =
-  sessionStorage.getItem(BEARER_KEY) || sessionStorage.getItem(SHARED_BEARER_KEY) || "";
+const authStore = {
+  get(key) {
+    try {
+      const value = localStorage.getItem(key) || sessionStorage.getItem(key) || "";
+      if (value && !localStorage.getItem(key)) localStorage.setItem(key, value);
+      return value;
+    } catch (error) {
+      return "";
+    }
+  },
+  set(key, value) {
+    try {
+      if (value) localStorage.setItem(key, value);
+      else localStorage.removeItem(key);
+      sessionStorage.removeItem(key);
+    } catch (error) {}
+  },
+  remove(key) {
+    try {
+      localStorage.removeItem(key);
+      sessionStorage.removeItem(key);
+    } catch (error) {}
+  },
+};
+let token = authStore.get(TOKEN_KEY);
+let bearer = authStore.get(BEARER_KEY) || authStore.get(SHARED_BEARER_KEY) || "";
 let authMode = "none";
 let localLogin = false;
 
@@ -453,11 +479,11 @@ function hasCredential() {
 // 同步页面专属副本与共享副本。
 function storeBearer(value) {
   bearer = value || "";
-  sessionStorage.setItem(BEARER_KEY, bearer);
+  authStore.set(BEARER_KEY, bearer);
   if (bearer) {
-    sessionStorage.setItem(SHARED_BEARER_KEY, bearer);
+    authStore.set(SHARED_BEARER_KEY, bearer);
   } else {
-    sessionStorage.removeItem(SHARED_BEARER_KEY);
+    authStore.remove(SHARED_BEARER_KEY);
   }
 }
 
@@ -471,9 +497,9 @@ function authHeaders(extra) {
 function clearCredential() {
   bearer = "";
   token = "";
-  sessionStorage.removeItem(TOKEN_KEY);
-  sessionStorage.removeItem(BEARER_KEY);
-  sessionStorage.removeItem(SHARED_BEARER_KEY);
+  authStore.remove(TOKEN_KEY);
+  authStore.remove(BEARER_KEY);
+  authStore.remove(SHARED_BEARER_KEY);
 }
 
 function showGate(message) {
@@ -505,7 +531,7 @@ function consumeTokenFragment() {
   bearer = value;
   token = "";
   storeBearer(bearer);
-  sessionStorage.setItem(TOKEN_KEY, token);
+  authStore.set(TOKEN_KEY, token);
   return value;
 }
 
@@ -1275,7 +1301,7 @@ async function passwordLogin(username, password) {
   bearer = data.token;
   token = "";
   storeBearer(bearer);
-  sessionStorage.setItem(TOKEN_KEY, token);
+  authStore.set(TOKEN_KEY, token);
   document.getElementById("password").value = "";
   if (data.user && data.user.username) uidInput.value = data.user.username;
   if (data.user && data.user.depts && data.user.depts.length) {
@@ -1343,7 +1369,7 @@ document.getElementById("loginForm").onsubmit = async (event) => {
     bearer = pasted;
     token = "";
     storeBearer(bearer);
-    sessionStorage.setItem(TOKEN_KEY, token);
+    authStore.set(TOKEN_KEY, token);
     document.getElementById("credential").value = "";
   } else if (username && password) {
     if (!(await passwordLogin(username, password))) return;

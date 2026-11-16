@@ -31,15 +31,17 @@ three agree before you push a tag.
   次增量入库会重建），`POST /admin/api/vectors/prune` 清理源文件已不存在的孤儿
   向量；两者审计为 `vector.delete`/`vector.prune`，入库任务运行时返回 409。
 - **Shared console login and section menu**: `/admin` and `/ui/` mirror the JWT
-  under a shared `ragBearer` sessionStorage key, so one login covers both pages
-  (same tab) and either logout clears both; `ADMIN_TOKEN` and the chat
-  `X-API-Key` stay page-local. The console also gained a sticky section menu
-  that scrolls to and highlights each card, hides entries for unavailable
-  panels, and turns into a horizontal menu on narrow screens.
+  under a shared `ragBearer` localStorage key, so one login covers both pages,
+  survives new tabs and browser restarts, and either logout clears both;
+  older `sessionStorage` sessions are migrated on first read. `ADMIN_TOKEN` and
+  the chat `X-API-Key` stay page-local. The console also gained a tab-style
+  section menu: only the selected card is shown, entries for unavailable panels
+  are hidden, and it turns into a horizontal menu on narrow screens.
   <br>**管理台共享登录与分区菜单（中文）**：`/admin` 与 `/ui/` 用共享的
-  `ragBearer`（sessionStorage）复用 JWT，同标签页登录一次即可，任一页登出同时
-  清除；`ADMIN_TOKEN` 与聊天 `X-API-Key` 仍各自保存。管理台新增左侧固定分区
-  菜单，点击滚动到对应卡片并高亮当前分区，不可用入口自动隐藏，窄屏转横向。
+  `ragBearer`（localStorage）复用 JWT，登录一次后新标签页/重启都保持，任一页
+  登出同时清除（旧的 `sessionStorage` 会话在首次读取时迁移）；`ADMIN_TOKEN` 与
+  聊天 `X-API-Key` 仍各自保存。管理台左侧分区菜单改为标签页式切换，右侧只显示
+  当前分区，不可用入口自动隐藏，窄屏转横向。
 - **Console model overrides**: the admin console's new 模型 card changes the
   chat endpoint (`api_base`/`model`/`api_key`/`temperature`/`max_tokens`) without
   a restart. `GET/PUT/DELETE /admin/api/model` and `POST /admin/api/model/test`
@@ -75,7 +77,89 @@ three agree before you push a tag.
   `agent_rag_backup_archives` stat `BACKUP_DIR` on scrape (production mounts
   `./backups` read-only at `/app/backups`); `AgentRagBackupStale` fires after
   48 hours without a new archive and the dashboard gains a "Newest backup
-  (hours)" panel, so a silently failing nightly job is visible.
+   (hours)" panel, so a silently failing nightly job is visible.
+
+- **Console themes**: the admin header can switch between the dark and light
+  presets or open a custom palette (background, panel, text, accent); borders,
+  hover and status colors are derived from those four colors. The choice is
+  stored in `localStorage` and applied before first paint. `static/theme.js`
+  holds the palette math shared by the console.
+  <br>**管理台主题（中文）**：顶栏可在深色/浅色预设与自定义配色之间切换
+  （背景、面板、文字、主色），边框/悬停/状态色由这四个颜色自动推导；选择存在
+  `localStorage` 并在首屏前应用，避免闪烁。`static/theme.js` 负责配色计算。
+
+- **Console tab and feedback polish**: the section menu remembers the last
+  panel and refreshes it on switch, wide tables scroll horizontally on narrow
+  screens instead of squashing columns, and every `setMsg` result is mirrored
+  in a fixed toast (the inline message stays, with `aria-live`). Primary
+  buttons pick a black/white foreground from the accent luminance, so light
+  custom accents stay readable.
+  <br>**管理台标签与反馈优化（中文）**：分区菜单记住上次面板并在切换时刷新，宽表格
+  在窄屏横向滚动而不再挤压列；`setMsg` 的结果除行内提示外还镜像到固定 toast（行内
+  消息保留并带 `aria-live`）。主按钮根据主色亮度自动选黑/白前景，浅色自定义主色
+  也保持可读。
+
+- **Console information architecture**: the section menu is grouped into
+  内容/配置/运维 with the rebuild entry marked as dangerous; tabs expose
+  `role=tab`/`aria-selected` and switch with arrow keys. The header folds
+  backend/model/upload-limit into a status popover and adds a current-department
+  badge plus an "ingesting" pill that jumps to the job log. Retrieval replay is
+  collapsed inside 文件与向量, and the model/account forms use explicit labels;
+  the model card shows an "unsaved" badge and warns before leaving the page.
+  <br>**管理台信息架构（中文）**：分区菜单分为内容/配置/运维，重建索引标红；标签页
+  具备 `role=tab`/`aria-selected` 并支持方向键切换。顶栏把后端/模型/上限折叠进“状态”
+  弹层，并新增当前部门徽标与可跳转任务日志的“入库中”指示；检索测试折叠在“文件与
+  向量”内，模型/账号表单改用显式标签；模型卡显示“未保存”并在离开页面前提醒。
+
+- **Console polish (P2)**: below 1000px the menu becomes a sticky horizontal
+  tab strip; cards show an in-flight spinner and the status popover reports the
+  last refresh time. The file table sorts on any column and pages at 50 rows;
+  audit entries can be filtered by text and time window with a 20–200 limit.
+  The custom-theme dialog gains four presets and live preview (cancel reverts),
+  and states that it applies to the admin console only.
+  <br>**管理台细节（P2，中文）**：≤1000px 菜单变为顶部吸附的横向标签栏；卡片
+  加载时显示角标，状态弹层显示最后刷新时间。文件表可按任意列排序并按 50 条分页；
+  审计支持文本与时间筛选及 20–200 条切换。自定义主题弹窗新增四套预设与实时预览
+  （取消即回滚），并标注仅作用于管理台。
+
+- **Console: global department, split index card, shared table states**: the
+  header badge is now a department picker that stays in sync with the
+  department card and re-scopes uploads/ingestion immediately. Index
+  maintenance (ingest, orphan cleanup, retrieval replay) moved to its own
+  「索引维护」 section, leaving the file list focused on browsing. Tables share
+  skeleton, empty and error+retry states.
+  <br>**管理台：全局部门、索引维护分卡、统一三态（中文）**：顶栏部门徽标改为
+  可切换的下拉，与部门卡同步，并立即影响上传/入库范围；索引维护（入库、清理孤儿、
+  检索测试）拆到独立「索引维护」分区，文件列表专注浏览；表格统一骨架/空态/
+  错误+重试三态。
+- **Console: dangerous zone, counts, cached sections, audit export**: the
+  rebuild entry now sits in its own 危险区 group with a separator and requires
+  typing `RESET` after the checkbox; menu badges show pending files and
+  accounts; tab switches reuse data for 30s, and narrow tab bars fade the right
+  edge and scroll the active section into view; file actions stay fixed while
+  the table scrolls and sortable headers work from the keyboard; audit times
+  render locally with success/failure badges and export to CSV.
+  <br>**管理台：危险区、菜单计数、分区缓存、审计导出（中文）**：重建索引移入
+  独立「危险区」并加分隔线，勾选后仍需输入 `RESET`；菜单显示待入库与账号数；
+  分区切换 30 秒内复用数据，窄屏标签栏右缘渐隐并把当前分区滚入视野；文件表滚动
+  时操作列固定、表头支持键盘排序；审计时间本地化、成败徽章并支持 CSV 导出。
+- **Console: themed confirmations, job recovery, section titles**: destructive
+  actions (delete user/file/vectors, prune orphans) now use one themed dialog
+  instead of native `confirm()`; a page reload reattaches to the running
+  ingestion job and keeps polling its log; the browser title follows the active
+  section.
+  <br>**管理台：统一确认、任务恢复、分区标题（中文）**：删除用户/文件/向量、
+  清理孤儿改用统一主题化确认弹窗，不再用原生 `confirm()`；刷新页面会重新接入
+  正在运行的入库任务并继续轮询日志；浏览器标题跟随当前分区。
+- **Console: upload folded into files, compact header**: the upload card was
+  merged into the file list with an inline target-department selector, so
+  picking a file and seeing its ingest status happens in one place; identity,
+  theme, back-to-chat and logout moved into one account menu (language stays a
+  first-level control), and the separate 配色 button became a 「配色…」 option in
+  the theme selector.
+  <br>**管理台：上传并入文件、顶栏收纳（中文）**：上传卡并入文件列表，卡内即可
+  选择上传部门，选文件与看入库状态在同一处；身份、语言、主题、返回对话与退出收进
+  账户菜单（语言仍在顶栏一级），原「配色」按钮改为主题下拉里的「配色…」选项。
 
 ### Fixed
 

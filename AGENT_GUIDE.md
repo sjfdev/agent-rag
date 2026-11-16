@@ -425,7 +425,7 @@ AUTH_OIDC_SCOPE=openid profile
 - `GET /auth/login?next=/admin` 生成带 HMAC 签名的 `state` 后 302 到 IdP；`state` 用 `AUTH_JWT_SECRET`（缺失时用 client secret）签名，回调时校验，防 CSRF
 - `state` 同时写入 `HttpOnly; SameSite=Lax; Path=/auth` 的短期 cookie（10 分钟，HTTPS 下带 `Secure`），回调必须与 cookie 完全一致，否则 400：他人的授权码无法被塞进你的浏览器（login CSRF）；成功后立即清除 cookie，失败时 cookie 最多残留 10 分钟
 - `GET /auth/callback` 用 code 换 token 并校验 `id_token`：JWKS 模式直接把 provider 的 `id_token` 交给管理台；共享密钥模式则用校验后的身份重新签发一个 HS256 token（有效期上限 1 小时）
-- 回调页只把 token 放进 URL fragment（`/admin#token=...`），管理台读取后立即写入 `sessionStorage` 并用 `history.replaceState` 清掉地址栏；`next` 只接受站内绝对路径，跨站地址回退到 `/admin`
+- 回调页只把 token 放进 URL fragment（`/admin#token=...`），管理台读取后立即写入 `localStorage` 并用 `history.replaceState` 清掉地址栏；`next` 只接受站内绝对路径，跨站地址回退到 `/admin`
 - 未配置 client 时两个路由都返回 404；`GET /info` 的 `oidc_login` 字段告诉前端是否显示登录按钮
 - 换 token 失败（网络、4xx、无 `id_token`、签名不通过）统一返回 401，日志里有具体原因
 
@@ -823,7 +823,7 @@ VECTOR_STORE_TYPE=milvus python scripts/eval_retrieval.py
 安全：
 
 - 未设置 `ADMIN_TOKEN` 时，管理 API 仅接受**本机回环**（127.0.0.1/::1），局域网访问返回 403
-- 管理台首次打开会显示登录框：用**账号密码**登录（`AUTH_LOCAL_LOGIN_ENABLED=true`），或粘贴 **Bearer token**（`AUTH_MODE=jwt`，需 `admin: true`）／**管理令牌**（`ADMIN_TOKEN`）；凭据只存在当前标签页的 `sessionStorage`
+- 管理台首次打开会显示登录框：用**账号密码**登录（`AUTH_LOCAL_LOGIN_ENABLED=true`），或粘贴 **Bearer token**（`AUTH_MODE=jwt`，需 `admin: true`）／**管理令牌**（`ADMIN_TOKEN`）；凭据保存在本浏览器 `localStorage`，新标签页或重启后无需再次登录（登出会清除）
 - 配置了 OIDC client 时，登录框还会显示「使用企业账号登录」，点击后跳转 IdP，回调成功自动带回 token（见 §4.4.5）
 - 启用本地账号后，管理台多出「账号」卡片：创建/删除账号、改密码、勾选管理员、停用（见 §4.4.6）
 - 右上角显示当前身份（用户/部门/管理员）与「退出」按钮；任一请求返回 401 会自动回到登录框

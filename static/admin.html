@@ -6,15 +6,70 @@
 <title data-i18n="page.adminTitle">知识库管理 - agent-rag</title>
 <style>
   :root {
+    color-scheme: dark;
     --bg: #0e1116;
     --panel: #171a21;
     --panel-2: #1f232c;
     --text: #e6e9ef;
     --muted: #9aa3b2;
     --accent: #4f8cff;
+    --accent-fg: #ffffff;
     --ok: #3ecf8e;
     --warn: #f5a524;
     --bad: #ff6b6b;
+    --changed: #ff9f43;
+    --border: #232833;
+    --border-strong: #2a3444;
+    --border-hover: #3a4150;
+    --accent-soft: #141c2b;
+    --drop-border: #33405a;
+    --bar-bg: #1c2434;
+    --log-bg: #0b0e13;
+    --log-text: #c7d0df;
+    --danger-border: #4a2a2e;
+    --danger-zone: #3a2529;
+    --overlay: rgba(7, 9, 13, .62);
+    --overlay-strong: rgba(7, 9, 13, .82);
+    --ok-bg: #12261e;
+    --ok-border: #1e4636;
+    --warn-bg: #241f14;
+    --warn-border: #4a3a1e;
+    --changed-bg: #241b13;
+    --changed-border: #4a3320;
+  }
+  /* Light preset. Custom themes set the same variables from the palette modal. */
+  /* 浅色预设；自定义主题由配色弹窗写入同一组变量。 */
+  :root[data-theme="light"] {
+    color-scheme: light;
+    --bg: #f4f6fa;
+    --panel: #ffffff;
+    --panel-2: #eef2f8;
+    --text: #16202d;
+    --muted: #5d6877;
+    --accent: #2563eb;
+    --accent-fg: #ffffff;
+    --ok: #12805c;
+    --warn: #a4610a;
+    --bad: #d13438;
+    --changed: #b35c00;
+    --border: #dbe2ec;
+    --border-strong: #c7d0dd;
+    --border-hover: #aab6c8;
+    --accent-soft: #e7efff;
+    --drop-border: #a9c1e8;
+    --bar-bg: #e2e9f2;
+    --log-bg: #f2f5fa;
+    --log-text: #2c3745;
+    --danger-border: #e3b4b0;
+    --danger-zone: #efcac5;
+    --overlay: rgba(23, 32, 45, .38);
+    --overlay-strong: rgba(23, 32, 45, .55);
+    --ok-bg: #e7f6ef;
+    --ok-border: #b6e2cf;
+    --warn-bg: #fdf1df;
+    --warn-border: #eed8a9;
+    --changed-bg: #fdeee1;
+    --changed-border: #f0cba6;
   }
   * { box-sizing: border-box; }
   body {
@@ -23,7 +78,7 @@
   }
   header {
     display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between;
-    padding: 14px 20px; border-bottom: 1px solid #232833; background: var(--panel);
+    padding: 14px 20px; border-bottom: 1px solid var(--border); background: var(--panel);
   }
   .brand { font-size: 16px; font-weight: 600; }
   .brand span { color: var(--muted); font-weight: 400; margin-left: 8px; font-size: 12px; }
@@ -41,7 +96,7 @@
   #console[hidden], #sidebar[hidden] { display: none; }
   .sidebar {
     position: sticky; top: 16px; background: var(--panel);
-    border: 1px solid #232833; border-radius: 10px; padding: 10px;
+    border: 1px solid var(--border); border-radius: 10px; padding: 10px;
   }
   .sidebar h3 {
     font-size: 12px; color: var(--muted); font-weight: 500;
@@ -55,8 +110,8 @@
   }
   .navBtn:hover { background: var(--panel-2); color: var(--text); }
   .navBtn.active {
-    background: #141c2b; color: var(--text);
-    border-color: #2a3444; box-shadow: inset 2px 0 0 var(--accent);
+    background: var(--accent-soft); color: var(--text);
+    border-color: var(--border-strong); box-shadow: inset 2px 0 0 var(--accent);
   }
   .navBtn[hidden] { display: none; }
   /* Chunk preview modal: same pattern as the chat citation preview. */
@@ -64,82 +119,110 @@
   .modal {
     position: fixed; inset: 0; z-index: 60; display: flex;
     align-items: center; justify-content: center; padding: 20px;
-    background: rgba(7, 9, 13, .62);
+    background: var(--overlay);
   }
   .modal[hidden] { display: none; }
   .modalCard {
     width: min(920px, 100%); max-height: min(82vh, 900px); display: flex;
-    flex-direction: column; background: var(--panel); border: 1px solid #2a3444;
+    flex-direction: column; background: var(--panel); border: 1px solid var(--border-strong);
     border-radius: 12px; box-shadow: 0 20px 60px rgba(0, 0, 0, .5); overflow: hidden;
   }
   .modalHead {
     display: flex; align-items: flex-start; gap: 12px; padding: 14px 18px 8px;
-    border-bottom: 1px solid #232833;
+    border-bottom: 1px solid var(--border);
   }
   .modalHead h2 { margin: 0; font-size: 14px; color: var(--text); flex: 1; word-break: break-all; }
   .modalTools { padding: 8px 18px 0; }
   .modalMeta { padding: 8px 18px 0; font-size: 12px; color: var(--muted); }
   .modalBody { padding: 4px 18px 18px; overflow: auto; }
   .modalClose { flex: none; }
+  .confirmCard { width: min(420px, 100%); }
+  .confirmText { margin: 12px 0 18px; font-size: 13px; line-height: 1.6; color: var(--text); word-break: break-word; }
+  .confirmActions { justify-content: flex-end; }
   @media (max-width: 760px) {
     .modal { padding: 0; }
     .modalCard { width: 100%; max-height: 100%; height: 100%; border-radius: 0; }
   }
-  .card { scroll-margin-top: 12px; }
+  /* The side menu acts as tabs: only the active card is rendered. The job log
+     card stays visible because it reports work started from any section. */
+  /* 左侧菜单即标签页：右侧只渲染当前分区；任务日志卡片保持可见，因为它可能由
+     任意分区触发。 */
+  #console > section.card:not(#jobCard):not(.sectionActive) { display: none; }
   @media (max-width: 760px) {
     .shell { grid-template-columns: 1fr; padding: 12px 12px 32px; gap: 12px; }
     .sidebar { position: static; }
     .sidebar nav { display: flex; flex-wrap: wrap; }
     .navBtn { width: auto; }
   }
-  .card { background: var(--panel); border: 1px solid #232833; border-radius: 10px; padding: 14px 16px; }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
   h2 { font-size: 13px; margin: 0 0 10px; color: var(--muted); font-weight: 500; letter-spacing: .5px; }
   h2 .sub { color: var(--muted); font-weight: 400; margin-left: 6px; }
   .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
   input[type=text], input[type=password], select, textarea {
-    background: var(--panel-2); color: var(--text); border: 1px solid #2a3444;
+    background: var(--panel-2); color: var(--text); border: 1px solid var(--border-strong);
     border-radius: 8px; padding: 7px 10px; font: inherit; outline: none;
   }
   input:focus, select:focus { border-color: var(--accent); }
   button {
-    background: var(--panel-2); color: var(--text); border: 1px solid #2a3444;
+    background: var(--panel-2); color: var(--text); border: 1px solid var(--border-strong);
     border-radius: 8px; padding: 7px 12px; font: inherit; cursor: pointer;
   }
-  button:hover:not(:disabled) { border-color: #3a4150; }
+  button:hover:not(:disabled) { border-color: var(--border-hover); }
   button:disabled { opacity: .45; cursor: not-allowed; }
-  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
-  button.danger { color: var(--bad); border-color: #4a2a2e; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
+  button.danger { color: var(--bad); border-color: var(--danger-border); }
   button.tiny { padding: 4px 8px; font-size: 12px; }
   .drop {
-    border: 1px dashed #33405a; border-radius: 10px; padding: 22px; text-align: center;
+    border: 1px dashed var(--drop-border); border-radius: 10px; padding: 22px; text-align: center;
     color: var(--muted); margin-bottom: 10px; transition: border-color .15s, background .15s;
   }
-  .drop.hot { border-color: var(--accent); background: #141c2b; }
+  .drop.hot { border-color: var(--accent); background: var(--accent-soft); }
   .drop label { color: var(--accent); cursor: pointer; text-decoration: underline; }
   .stats { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
   .pill {
     font-size: 12px; color: var(--muted); background: var(--panel-2);
-    border: 1px solid #2a3444; border-radius: 999px; padding: 2px 10px;
+    border: 1px solid var(--border-strong); border-radius: 999px; padding: 2px 10px;
   }
   .pill b { color: var(--text); }
   table { width: 100%; border-collapse: collapse; margin-top: 10px; }
-  th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid #232833; vertical-align: middle; }
+  /* Tables scroll horizontally on narrow screens instead of squashing columns. */
+  /* 窄屏下表格横向滚动，避免列被压扁。 */
+  .tableWrap { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .tableWrap table { min-width: 680px; }
+  th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--border); vertical-align: middle; }
   th { color: var(--muted); font-weight: 500; font-size: 12px; }
   td.name { max-width: 380px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   td.mono, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: var(--muted); }
   .badge { font-size: 11px; border-radius: 999px; padding: 2px 8px; border: 1px solid transparent; white-space: nowrap; }
-  .b-indexed { color: var(--ok); border-color: #1e4636; background: #12261e; }
-  .b-pending { color: var(--warn); border-color: #4a3a1e; background: #241f14; }
-  .b-changed { color: #ff9f43; border-color: #4a3320; background: #241b13; }
-  .b-unsupported, .b-unknown, .b-orphan { color: var(--muted); border-color: #2a3444; background: var(--panel-2); }
+  .b-indexed { color: var(--ok); border-color: var(--ok-border); background: var(--ok-bg); }
+  .b-pending { color: var(--warn); border-color: var(--warn-border); background: var(--warn-bg); }
+  .b-changed { color: var(--changed); border-color: var(--changed-border); background: var(--changed-bg); }
+  .b-unsupported, .b-unknown, .b-orphan { color: var(--muted); border-color: var(--border-strong); background: var(--panel-2); }
   .msg { font-size: 12px; color: var(--muted); margin-top: 8px; min-height: 18px; }
   .msg.error { color: var(--bad); }
   .msg.ok { color: var(--ok); }
-  .bar { height: 6px; background: #1c2434; border-radius: 3px; overflow: hidden; margin-top: 8px; }
+  /* Toast: action results stay visible even when the message sits below a
+     long table. It only mirrors setMsg; the inline message is still written. */
+  /* 浮动提示：操作结果在表格很长导致行内消息不可见时仍能看到；行内消息照常写入。 */
+  .toast {
+    position: fixed; right: 20px; bottom: 20px; z-index: 80;
+    max-width: min(420px, calc(100vw - 40px));
+    padding: 10px 14px; border-radius: 10px;
+    background: var(--panel); color: var(--text);
+    border: 1px solid var(--border-strong);
+    box-shadow: 0 14px 40px rgba(0, 0, 0, .35); font-size: 13px;
+  }
+  .toast.ok { border-color: var(--ok); }
+  .toast.error { border-color: var(--bad); }
+  .toast[hidden] { display: none; }
+  @media (max-width: 760px) {
+    .toast { right: 12px; bottom: 12px; left: 12px; max-width: none; }
+  }
+  .bar { height: 6px; background: var(--bar-bg); border-radius: 3px; overflow: hidden; margin-top: 8px; }
   .bar .fill { height: 100%; width: 0%; background: var(--accent); transition: width .15s linear; }
   #jobCard pre {
-    margin: 0; max-height: 260px; overflow: auto; background: #0b0e13; border: 1px solid #232833;
-    border-radius: 8px; padding: 10px; font-size: 12px; color: #c7d0df; white-space: pre-wrap;
+    margin: 0; max-height: 260px; overflow: auto; background: var(--log-bg); border: 1px solid var(--border);
+    border-radius: 8px; padding: 10px; font-size: 12px; color: var(--log-text); white-space: pre-wrap;
   }
   #jobStatus { margin-left: 6px; font-size: 12px; }
   .tokenRow { display: flex; gap: 8px; align-items: center; margin-top: 8px; }
@@ -148,17 +231,17 @@
   .identity b { color: var(--text); font-weight: 500; }
   .gate {
     position: fixed; inset: 0; z-index: 50; display: flex; align-items: center; justify-content: center;
-    background: rgba(7, 9, 13, .82); backdrop-filter: blur(3px); padding: 20px;
+    background: var(--overlay-strong); backdrop-filter: blur(3px); padding: 20px;
   }
   .gate[hidden] { display: none; }
   .gateSso {
     display: block; text-align: center; margin-top: 10px; padding: 8px 12px;
-    border-radius: 8px; background: var(--accent); color: #fff; text-decoration: none;
+    border-radius: 8px; background: var(--accent); color: var(--accent-fg); text-decoration: none;
   }
   .gateSso:hover { filter: brightness(1.08); }
   .gateSso[hidden] { display: none; }
   .gateCard {
-    width: min(460px, 100%); background: var(--panel); border: 1px solid #232833;
+    width: min(460px, 100%); background: var(--panel); border: 1px solid var(--border);
     border-radius: 12px; padding: 20px; display: grid; gap: 12px;
   }
   .gateCard h1 { font-size: 16px; margin: 0; }
@@ -178,23 +261,241 @@
   .gateFoot { display: flex; gap: 8px; align-items: center; justify-content: space-between; }
   .gateErr { color: var(--bad); font-size: 12px; min-height: 16px; }
   .hint { font-size: 12px; color: var(--muted); }
-  .dangerZone { border-color: #3a2529; }
+  .dangerZone { border-color: var(--danger-zone); }
+  /* Custom theme palette modal. */
+  /* 自定义主题配色弹窗。 */
+  .themeCard { width: min(420px, 100%); }
+  .themeBody { display: grid; gap: 10px; }
+  .themeRow {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 10px; font-size: 13px;
+  }
+  .themeRow input[type=color] {
+    width: 46px; height: 30px; padding: 2px; background: var(--panel-2);
+    border: 1px solid var(--border-strong); border-radius: 6px; cursor: pointer;
+  }
+  /* Grouped menu with a separated danger entry. */
+  /* 分区菜单分组，危险操作单独弱化标记。 */
+  .navGroup { display: grid; gap: 2px; }
+  .navGroupLabel {
+    font-size: 11px; color: var(--muted); padding: 6px 10px 2px;
+    letter-spacing: .5px;
+  }
+  .navBtn.dangerNav { color: var(--bad); }
+  .navBtn.dangerNav.active { color: var(--bad); box-shadow: inset 2px 0 0 var(--bad); }
+  /* Visible keyboard focus for menu, buttons, selects and links. */
+  /* 键盘焦点可见，覆盖菜单、按钮、下拉与链接。 */
+  .navBtn:focus-visible, button:focus-visible, select:focus-visible,
+  summary:focus-visible, a:focus-visible, input:focus-visible {
+    outline: 2px solid var(--accent); outline-offset: 2px;
+  }
+  /* Current department, job indicator and collapsed status. */
+  /* 当前部门、入库任务指示与折叠状态。 */
+  .deptBadge {
+    font-size: 12px; color: var(--muted); padding: 2px 9px;
+    border: 1px solid var(--border-strong); border-radius: 999px;
+    background: var(--panel-2);
+  }
+  .deptBadge b { color: var(--text); font-weight: 500; }
+  .jobPill {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-size: 12px; padding: 4px 10px; cursor: pointer;
+    color: var(--warn); background: var(--warn-bg);
+    border: 1px solid var(--warn-border); border-radius: 999px;
+  }
+  .jobPill .dot {
+    width: 8px; height: 8px; border-radius: 50%; background: var(--warn);
+    animation: jobPulse 1.2s ease-in-out infinite;
+  }
+  @keyframes jobPulse { 50% { opacity: .35; } }
+  .statusPop { position: relative; font-size: 12px; }
+  .statusPop summary {
+    cursor: pointer; color: var(--muted); list-style: none;
+    padding: 4px 9px; border: 1px solid var(--border-strong); border-radius: 8px;
+  }
+  .statusPop summary::-webkit-details-marker { display: none; }
+  .statusPop[open] summary { color: var(--text); border-color: var(--accent); }
+  .statusBody {
+    position: absolute; right: 0; top: calc(100% + 6px); z-index: 40;
+    display: grid; gap: 6px; min-width: 220px; padding: 10px;
+    background: var(--panel); border: 1px solid var(--border-strong);
+    border-radius: 10px; box-shadow: 0 12px 32px rgba(0, 0, 0, .3);
+  }
+  .statusBody span { display: flex; justify-content: space-between; gap: 14px; color: var(--muted); }
+  .statusBody b { color: var(--text); font-weight: 500; }
+  /* Account menu: identity, language, theme, back and logout share one entry. */
+  /* 账户菜单：身份、语言、主题、返回与退出合并到一个入口。 */
+  .userMenu { position: relative; font-size: 12px; }
+  .userMenu summary {
+    cursor: pointer; list-style: none; display: inline-flex; gap: 6px;
+    align-items: center; padding: 4px 9px; border-radius: 8px;
+    border: 1px solid var(--border-strong); color: var(--muted);
+  }
+  .userMenu summary::-webkit-details-marker { display: none; }
+  .userMenu[open] summary { color: var(--text); border-color: var(--accent); }
+  .userMenuBody {
+    position: absolute; right: 0; top: calc(100% + 6px); z-index: 40;
+    display: grid; gap: 8px; min-width: 220px; padding: 10px;
+    background: var(--panel); border: 1px solid var(--border-strong);
+    border-radius: 10px; box-shadow: 0 12px 32px rgba(0, 0, 0, .3);
+  }
+  .menuRow { display: flex; align-items: center; justify-content: space-between; gap: 10px; color: var(--muted); }
+  .menuRow select { max-width: 140px; }
+  .userMenu summary .identity {
+    display: inline-block; max-width: 220px; overflow: hidden;
+    white-space: nowrap; text-overflow: ellipsis;
+  }
+  .userMenuBody a, .userMenuBody button { text-align: left; width: 100%; }
+  .cardDivider { border: 0; border-top: 1px solid var(--border); margin: 14px 0; }
+  #uploadDept { max-width: 200px; }
+  /* Explicit labels for the model and account forms. */
+  /* 模型与账号表单改用显式标签。 */
+  .formGrid {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 10px; margin-bottom: 10px;
+  }
+  .field { display: grid; gap: 4px; font-size: 12px; color: var(--muted); }
+  .field input, .field select { width: 100%; }
+  .dirty {
+    font-size: 11px; color: var(--warn); background: var(--warn-bg);
+    border: 1px solid var(--warn-border); border-radius: 999px; padding: 1px 8px;
+  }
+  .searchBox { margin-top: 8px; }
+  .searchBox summary { cursor: pointer; color: var(--accent); font-size: 12px; }
+  .searchBox .row { margin-top: 8px; }
+  @media (max-width: 760px) {
+    .sidebar nav { gap: 6px; }
+    .navGroup { display: flex; flex-wrap: wrap; gap: 2px; }
+    .navGroupLabel { width: 100%; padding: 4px 0 2px; }
+    .statusBody { position: static; margin-top: 6px; width: 100%; }
+  }
+  /* Loading indicator on cards whose data is in flight. */
+  /* 卡片数据加载中的角标指示。 */
+  .card { position: relative; }
+  .card.loading::before {
+    content: ""; position: absolute; top: 12px; right: 14px;
+    width: 14px; height: 14px; border-radius: 50%;
+    border: 2px solid var(--border-strong); border-top-color: var(--accent);
+    animation: cardSpin .7s linear infinite;
+  }
+  @keyframes cardSpin { to { transform: rotate(360deg); } }
+  /* Sortable file table headers. */
+  /* 文件表可点击排序的表头。 */
+  th[data-sort] { cursor: pointer; user-select: none; white-space: nowrap; }
+  th[data-sort]::after { content: "↕"; opacity: .35; margin-left: 4px; font-size: 10px; }
+  th[data-sort].sortAsc::after { content: "↑"; opacity: 1; color: var(--accent); }
+  th[data-sort].sortDesc::after { content: "↓"; opacity: 1; color: var(--accent); }
+  .pager { margin-top: 8px; font-size: 12px; }
+  .pagerInfo { color: var(--muted); }
+  /* Preset palettes for the custom theme dialog. */
+  /* 自定义主题弹窗的预设配色。 */
+  .themePresets { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+  .themePreset {
+    display: flex; gap: 2px; padding: 5px; cursor: pointer;
+    background: transparent; border: 1px solid var(--border-strong); border-radius: 8px;
+  }
+  .themePreset span { width: 13px; height: 13px; border-radius: 3px; display: block; }
+  /* Department picker in the header. */
+  /* 顶栏部门切换器。 */
+  .deptPicker { display: inline-flex; align-items: center; gap: 4px; }
+  .deptPicker[hidden], .jobPill[hidden] { display: none; }
+  .deptPicker select {
+    background: transparent; border: 0; color: var(--text);
+    font: inherit; padding: 0 2px; cursor: pointer; max-width: 160px;
+  }
+  /* Unified table states: skeleton, empty and error+retry. */
+  /* 表格统一三态：骨架、空态、错误与重试。 */
+  .skeletonCell { padding: 10px; }
+  .skeletonBar {
+    height: 10px; border-radius: 6px;
+    background: linear-gradient(90deg, var(--panel-2), var(--border), var(--panel-2));
+    background-size: 200% 100%; animation: shimmer 1.2s linear infinite;
+  }
+  @keyframes shimmer { to { background-position: -200% 0; } }
+  .stateCell { padding: 22px 10px; text-align: center; color: var(--muted); }
+  .msg.stateError { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  /* Menu badges and the separated danger group. */
+  /* 菜单计数徽标与独立的危险区和分隔线。 */
+  .navCount {
+    margin-left: 6px; font-size: 10px; padding: 1px 6px;
+    border-radius: 999px; background: var(--panel-2);
+    border: 1px solid var(--border-strong); color: var(--muted);
+  }
+  .navDanger { margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--border); }
+  /* Keep the file actions reachable while the table scrolls sideways. */
+  /* 横向滚动时固定文件表操作列。 */
+  #filesCard table th:last-child,
+  #filesCard table td:last-child {
+    position: sticky; right: 0; background: var(--panel); z-index: 1;
+    box-shadow: -6px 0 8px -6px rgba(0, 0, 0, .45);
+  }
+  #filesCard table th:last-child { z-index: 2; }
+  .b-fail { color: var(--bad); border-color: var(--danger-border); background: var(--danger-zone); }
+  /* 760–1000px used to squeeze the sidebar next to the content. Below 1000px
+     the menu becomes a sticky, horizontally scrollable tab bar. */
+  /* 1000px 以下菜单变为顶部吸附的横向滚动标签栏，避免侧栏挤压正文。 */
+  @media (max-width: 1000px) {
+    .shell { grid-template-columns: 1fr; gap: 12px; }
+    .sidebar {
+      position: sticky; top: 0; z-index: 30; padding: 8px;
+      background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+    }
+    .sidebar h3 { display: none; }
+    .sidebar nav {
+      display: flex; flex-wrap: nowrap; gap: 6px;
+      overflow-x: auto; padding-bottom: 2px;
+      scrollbar-width: thin; -webkit-overflow-scrolling: touch;
+    }
+    .navGroup { display: flex; flex-wrap: nowrap; gap: 2px; flex: 0 0 auto; }
+    .navGroup + .navGroup { border-left: 1px solid var(--border); padding-left: 6px; }
+    .navDanger { margin-top: 0; padding-top: 0; border-top: 0; border-left: 1px solid var(--danger-border); }
+    .navGroupLabel { display: none; }
+    .navBtn { width: auto; white-space: nowrap; }
+    .sidebar nav {
+      -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 26px), transparent);
+      mask-image: linear-gradient(to right, #000 calc(100% - 26px), transparent);
+    }
+  }
 </style>
+<script src="/ui/theme.js"></script>
 </head>
 <body>
 <header>
   <div class="brand"><span class="brandName" data-i18n="admin.brand">知识库管理</span><span data-i18n="admin.brandSub">ingestion console</span></div>
   <div class="meta">
-    <span><span data-i18n="common.backend">后端</span> <b id="store">-</b></span>
-    <span><span data-i18n="common.model">模型</span> <b id="model">-</b></span>
-    <span><span data-i18n="common.maxUpload">上传上限</span> <b id="maxMb">-</b></span>
-    <span class="identity" id="identity" hidden></span>
-    <button id="logout" class="tiny" hidden data-i18n="auth.logout">退出</button>
+    <span class="deptBadge deptPicker" id="currentDeptBadge" hidden title="切换当前部门" data-i18n-title="admin.switchDept">
+      <span data-i18n="admin.currentDept">当前部门</span>
+      <select id="deptHeader" aria-label="当前部门" data-i18n-aria-label="admin.currentDept"></select>
+    </span>
+    <button id="jobPill" class="jobPill" type="button" hidden title="查看入库日志" data-i18n-title="admin.jobOpenLog"><span class="dot"></span><span data-i18n="admin.jobRunning">入库中</span></button>
+    <details class="statusPop">
+      <summary data-i18n="admin.statusSummary">状态</summary>
+      <div class="statusBody">
+        <span><span data-i18n="common.backend">后端</span> <b id="store">-</b></span>
+        <span><span data-i18n="common.model">模型</span> <b id="model">-</b></span>
+        <span><span data-i18n="common.maxUpload">上传上限</span> <b id="maxMb">-</b></span>
+        <span><span data-i18n="admin.lastRefresh">最后刷新</span> <b id="lastRefresh">-</b></span>
+      </div>
+    </details>
     <select id="lang" aria-label="Language" data-i18n-aria-label="common.language" title="Language" data-i18n-title="common.language">
       <option value="zh">中文</option>
       <option value="en">English</option>
     </select>
-    <a href="/ui/" data-i18n="admin.backToChat">返回对话</a>
+    <details class="userMenu" id="userMenu" hidden>
+      <summary><span data-i18n="admin.accountMenu">账户</span><span class="identity" id="identity" hidden></span></summary>
+      <div class="userMenuBody">
+        <label class="menuRow"><span data-i18n="admin.theme">主题</span>
+          <select id="theme" aria-label="Theme" data-i18n-aria-label="admin.theme" title="Theme" data-i18n-title="admin.theme">
+            <option value="dark" data-i18n="admin.theme.dark">深色</option>
+            <option value="light" data-i18n="admin.theme.light">浅色</option>
+            <option value="custom" data-i18n="admin.theme.custom">自定义</option>
+            <option value="custom-edit" data-i18n="admin.theme.edit">配色…</option>
+          </select>
+        </label>
+        <a href="/ui/" data-i18n="admin.backToChat">返回对话</a>
+        <button id="logout" hidden data-i18n="auth.logout">退出</button>
+      </div>
+    </details>
   </div>
 </header>
 
@@ -203,7 +504,7 @@
     <h1 data-i18n="auth.adminTitle">登录知识库管理</h1>
     <p id="gateHint" data-i18n="auth.adminHint">
       用账号密码登录，或直接粘贴管理员 Bearer token／管理令牌（ADMIN_TOKEN）。
-      凭据只保存在当前标签页的 sessionStorage 中。
+      凭据保存在本浏览器（localStorage），新标签页或重启后无需再次登录。
     </p>
     <div id="passwordFields" hidden>
       <input id="username" type="text" placeholder="用户名" data-i18n-placeholder="auth.username" autocomplete="username">
@@ -225,14 +526,26 @@
 <div class="shell">
   <aside class="sidebar" id="sidebar" hidden aria-label="管理台分区" data-i18n-aria-label="admin.navAria">
     <h3 data-i18n="admin.navTitle">分区</h3>
-    <nav id="nav">
-      <button class="navBtn" data-target="deptCard" data-i18n="admin.nav.dept">部门</button>
-      <button class="navBtn" data-target="uploadCard" data-i18n="admin.nav.upload">上传文件</button>
-      <button class="navBtn" data-target="filesCard" data-i18n="admin.nav.files">文件与向量</button>
-      <button class="navBtn" data-target="modelCard" data-i18n="admin.nav.model">模型</button>
-      <button class="navBtn" id="navUsers" data-target="usersCard" data-i18n="admin.nav.accounts" hidden>账号</button>
-      <button class="navBtn" data-target="rebuildCard" data-i18n="admin.nav.rebuild">重建索引</button>
-      <button class="navBtn" data-target="auditCard" data-i18n="admin.nav.audit">操作审计</button>
+    <nav id="nav" role="tablist" aria-orientation="vertical" aria-label="管理台分区" data-i18n-aria-label="admin.navAria">
+      <div class="navGroup">
+        <span class="navGroupLabel" data-i18n="admin.navGroup.content">内容</span>
+        <button class="navBtn" role="tab" id="tab-deptCard" aria-controls="deptCard" data-target="deptCard" data-i18n="admin.nav.dept">部门</button>
+        <button class="navBtn" role="tab" id="tab-filesCard" aria-controls="filesCard" data-target="filesCard"><span data-i18n="admin.nav.files">文件与向量</span><span class="navCount" id="navPending" hidden></span></button>
+      </div>
+      <div class="navGroup">
+        <span class="navGroupLabel" data-i18n="admin.navGroup.config">配置</span>
+        <button class="navBtn" role="tab" id="tab-modelCard" aria-controls="modelCard" data-target="modelCard" data-i18n="admin.nav.model">模型</button>
+        <button class="navBtn" role="tab" id="tab-usersCard" aria-controls="usersCard" data-target="usersCard" hidden><span data-i18n="admin.nav.accounts">账号</span><span class="navCount" id="navUsers" hidden></span></button>
+      </div>
+      <div class="navGroup">
+        <span class="navGroupLabel" data-i18n="admin.navGroup.ops">运维</span>
+        <button class="navBtn" role="tab" id="tab-indexCard" aria-controls="indexCard" data-target="indexCard" data-i18n="admin.nav.index">索引维护</button>
+        <button class="navBtn" role="tab" id="tab-auditCard" aria-controls="auditCard" data-target="auditCard" data-i18n="admin.nav.audit">操作审计</button>
+      </div>
+      <div class="navGroup navDanger">
+        <span class="navGroupLabel" data-i18n="admin.navGroup.danger">危险区</span>
+        <button class="navBtn dangerNav" role="tab" id="tab-rebuildCard" aria-controls="rebuildCard" data-target="rebuildCard" data-i18n="admin.nav.rebuild">重建索引</button>
+      </div>
     </nav>
   </aside>
 
@@ -248,30 +561,25 @@
     <div class="stats" id="stats"></div>
   </section>
 
-  <section class="card" id="uploadCard">
-    <h2 data-i18n="admin.uploadTitle">上传文件</h2>
+
+  <!-- Files & vectors: one row per document, whether the file still exists. / 文件与向量：每个文档一行，包含源文件已丢失的孤儿向量。 -->
+  <section class="card" id="filesCard">
+    <h2><span data-i18n="admin.filesTitle">入库文件与向量</span><span class="sub" id="fileCount"></span></h2>
     <div class="drop" id="drop">
       <span data-i18n="admin.dropText">拖拽文件到这里，或</span> <label><span data-i18n="admin.chooseFile">选择文件</span><input id="file" type="file" multiple hidden></label>
       <div class="hint" id="formats"></div>
     </div>
     <div class="row">
+      <select id="uploadDept" aria-label="上传部门" data-i18n-aria-label="admin.uploadDept"></select>
       <input id="subdir" type="text" placeholder="子目录（可选，如 runbooks）" data-i18n-placeholder="admin.subdirPlaceholder" maxlength="128">
       <button id="upload" class="primary" data-i18n="admin.uploadButton">上传到当前部门</button>
     </div>
-    <div class="msg" id="uploadMsg"></div>
+    <div class="msg" id="uploadMsg" aria-live="polite"></div>
     <div class="bar" id="uploadBar" hidden><div class="fill" id="uploadFill"></div></div>
-  </section>
-
-  <!-- Files & vectors: one row per document, whether the file still exists. / 文件与向量：每个文档一行，包含源文件已丢失的孤儿向量。 -->
-  <section class="card" id="filesCard">
-    <h2><span data-i18n="admin.filesTitle">入库文件与向量</span><span class="sub" id="fileCount"></span></h2>
+    <hr class="cardDivider">
     <p class="hint" style="margin:0 0 10px" data-i18n="admin.filesHint">
       状态来自索引；删除向量不会删除磁盘文件，再次增量入库会重新写入。
     </p>
-    <div class="row">
-      <button id="ingestDept" data-i18n="admin.ingestDept">增量入库（当前部门）</button>
-      <button id="ingestAll" data-i18n="admin.ingestAll">增量入库（全部）</button>
-    </div>
     <div class="row">
       <select id="fileStatus">
         <option value="all" data-i18n="admin.vectorStatusAll">全部状态</option>
@@ -280,21 +588,48 @@
         <option value="pending" data-i18n="admin.vectorStatusPending">待入库</option>
         <option value="orphan" data-i18n="admin.vectorStatusOrphan">孤儿</option>
       </select>
-      <input id="vectorQuery" type="text" placeholder="检索词，如 VPN 申请" data-i18n-placeholder="admin.vectorQueryPlaceholder" maxlength="500">
-      <button id="vectorSearch" class="primary" data-i18n="admin.vectorSearch">检索向量</button>
       <button id="vectorRefresh" data-i18n="common.refresh">刷新</button>
-      <button id="vectorPrune" class="danger" data-i18n="admin.vectorPrune">清理孤儿向量</button>
     </div>
-    <div class="stats" id="vectorStats"></div>
-    <div class="msg" id="fileMsg"></div>
+    <div class="msg" id="fileMsg" aria-live="polite"></div>
+    <div class="tableWrap">
     <table>
       <thead>
         <tr>
-          <th data-i18n="admin.table.file">文件</th><th data-i18n="admin.table.type">类型</th><th data-i18n="admin.table.size">大小</th><th data-i18n="admin.table.status">状态</th><th data-i18n="admin.table.chunks">chunks</th><th data-i18n="admin.table.modified">修改时间</th><th></th>
+          <th data-sort="source" data-i18n="admin.table.file">文件</th><th data-sort="ext" data-i18n="admin.table.type">类型</th><th data-sort="size" data-i18n="admin.table.size">大小</th><th data-sort="status" data-i18n="admin.table.status">状态</th><th data-sort="chunks" data-i18n="admin.table.chunks">chunks</th><th data-sort="mtime" data-i18n="admin.table.modified">修改时间</th><th></th>
         </tr>
       </thead>
       <tbody id="fileBody"></tbody>
     </table>
+    </div>
+    <div class="row pager" id="filePager" hidden>
+      <button id="filePrev" data-i18n="admin.prevPage">上一页</button>
+      <span class="pagerInfo" id="filePageInfo"></span>
+      <button id="fileNext" data-i18n="admin.nextPage">下一页</button>
+    </div>
+  </section>
+
+  <!-- Index maintenance is a separate concern from browsing files. -->
+  <!-- 索引维护与文件浏览分开，避免一张卡同时承担两件事。 -->
+  <section class="card" id="indexCard">
+    <h2 data-i18n="admin.indexTitle">索引维护</h2>
+    <p class="hint" style="margin:0 0 10px" data-i18n="admin.indexHint">
+      入库、清理孤儿向量和检索测试都在这里；文件列表只负责查看与删除。
+    </p>
+    <div class="row">
+      <button id="ingestDept" data-i18n="admin.ingestDept">增量入库（当前部门）</button>
+      <button id="ingestAll" data-i18n="admin.ingestAll">增量入库（全部）</button>
+      <button id="vectorPrune" class="danger" data-i18n="admin.vectorPrune">清理孤儿向量</button>
+    </div>
+    <!-- Retrieval replay is a debugging tool, so it stays collapsed. / 检索测试是调试工具，默认折叠。 -->
+    <details class="searchBox">
+      <summary data-i18n="admin.vectorSearchOpen">检索测试</summary>
+      <div class="row">
+        <input id="vectorQuery" type="text" placeholder="检索词，如 VPN 申请" data-i18n-placeholder="admin.vectorQueryPlaceholder" maxlength="500">
+        <button id="vectorSearch" class="primary" data-i18n="admin.vectorSearch">检索向量</button>
+      </div>
+    </details>
+    <div class="stats" id="vectorStats"></div>
+    <div class="msg" id="indexMsg" aria-live="polite"></div>
   </section>
 
   <section class="card" id="usersCard" hidden>
@@ -303,14 +638,25 @@
       <span data-i18n="admin.accountsHintPrefix">仅</span> <code>AUTH_LOCAL_LOGIN_ENABLED=true</code><span data-i18n="admin.accountsHintMiddle">时可用。密码用 scrypt 哈希保存在</span>
       <code id="usersPath">config/users.json</code><span data-i18n="admin.accountsHintSuffix">，改密码或停用会立即使该账号的旧 token 失效。</span>
     </p>
-    <div class="row userRow">
-      <input id="newUser" type="text" placeholder="用户名" data-i18n-placeholder="admin.newUserPlaceholder" maxlength="64" autocomplete="off">
-      <input id="newPass" type="password" placeholder="密码（≥10 位）" data-i18n-placeholder="admin.newPassPlaceholder" maxlength="256" autocomplete="new-password">
-      <input id="newDepts" type="text" placeholder="部门（必填），逗号分隔，如 Tech,HR" data-i18n-placeholder="admin.newDeptsPlaceholder" maxlength="200">
-      <input id="newGroups" type="text" placeholder="组（可选）" data-i18n-placeholder="admin.newGroupsPlaceholder" maxlength="200">
+    <div class="formGrid">
+      <label class="field"><span data-i18n="admin.newUserLabel">用户名</span>
+        <input id="newUser" type="text" placeholder="用户名" data-i18n-placeholder="admin.newUserPlaceholder" maxlength="64" autocomplete="off">
+      </label>
+      <label class="field"><span data-i18n="admin.newPassLabel">密码</span>
+        <input id="newPass" type="password" placeholder="密码（≥10 位）" data-i18n-placeholder="admin.newPassPlaceholder" maxlength="256" autocomplete="new-password">
+      </label>
+      <label class="field"><span data-i18n="admin.newDeptsLabel">部门</span>
+        <input id="newDepts" type="text" placeholder="部门（必填），逗号分隔，如 Tech,HR" data-i18n-placeholder="admin.newDeptsPlaceholder" maxlength="200">
+      </label>
+      <label class="field"><span data-i18n="admin.newGroupsLabel">组</span>
+        <input id="newGroups" type="text" placeholder="组（可选）" data-i18n-placeholder="admin.newGroupsPlaceholder" maxlength="200">
+      </label>
+    </div>
+    <div class="row">
       <label class="roleFlag"><input id="newAdmin" type="checkbox"> <span data-i18n="admin.adminLabel">管理员</span></label>
       <button id="createUser" class="primary" data-i18n="admin.createUser">创建账号</button>
     </div>
+    <div class="tableWrap">
     <table>
       <thead>
         <tr>
@@ -319,7 +665,8 @@
       </thead>
       <tbody id="userBody"></tbody>
     </table>
-    <div class="msg" id="userMsg"></div>
+    </div>
+    <div class="msg" id="userMsg" aria-live="polite"></div>
   </section>
 
   <!-- Chat model card: overrides `.env` at runtime. / 模型卡片：运行时覆盖 `.env`。 -->
@@ -328,21 +675,30 @@
     <p class="hint" style="margin:0 0 10px" data-i18n="admin.modelHint">
       只影响对话生成；入库与检索仍用 EMBEDDING_* 设置。保存后下一轮对话立即生效，重启后仍保留。
     </p>
-    <div class="row">
-      <input id="modelBase" type="text" placeholder="API Base，如 https://open.bigmodel.cn/api/paas/v4" data-i18n-placeholder="admin.modelBasePlaceholder" maxlength="300" autocomplete="off">
-      <input id="modelName" type="text" placeholder="模型名，如 glm-4-flash" data-i18n-placeholder="admin.modelNamePlaceholder" maxlength="200" autocomplete="off">
-    </div>
-    <div class="row">
-      <input id="modelKey" type="password" placeholder="API Key（留空保持不变）" data-i18n-placeholder="admin.modelKeyPlaceholder" maxlength="512" autocomplete="new-password">
-      <input id="modelTemp" type="number" step="0.1" min="0" max="2" placeholder="temperature" style="max-width:150px">
-      <input id="modelTokens" type="number" step="1" min="1" max="32768" placeholder="max tokens" style="max-width:170px">
+    <div class="formGrid">
+      <label class="field"><span data-i18n="admin.modelBaseLabel">API Base</span>
+        <input id="modelBase" type="text" placeholder="API Base，如 https://open.bigmodel.cn/api/paas/v4" data-i18n-placeholder="admin.modelBasePlaceholder" maxlength="300" autocomplete="off">
+      </label>
+      <label class="field"><span data-i18n="admin.modelNameLabel">模型名</span>
+        <input id="modelName" type="text" placeholder="模型名，如 glm-4-flash" data-i18n-placeholder="admin.modelNamePlaceholder" maxlength="200" autocomplete="off">
+      </label>
+      <label class="field"><span data-i18n="admin.modelKeyLabel">API Key</span>
+        <input id="modelKey" type="password" placeholder="API Key（留空保持不变）" data-i18n-placeholder="admin.modelKeyPlaceholder" maxlength="512" autocomplete="new-password">
+      </label>
+      <label class="field"><span data-i18n="admin.temperatureLabel">temperature</span>
+        <input id="modelTemp" type="number" step="0.1" min="0" max="2" placeholder="0 - 2">
+      </label>
+      <label class="field"><span data-i18n="admin.maxTokensLabel">max tokens</span>
+        <input id="modelTokens" type="number" step="1" min="1" max="32768" placeholder="max tokens">
+      </label>
     </div>
     <div class="row">
       <button id="modelTest" data-i18n="admin.modelTest">测试连接</button>
       <button id="modelSave" class="primary" data-i18n="admin.modelSave">保存</button>
+      <span class="dirty" id="modelDirty" hidden data-i18n="admin.modelUnsaved">未保存</span>
       <button id="modelReset" data-i18n="admin.modelReset">恢复 .env</button>
     </div>
-    <div class="msg" id="modelMsg"></div>
+    <div class="msg" id="modelMsg" aria-live="polite"></div>
   </section>
 
   <section class="card dangerZone" id="rebuildCard">
@@ -353,9 +709,13 @@
     <label class="row" style="font-size:13px">
       <input id="resetFlag" type="checkbox"> <span data-i18n="admin.rebuildConfirm">我确认要重建全部索引</span>
     </label>
+    <div class="row" style="margin-top:8px">
+      <input id="resetPhrase" type="text" placeholder="输入 RESET 以二次确认" data-i18n-placeholder="admin.resetPhrase" maxlength="16" autocomplete="off">
+    </div>
     <div class="row" style="margin-top:10px">
       <button id="resetBtn" class="danger" data-i18n="admin.rebuildButton">执行重建</button>
     </div>
+    <div class="msg" id="rebuildMsg" aria-live="polite"></div>
   </section>
 
   <section class="card" id="jobCard" hidden>
@@ -364,7 +724,25 @@
   </section>
 
   <section class="card" id="auditCard">
-    <h2><span data-i18n="admin.auditTitle">操作审计</span><span class="sub" data-i18n="admin.auditRecent">最近 20 条</span></h2>
+    <h2><span data-i18n="admin.auditTitle">操作审计</span><span class="sub" id="auditCount"></span></h2>
+    <div class="row">
+      <input id="auditSearch" type="search" placeholder="按操作/操作者/对象筛选" data-i18n-placeholder="admin.auditSearchPlaceholder" maxlength="100">
+      <select id="auditLimit">
+        <option value="20">20</option>
+        <option value="50">50</option>
+        <option value="100">100</option>
+        <option value="200">200</option>
+      </select>
+      <select id="auditSince">
+        <option value="0" data-i18n="admin.auditAllTime">全部时间</option>
+        <option value="24" data-i18n="admin.auditDay">24 小时</option>
+        <option value="168" data-i18n="admin.auditWeek">7 天</option>
+        <option value="720" data-i18n="admin.auditMonth">30 天</option>
+      </select>
+      <button id="auditExport" data-i18n="admin.auditExport">导出 CSV</button>
+    </div>
+    <div class="msg" id="auditMsg" aria-live="polite"></div>
+    <div class="tableWrap">
     <table>
       <thead>
         <tr>
@@ -373,8 +751,31 @@
       </thead>
       <tbody id="auditBody"></tbody>
     </table>
+    </div>
   </section>
 </main>
+</div>
+
+<div class="modal" id="themeModal" hidden role="dialog" aria-modal="true" aria-labelledby="themeTitle">
+  <div class="modalCard themeCard">
+    <div class="modalHead">
+      <h2 id="themeTitle" data-i18n="admin.theme.customTitle">自定义主题</h2>
+      <button id="themeClose" class="modalClose" data-i18n="common.close" data-i18n-aria-label="common.close" aria-label="关闭">关闭</button>
+    </div>
+    <div class="modalBody themeBody">
+      <div class="themePresets" id="themePresets"></div>
+      <label class="themeRow"><span data-i18n="admin.theme.bg">背景</span><input id="themeBg" type="color"></label>
+      <label class="themeRow"><span data-i18n="admin.theme.panel">面板</span><input id="themePanel" type="color"></label>
+      <label class="themeRow"><span data-i18n="admin.theme.text">文字</span><input id="themeText" type="color"></label>
+      <label class="themeRow"><span data-i18n="admin.theme.accent">主色</span><input id="themeAccent" type="color"></label>
+      <p class="hint" data-i18n="admin.theme.hint">边框、悬停和状态色会根据这四个颜色自动推导。</p>
+      <p class="hint" data-i18n="admin.theme.scope">仅作用于管理台；聊天页保持默认外观。</p>
+      <div class="row">
+        <button id="themeApply" class="primary" data-i18n="admin.theme.apply">应用</button>
+        <button id="themeReset" data-i18n="admin.theme.reset">恢复默认</button>
+      </div>
+    </div>
+  </div>
 </div>
 
 <div class="modal" id="vectorModal" hidden role="dialog" aria-modal="true" aria-labelledby="vectorResultTitle">
@@ -399,6 +800,23 @@
     </div>
   </div>
 </div>
+
+<div class="modal" id="confirmModal" hidden role="dialog" aria-modal="true" aria-labelledby="confirmTitle">
+  <div class="modalCard confirmCard">
+    <div class="modalHead">
+      <h2 id="confirmTitle" data-i18n="admin.confirmTitle">确认操作</h2>
+    </div>
+    <div class="modalBody">
+      <p id="confirmText" class="confirmText"></p>
+      <div class="row confirmActions">
+        <button id="confirmCancel" data-i18n="common.cancel">取消</button>
+        <button id="confirmOk" class="danger" data-i18n="common.confirm">确认</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
 
 <script src="/ui/i18n.js"></script>
 <script>
@@ -444,18 +862,178 @@ function localizeDetail(detail) {
 }
 
 // --- section menu ----------------------------------------------------------
-// The console is one long page; the side menu scrolls to a card and highlights
-// the section currently in view. Hidden cards (e.g. 账号 when local login is
-// off) also hide their menu entry.
-// 控制台原来是长页面；左侧菜单负责跳转并高亮当前分区。卡片隐藏时（如未启用本地
-// 账号，“账号”入口也一并隐藏）。
+// The side menu works like tabs: only the selected card is shown, so the
+// console no longer scrolls through every section. Hidden cards (e.g. 账号
+// when local login is off) also hide their menu entry.
+// 左侧菜单现在等同标签页：只显示选中的分区卡片，不再整页滚动；卡片被权限隐藏时
+// （如未启用本地账号时的“账号”），入口也一并隐藏。
 const navButtons = Array.from(document.querySelectorAll(".navBtn"));
 const navSections = navButtons.map((btn) => $(btn.dataset.target)).filter(Boolean);
+// Remember the last section so reopening the console returns to it. The
+// console is a tabbed view now, not one long page.
+// 记住上次打开的分区，重新进入管理台时直接回到那里；切换分区会刷新该区数据。
+const SECTION_KEY = "adminSection";
+// Switching tabs inside this window reuses the data that is already on screen;
+// the explicit refresh buttons and writes still force a reload.
+// 30 秒内切换分区复用已加载数据；显式刷新与写操作仍会重新加载。
+const SECTION_TTL_MS = 30000;
+const sectionLoadedAt = {};
+const SECTION_LOADERS = {
+  deptCard: { run: loadMeta, msg: null, name: "admin.panel.overview" },
+  filesCard: { run: loadFiles, msg: "fileMsg", name: "admin.panel.files" },
+  indexCard: { run: loadFiles, msg: "indexMsg", name: "admin.panel.index" },
+  usersCard: { run: loadUsers, msg: "userMsg", name: "admin.panel.accounts" },
+  modelCard: { run: loadModel, msg: "modelMsg", name: "admin.panel.model" },
+  auditCard: { run: loadAudit, msg: null, name: "admin.panel.audit" },
+};
+
+function savedSection() {
+  try {
+    return localStorage.getItem(SECTION_KEY) || "";
+  } catch (error) {
+    return "";
+  }
+}
+
+function rememberSection(id) {
+  try {
+    localStorage.setItem(SECTION_KEY, id);
+  } catch (error) {}
+}
+
+function markLoading(cardId, on) {
+  const card = cardId ? $(cardId) : null;
+  if (!card) return;
+  card.classList.toggle("loading", !!on);
+  card.setAttribute("aria-busy", on ? "true" : "false");
+}
+
+function setLastRefresh() {
+  const el = $("lastRefresh");
+  if (el) el.textContent = new Date().toLocaleTimeString();
+}
+
+function renderSkeleton(tbody, cols, rows = 4) {
+  if (!tbody || tbody.children.length) return;
+  tbody.innerHTML = "";
+  for (let r = 0; r < rows; r += 1) {
+    const tr = document.createElement("tr");
+    for (let c = 0; c < cols; c += 1) {
+      const td = document.createElement("td");
+      td.className = "skeletonCell";
+      const bar = document.createElement("div");
+      bar.className = "skeletonBar";
+      bar.style.width = 45 + ((r + c) % 4) * 12 + "%";
+      td.appendChild(bar);
+      tr.appendChild(td);
+    }
+    tbody.appendChild(tr);
+  }
+}
+
+function emptyRow(tbody, cols, text) {
+  if (!tbody) return;
+  tbody.innerHTML = "";
+  const tr = document.createElement("tr");
+  const td = document.createElement("td");
+  td.colSpan = cols;
+  td.className = "stateCell";
+  td.textContent = text;
+  tr.appendChild(td);
+  tbody.appendChild(tr);
+}
+
+function errorMsg(el, message, retry) {
+  if (!el) return;
+  el.innerHTML = "";
+  el.className = "msg error stateError";
+  const text = document.createElement("span");
+  text.textContent = message;
+  el.appendChild(text);
+  if (retry) {
+    const button = document.createElement("button");
+    button.className = "tiny";
+    button.textContent = t("common.retry");
+    button.onclick = () => {
+      el.innerHTML = "";
+      el.className = "msg";
+      retry().catch(() => {});
+    };
+    el.appendChild(button);
+  }
+  showToast(message, "error");
+}
+
+async function refreshSection(id, force) {
+  const loader = SECTION_LOADERS[id];
+  if (!loader) return;
+  if (!force && Date.now() - (sectionLoadedAt[id] || 0) < SECTION_TTL_MS) return;
+  markLoading(id, true);
+  try {
+    await loader.run();
+    sectionLoadedAt[id] = Date.now();
+    setLastRefresh();
+  } catch (error) {
+    if (loader.msg) {
+      errorMsg(
+        $(loader.msg),
+        t("admin.panelFailed", { panel: t(loader.name), error: error.message || error }),
+        loader.run
+      );
+    }
+  } finally {
+    markLoading(id, false);
+  }
+}
+
+let activeSection = savedSection();
 
 function setActiveNav(id) {
   navButtons.forEach((btn) => {
-    btn.classList.toggle("active", btn.dataset.target === id);
+    const active = btn.dataset.target === id;
+    btn.classList.toggle("active", active);
+    btn.setAttribute("aria-selected", active ? "true" : "false");
+    btn.tabIndex = active ? 0 : -1;
   });
+}
+
+function updateDocumentTitle() {
+  const button = navButtons.find((btn) => btn.dataset.target === activeSection);
+  const label = button && (button.querySelector("[data-i18n]") || button).textContent.trim();
+  document.title = label ? t("page.adminTitle") + " · " + label : t("page.adminTitle");
+}
+
+function showSection(id, refresh) {
+  const visibleButtons = navButtons.filter((btn) => !btn.hidden);
+  let target = id ? $(id) : null;
+  if (!target || target.hidden || !visibleButtons.some((btn) => btn.dataset.target === id)) {
+    target = visibleButtons.length ? $(visibleButtons[0].dataset.target) : null;
+  }
+  activeSection = target ? target.id : "";
+  navSections.forEach((section) => {
+    if (section.id === "jobCard") return;
+    section.classList.toggle("sectionActive", section === target);
+  });
+  setActiveNav(activeSection);
+  const activeButton = navButtons.find((btn) => btn.dataset.target === activeSection);
+  if (activeButton && window.matchMedia("(max-width: 1000px)").matches) {
+    activeButton.scrollIntoView({ block: "nearest", inline: "center" });
+  }
+  updateDocumentTitle();
+  if (refresh && activeSection) refreshSection(activeSection).catch(() => {});
+}
+
+// Restore the remembered section once all menu entries are known; a stored
+// panel may have been hidden by the server (e.g. 账号 without local login).
+// 菜单可用性确定后再恢复上次分区；被服务端隐藏的分区自动回退到第一个可用项。
+function restoreSection() {
+  const saved = savedSection();
+  const card = saved ? $(saved) : null;
+  const usable =
+    card &&
+    !card.hidden &&
+    navButtons.some((btn) => !btn.hidden && btn.dataset.target === saved);
+  showSection(usable ? saved : "deptCard");
 }
 
 function syncNavVisibility() {
@@ -463,43 +1041,92 @@ function syncNavVisibility() {
     const target = $(btn.dataset.target);
     btn.hidden = !target || target.hidden;
   });
+  const current = $(activeSection);
+  if (!current || current.hidden) showSection(activeSection);
+  else setActiveNav(activeSection);
 }
 
 navButtons.forEach((btn) => {
   btn.onclick = () => {
     const target = $(btn.dataset.target);
     if (!target || target.hidden) return;
-    setActiveNav(btn.dataset.target);
-    target.scrollIntoView({ behavior: "smooth", block: "start" });
+    showSection(btn.dataset.target, true);
+    rememberSection(activeSection);
   };
 });
 
-if ("IntersectionObserver" in window) {
-  const observer = new IntersectionObserver(
-    (entries) => {
-      entries.forEach((entry) => {
-        if (entry.isIntersecting) setActiveNav(entry.target.id);
-      });
-    },
-    { rootMargin: "-15% 0px -70% 0px", threshold: 0 }
-  );
-  navSections.forEach((section) => observer.observe(section));
-}
+// Keyboard tabs: arrows/Home/End move focus and activate the section.
+// 键盘操作标签页：方向键与 Home/End 切换焦点并激活分区。
+navSections.forEach((section) => {
+  section.setAttribute("role", "tabpanel");
+  section.setAttribute("aria-labelledby", "tab-" + section.id);
+});
+
+$("nav").addEventListener("keydown", (event) => {
+  const keys = ["ArrowDown", "ArrowUp", "ArrowLeft", "ArrowRight", "Home", "End"];
+  if (!keys.includes(event.key)) return;
+  const enabled = navButtons.filter((btn) => !btn.hidden);
+  if (!enabled.length) return;
+  event.preventDefault();
+  let index = enabled.indexOf(document.activeElement);
+  if (index === -1) {
+    index = enabled.findIndex((btn) => btn.dataset.target === activeSection);
+  }
+  if (event.key === "Home") index = 0;
+  else if (event.key === "End") index = enabled.length - 1;
+  else if (event.key === "ArrowDown" || event.key === "ArrowRight") {
+    index = (index + 1) % enabled.length;
+  } else {
+    index = (index - 1 + enabled.length) % enabled.length;
+  }
+  const btn = enabled[index];
+  btn.focus();
+  btn.click();
+});
 
 // The credential can be either a JWT bearer token (AUTH_MODE=jwt) or the
-// legacy ADMIN_TOKEN. It is stored per browser tab, never in a cookie.
-// 凭据可以是 JWT Bearer token（AUTH_MODE=jwt）或旧的 ADMIN_TOKEN；只存当前标签页，不写 Cookie。
+// legacy ADMIN_TOKEN. It is kept in localStorage so a login survives new tabs
+// and browser restarts; sessionStorage is only a one-time migration source for
+// older sessions and is always cleared on write/logout.
+// 凭据可以是 JWT Bearer token（AUTH_MODE=jwt）或旧的 ADMIN_TOKEN；保存在
+// localStorage，登录一次可跨标签页/重启保持；sessionStorage 仅用于旧会话迁移，
+// 写入/登出时都会清空。
 const TOKEN_KEY = "adminToken";
 const BEARER_KEY = "adminBearer";
 // `/admin` and `/ui/` share the bearer token so one login covers both pages.
 // `/admin` 与 `/ui/` 共享 Bearer token，登录一次即可覆盖两个页面。
 const SHARED_BEARER_KEY = "ragBearer";
-let token = sessionStorage.getItem(TOKEN_KEY) || "";
-let bearer =
-  sessionStorage.getItem(BEARER_KEY) || sessionStorage.getItem(SHARED_BEARER_KEY) || "";
+const authStore = {
+  get(key) {
+    try {
+      const value = localStorage.getItem(key) || sessionStorage.getItem(key) || "";
+      if (value && !localStorage.getItem(key)) localStorage.setItem(key, value);
+      return value;
+    } catch (error) {
+      return "";
+    }
+  },
+  set(key, value) {
+    try {
+      if (value) localStorage.setItem(key, value);
+      else localStorage.removeItem(key);
+      sessionStorage.removeItem(key);
+    } catch (error) {}
+  },
+  remove(key) {
+    try {
+      localStorage.removeItem(key);
+      sessionStorage.removeItem(key);
+    } catch (error) {}
+  },
+};
+let token = authStore.get(TOKEN_KEY);
+let bearer = authStore.get(BEARER_KEY) || authStore.get(SHARED_BEARER_KEY) || "";
 let session = null;
 let currentDept = "";
+let metaLoaded = false;
 let jobId = null;
+const JOB_KEY = "adminJobId";
 let pollTimer = null;
 let pendingFiles = [];
 
@@ -507,11 +1134,11 @@ let pendingFiles = [];
 // 同步页面专属副本与共享副本。
 function storeBearer(value) {
   bearer = value || "";
-  sessionStorage.setItem(BEARER_KEY, bearer);
+  authStore.set(BEARER_KEY, bearer);
   if (bearer) {
-    sessionStorage.setItem(SHARED_BEARER_KEY, bearer);
+    authStore.set(SHARED_BEARER_KEY, bearer);
   } else {
-    sessionStorage.removeItem(SHARED_BEARER_KEY);
+    authStore.remove(SHARED_BEARER_KEY);
   }
 }
 
@@ -578,6 +1205,21 @@ async function api(path, options = {}) {
 function setMsg(el, text, kind) {
   el.textContent = text || "";
   el.className = "msg" + (kind ? " " + kind : "");
+  showToast(text, kind);
+}
+
+let toastTimer = null;
+
+function showToast(text, kind) {
+  const el = $("toast");
+  if (!el || !text) return;
+  el.textContent = text;
+  el.className = "toast" + (kind ? " " + kind : "");
+  el.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => {
+    el.hidden = true;
+  }, kind === "error" ? 6000 : 3500);
 }
 
 function fmtBytes(n) {
@@ -614,11 +1256,14 @@ function badge(status) {
 function showGate(message) {
   const modal = $("vectorModal");
   if (modal) modal.hidden = true;
+  if (!$("confirmModal").hidden) settleConfirm(false);
   $("gate").hidden = false;
   $("console").hidden = true;
   $("sidebar").hidden = true;
   $("identity").hidden = true;
   $("logout").hidden = true;
+  $("userMenu").hidden = true;
+  document.title = t("page.adminTitle");
   if (message) $("gateErr").textContent = message;
 }
 
@@ -626,6 +1271,8 @@ function hideGate() {
   $("gate").hidden = true;
   $("console").hidden = false;
   $("sidebar").hidden = false;
+  $("userMenu").hidden = false;
+  showSection(activeSection || "deptCard");
 }
 
 function renderIdentity(info) {
@@ -693,9 +1340,9 @@ async function resolveSession() {
 function clearCredential() {
   bearer = "";
   token = "";
-  sessionStorage.removeItem(TOKEN_KEY);
-  sessionStorage.removeItem(BEARER_KEY);
-  sessionStorage.removeItem(SHARED_BEARER_KEY);
+  authStore.remove(TOKEN_KEY);
+  authStore.remove(BEARER_KEY);
+  authStore.remove(SHARED_BEARER_KEY);
   renderIdentity(null);
 }
 
@@ -704,8 +1351,8 @@ function looksLikeJwt(value) {
   return value.split(".").length === 3 && value.length > 40;
 }
 
-// The OIDC callback redirects to /admin#token=<jwt>. Read it once, keep it in
-// sessionStorage and strip it from the address bar so it is not left in
+// The OIDC callback redirects to /admin#token=<jwt>. Read it once, keep it
+// in localStorage and strip it from the address bar so it is not left in
 // history or a shared link.
 function consumeTokenFragment() {
   const hash = location.hash || "";
@@ -730,9 +1377,9 @@ function consumeTokenFragment() {
   if (bearer) {
     storeBearer(bearer);
   } else {
-    sessionStorage.removeItem(BEARER_KEY);
+    authStore.remove(BEARER_KEY);
   }
-  sessionStorage.setItem(TOKEN_KEY, token);
+  authStore.set(TOKEN_KEY, token);
   return value;
 }
 
@@ -780,9 +1427,9 @@ async function login(raw) {
   if (bearer) {
     storeBearer(bearer);
   } else {
-    sessionStorage.removeItem(BEARER_KEY);
+    authStore.remove(BEARER_KEY);
   }
-  sessionStorage.setItem(TOKEN_KEY, token);
+  authStore.set(TOKEN_KEY, token);
   $("credential").value = "";
   await refreshAll();
   return true;
@@ -812,7 +1459,7 @@ async function passwordLogin(username, password) {
   bearer = data.token;
   token = "";
   storeBearer(bearer);
-  sessionStorage.setItem(TOKEN_KEY, token);
+  authStore.set(TOKEN_KEY, token);
   $("password").value = "";
   const ok = await resolveSession();
   if (!ok) return false;
@@ -831,23 +1478,12 @@ async function loadMeta() {
   $("formats").textContent = t("admin.formats", { formats: meta.formats.join(" ") });
 
   const previous = currentDept;
-  deptSel.innerHTML = "";
-  for (const dept of meta.depts) {
-    const option = document.createElement("option");
-    option.value = dept.name;
-    option.textContent = dept.name + " (" + dept.files + ")";
-    deptSel.appendChild(option);
-  }
-  if (!meta.depts.length) {
-    const option = document.createElement("option");
-    option.value = "";
-    option.textContent = t("admin.noDept");
-    deptSel.appendChild(option);
-  }
-  if (previous && meta.depts.some((d) => d.name === previous)) {
-    deptSel.value = previous;
-  }
+  fillDeptOptions(deptSel, meta.depts, previous, true);
+  fillDeptOptions($("deptHeader"), meta.depts, previous, false);
+  fillDeptOptions($("uploadDept"), meta.depts, previous, true);
   currentDept = deptSel.value;
+  metaLoaded = true;
+  updateDeptBadge();
 
   const c = meta.counts || {};
   $("stats").innerHTML = "";
@@ -867,6 +1503,8 @@ async function loadMeta() {
     pill.appendChild(b);
     $("stats").appendChild(pill);
   }
+  $("navPending").hidden = !c.pending;
+  $("navPending").textContent = c.pending > 99 ? "99+" : c.pending;
   if (meta.ingesting) setMsg($("fileMsg"), t("admin.ingestRunning"), "");
   return meta;
 }
@@ -875,6 +1513,7 @@ async function loadFiles() {
   // One card, one request: `/vectors` already merges on-disk files with
   // orphan chunks, so the table never disagrees with the stats above it.
   // 文件与向量合并展示：以 /vectors 为准，孤儿向量也出现在同一张表里。
+  renderSkeleton(fileBody, 7);
   const status = $("fileStatus").value;
   const fileParams = new URLSearchParams();
   if (currentDept) fileParams.set("dept", currentDept);
@@ -904,19 +1543,48 @@ async function loadFiles() {
   $("fileCount").textContent = currentDept
     ? t("admin.deptInParens", { dept: currentDept })
     : t("admin.all");
-  renderFileRows(rows);
+  fileRows = rows;
+  filePage = 0;
+  renderFileRows();
 }
 
-function renderFileRows(documents) {
+let fileRows = [];
+let filePage = 0;
+let fileSort = { key: "", dir: 1 };
+const FILE_PAGE_SIZE = 50;
+
+function sortedFileRows() {
+  const rows = fileRows.slice();
+  if (!fileSort.key) return rows;
+  const { key, dir } = fileSort;
+  const numeric = (value) => (typeof value === "number" ? value : Number(value) || 0);
+  rows.sort((a, b) => {
+    if (key === "size" || key === "chunks") return (numeric(a[key]) - numeric(b[key])) * dir;
+    return String(a[key] ?? "").localeCompare(String(b[key] ?? ""), undefined, { numeric: true }) * dir;
+  });
+  return rows;
+}
+
+function renderFileRows() {
+  const all = sortedFileRows();
+  const pages = Math.max(1, Math.ceil(all.length / FILE_PAGE_SIZE));
+  filePage = Math.min(Math.max(filePage, 0), pages - 1);
+  const start = filePage * FILE_PAGE_SIZE;
+  const documents = all.slice(start, start + FILE_PAGE_SIZE);
+
+  const pager = $("filePager");
+  pager.hidden = all.length <= FILE_PAGE_SIZE;
+  $("filePageInfo").textContent = t("admin.pageInfo", {
+    page: filePage + 1,
+    pages,
+    total: all.length,
+  });
+  $("filePrev").disabled = filePage <= 0;
+  $("fileNext").disabled = filePage >= pages - 1;
+
   fileBody.innerHTML = "";
   if (!documents.length) {
-    const tr = document.createElement("tr");
-    const td = document.createElement("td");
-    td.colSpan = 7;
-    td.className = "mono";
-    td.textContent = t("admin.noFiles");
-    tr.appendChild(td);
-    fileBody.appendChild(tr);
+    emptyRow(fileBody, 7, t("admin.noFiles"));
     return;
   }
 
@@ -992,36 +1660,135 @@ function renderFileRows(documents) {
   }
 }
 
-function renderAudit(records) {
+let auditRecords = [];
+
+function auditActionText(record) {
+  return auditActionLabel(record.action || "");
+}
+
+function filteredAuditRecords() {
+  const query = ($("auditSearch").value || "").trim().toLowerCase();
+  const hours = Number($("auditSince").value || 0);
+  const cutoff = hours ? Date.now() - hours * 3600 * 1000 : 0;
+  return (auditRecords || []).filter((record) => {
+    if (cutoff) {
+      const ts = Date.parse(record.ts || "");
+      if (!Number.isFinite(ts) || ts < cutoff) return false;
+    }
+    if (!query) return true;
+    const hay = [
+      record.action,
+      auditActionText(record),
+      record.actor,
+      record.dept,
+      record.source,
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase();
+    return hay.includes(query);
+  });
+}
+
+function formatAuditTime(value) {
+  const ts = Date.parse(value || "");
+  return Number.isFinite(ts) ? new Date(ts).toLocaleString() : value || "";
+}
+
+function renderAudit() {
   const body = $("auditBody");
   if (!body) return;
+  const records = filteredAuditRecords();
+  const count = $("auditCount");
+  if (count) {
+    count.textContent = t("admin.auditCount", {
+      shown: records.length,
+      total: (auditRecords || []).length,
+    });
+  }
   body.innerHTML = "";
-  for (const record of (records || []).slice().reverse()) {
+  if (!records.length) {
+    emptyRow(
+      body,
+      5,
+      (auditRecords || []).length ? t("admin.auditNoMatch") : t("admin.emptyAudit")
+    );
+    return;
+  }
+  for (const record of records.slice().reverse()) {
     const tr = document.createElement("tr");
     const cells = [
-      (record.ts || "").replace("T", " ").replace("+00:00", "Z"),
-      auditActionLabel(record.action || ""),
+      formatAuditTime(record.ts),
+      auditActionText(record),
       record.actor || "",
       [record.dept, record.source].filter(Boolean).join(" / "),
-      record.ok === false ? t("admin.auditResult.failure") : t("admin.auditResult.success"),
     ];
     for (const value of cells) {
       const td = document.createElement("td");
       td.textContent = value;
       tr.appendChild(td);
     }
-    if (record.ok === false) tr.style.color = "var(--bad)";
+    const result = document.createElement("td");
+    const badgeEl = document.createElement("span");
+    badgeEl.className = "badge " + (record.ok === false ? "b-fail" : "b-indexed");
+    badgeEl.textContent =
+      record.ok === false ? t("admin.auditResult.failure") : t("admin.auditResult.success");
+    result.appendChild(badgeEl);
+    tr.appendChild(result);
     body.appendChild(tr);
   }
 }
 
+function exportAuditCsv() {
+  const records = filteredAuditRecords().slice().reverse();
+  if (!records.length) return;
+  const quote = (value) => '"' + String(value ?? "").replace(/"/g, '""') + '"';
+  const lines = [
+    [
+      t("admin.auditTable.time"),
+      t("admin.auditTable.action"),
+      t("admin.auditTable.actor"),
+      t("admin.auditTable.target"),
+      t("admin.auditTable.result"),
+    ]
+      .map(quote)
+      .join(","),
+  ];
+  for (const record of records) {
+    lines.push(
+      [
+        formatAuditTime(record.ts),
+        auditActionText(record),
+        record.actor || "",
+        [record.dept, record.source].filter(Boolean).join(" / "),
+        record.ok === false ? t("admin.auditResult.failure") : t("admin.auditResult.success"),
+      ]
+        .map(quote)
+        .join(",")
+    );
+  }
+  const blob = new Blob(["\ufeff" + lines.join("\r\n")], {
+    type: "text/csv;charset=utf-8",
+  });
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(blob);
+  link.download = "audit-" + new Date().toISOString().slice(0, 10) + ".csv";
+  link.click();
+  URL.revokeObjectURL(link.href);
+}
+
 async function loadAudit() {
+  renderSkeleton($("auditBody"), 5);
   try {
-    const data = await api("/admin/api/audit?limit=20");
-    renderAudit(data.records);
+    const limit = Number($("auditLimit").value || 20);
+    const data = await api(`/admin/api/audit?limit=${limit}`);
+    auditRecords = data.records || [];
+    $("auditMsg").innerHTML = "";
+    $("auditMsg").className = "msg";
+    renderAudit();
   } catch (error) {
     // Audit is informational; never block the rest of the console.
-    console.warn("audit load failed", error);
+    errorMsg($("auditMsg"), t("admin.auditLoadFailed", { error: error.message }), loadAudit);
   }
 }
 
@@ -1030,13 +1797,22 @@ async function loadAudit() {
 // hang) left everything below it — including the account card — unrendered.
 async function refreshAll() {
   const panels = [
-    { name: "admin.panel.overview", run: loadMeta, msg: null },
-    { name: "admin.panel.files", run: loadFiles, msg: "fileMsg" },
-    { name: "admin.panel.audit", run: loadAudit, msg: null },
-    { name: "admin.panel.accounts", run: loadUsers, msg: "userMsg" },
-    { name: "admin.panel.model", run: loadModel, msg: "modelMsg" },
+    { name: "admin.panel.overview", run: loadMeta, msg: null, card: "deptCard" },
+    {
+      name: "admin.panel.files",
+      run: loadFiles,
+      msg: "fileMsg",
+      card: "filesCard",
+      cards: ["filesCard", "indexCard"],
+    },
+    { name: "admin.panel.audit", run: loadAudit, msg: "auditMsg", card: "auditCard" },
+    { name: "admin.panel.accounts", run: loadUsers, msg: "userMsg", card: "usersCard" },
+    { name: "admin.panel.model", run: loadModel, msg: "modelMsg", card: "modelCard" },
   ];
+  panels.forEach((panel) => (panel.cards || [panel.card]).forEach((card) => markLoading(card, true)));
   const results = await Promise.allSettled(panels.map((panel) => panel.run()));
+  panels.forEach((panel) => (panel.cards || [panel.card]).forEach((card) => markLoading(card, false)));
+  if (results.some((result) => result.status === "fulfilled")) setLastRefresh();
   const failed = [];
   results.forEach((result, index) => {
     if (result.status === "fulfilled") return;
@@ -1044,17 +1820,22 @@ async function refreshAll() {
     const error = result.reason || {};
     failed.push(t(panel.name));
     if (panel.msg) {
-      setMsg(
+      errorMsg(
         $(panel.msg),
         t("admin.panelFailed", { panel: t(panel.name), error: error.message || error }),
-        "error"
+        panel.run
       );
     }
   });
   if (failed.length) {
     console.warn("panels failed to load:", failed.join(", "));
   }
+  for (const [key, loader] of Object.entries(SECTION_LOADERS)) {
+    const index = panels.findIndex((panel) => panel.run === loader.run);
+    if (index >= 0 && results[index].status === "fulfilled") sectionLoadedAt[key] = Date.now();
+  }
   syncNavVisibility();
+  restoreSection();
 }
 
 // --- accounts --------------------------------------------------------------
@@ -1080,9 +1861,15 @@ function renderUsers(data) {
   if (!card) return;
   const users = data.users || [];
   $("userCount").textContent = t("admin.countInParens", { count: users.length });
+  $("navUsers").hidden = !users.length;
+  $("navUsers").textContent = users.length > 99 ? "99+" : users.length;
   if (data.path) $("usersPath").textContent = data.path;
   const body = $("userBody");
   body.innerHTML = "";
+  if (!users.length) {
+    emptyRow(body, 5, t("admin.emptyUsers"));
+    return;
+  }
   for (const user of users) {
     const tr = document.createElement("tr");
     if (user.disabled) tr.className = "off";
@@ -1143,6 +1930,7 @@ function renderUsers(data) {
 async function loadUsers() {
   const card = $("usersCard");
   if (!card) return;
+  renderSkeleton($("userBody"), 5);
   try {
     const data = await api("/admin/api/users");
     card.hidden = false;
@@ -1150,10 +1938,14 @@ async function loadUsers() {
   } catch (error) {
     // 404 = local login disabled; any other failure is worth showing.
     card.hidden = error.status === 404;
+    $("navUsers").hidden = true;
     if (error.status !== 404) {
-      setMsg($("userMsg"), t("admin.loadUsersFailed", { error: error.message }), "error");
+      errorMsg(
+        $("userMsg"),
+        t("admin.loadUsersFailed", { error: error.message }),
+        loadUsers
+      );
     }
-    throw error;
   }
 }
 
@@ -1180,7 +1972,7 @@ async function resetPassword(username) {
 }
 
 async function deleteUser(username) {
-  if (!confirm(t("admin.deleteUserConfirm", { user: username }))) return;
+  if (!(await askConfirm(t("admin.deleteUserConfirm", { user: username })))) return;
   try {
     await api("/admin/api/users/" + encodeURIComponent(username), { method: "DELETE" });
     setMsg($("userMsg"), t("admin.userDeleted", { user: username }), "ok");
@@ -1230,7 +2022,7 @@ async function createUser() {
 }
 
 async function removeFile(file) {
-  if (!confirm(t("admin.deleteFileConfirm", { source: file.source }))) return;
+  if (!(await askConfirm(t("admin.deleteFileConfirm", { source: file.source })))) return;
   try {
     const result = await api(
       "/admin/api/file?dept=" + encodeURIComponent(file.dept) +
@@ -1259,11 +2051,13 @@ async function upload() {
     return;
   }
   const form = new FormData();
-  form.append("dept", currentDept);
+  form.append("dept", $("uploadDept").value || currentDept);
   form.append("subdir", $("subdir").value.trim());
   for (const file of pendingFiles) form.append("files", file, file.name);
 
   $("upload").disabled = true;
+  uploading = true;
+  syncActionButtons();
   setMsg($("uploadMsg"), t("admin.uploading"), "");
   const bar = $("uploadBar");
   const fill = $("uploadFill");
@@ -1289,19 +2083,65 @@ async function upload() {
   } catch (error) {
     setMsg($("uploadMsg"), t("admin.uploadFailed", { error: error.message }), "error");
   } finally {
-    $("upload").disabled = false;
+    uploading = false;
+    syncActionButtons();
     setTimeout(() => { bar.hidden = true; fill.style.width = "0%"; }, 600);
   }
 }
 
-function setBusy(busy) {
-  for (const id of ["ingestDept", "ingestAll", "resetBtn"]) $(id).disabled = busy;
+let busy = false;
+let uploading = false;
+
+function syncActionButtons() {
+  const noDept = !currentDept;
+  $("ingestDept").disabled = busy || noDept;
+  $("ingestAll").disabled = busy;
+  $("resetBtn").disabled = busy;
+  $("upload").disabled = uploading || busy || noDept;
+  $("upload").title = noDept && !uploading && !busy ? t("admin.selectDeptFirst") : "";
+}
+
+function setBusy(value) {
+  busy = value;
+  syncActionButtons();
+}
+
+// The department drives uploads and per-department ingestion, so it is shown
+// in the header instead of being implicit in one panel.
+// 部门决定上传与按部门入库的落点，因此在顶栏显示，避免上传到错误部门。
+function fillDeptOptions(select, depts, previous, withCounts) {
+  select.innerHTML = "";
+  for (const dept of depts || []) {
+    const option = document.createElement("option");
+    option.value = dept.name;
+    option.textContent = withCounts ? dept.name + " (" + dept.files + ")" : dept.name;
+    select.appendChild(option);
+  }
+  if (!depts || !depts.length) {
+    const option = document.createElement("option");
+    option.value = "";
+    option.textContent = t("admin.noDeptSelected");
+    select.appendChild(option);
+  }
+  if (previous && (depts || []).some((dept) => dept.name === previous)) {
+    select.value = previous;
+  }
+}
+
+function updateDeptBadge() {
+  const header = $("deptHeader");
+  if (header && header.value !== currentDept) header.value = currentDept;
+  const upload = $("uploadDept");
+  if (upload && upload.value !== currentDept) upload.value = currentDept;
+  $("currentDeptBadge").hidden = !metaLoaded;
+  syncActionButtons();
 }
 
 async function startIngest(dept, reset) {
   setBusy(true);
   jobId = null;
   $("jobCard").hidden = false;
+  $("jobPill").hidden = false;
   $("jobStatus").textContent = t("admin.jobStarting");
   $("jobLog").textContent = "";
   try {
@@ -1313,8 +2153,12 @@ async function startIngest(dept, reset) {
       body: JSON.stringify(body),
     });
     jobId = data.job_id;
+    localStorage.setItem(JOB_KEY, jobId);
     pollJob();
   } catch (error) {
+    jobId = null;
+    localStorage.removeItem(JOB_KEY);
+    $("jobPill").hidden = true;
     $("jobStatus").textContent = t("admin.jobFailed");
     $("jobLog").textContent = error.message;
     setBusy(false);
@@ -1331,7 +2175,9 @@ async function pollJob() {
     $("jobLog").scrollTop = $("jobLog").scrollHeight;
     if (job.status === "done" || job.status === "error") {
       setBusy(false);
+      $("jobPill").hidden = true;
       jobId = null;
+      localStorage.removeItem(JOB_KEY);
       await refreshAll();
       return;
     }
@@ -1343,10 +2189,51 @@ async function pollJob() {
   pollTimer = setTimeout(pollJob, 800);
 }
 
+// A reload while ingestion is running should reattach to the same job instead
+// of dropping the log and leaving the console idle.
+// 刷新页面后重新接入未完成的入库任务，避免日志与进度丢失。
+async function restoreJob() {
+  const saved = localStorage.getItem(JOB_KEY);
+  if (!saved) return;
+  jobId = saved;
+  $("jobCard").hidden = false;
+  $("jobPill").hidden = false;
+  $("jobStatus").textContent = t("admin.jobRestored");
+  try {
+    const job = await api("/admin/api/jobs/" + jobId);
+    $("jobLog").textContent = job.log.join("\n");
+    if (job.status === "done" || job.status === "error") {
+      $("jobStatus").textContent = jobStatusLabel(job.status);
+      $("jobPill").hidden = true;
+      jobId = null;
+      localStorage.removeItem(JOB_KEY);
+      return;
+    }
+    $("jobStatus").textContent = jobStatusLabel(job.status);
+    setBusy(true);
+    pollJob();
+  } catch (error) {
+    jobId = null;
+    localStorage.removeItem(JOB_KEY);
+    $("jobPill").hidden = true;
+    if (error.status === 404) {
+      $("jobCard").hidden = true;
+    } else {
+      $("jobStatus").textContent = t("admin.jobPollFailed", { error: error.message });
+    }
+  }
+}
+
 // --- chat model overrides --------------------------------------------------
 // Only chat generation is affected; ingestion and retrieval keep EMBEDDING_*.
 // --- 对话模型覆盖配置 ------------------------------------------------------
 // 只影响对话生成；入库与检索仍使用 EMBEDDING_*。
+let modelBaseline = "";
+
+function updateModelDirty() {
+  $("modelDirty").hidden = JSON.stringify(modelPayload()) === modelBaseline;
+}
+
 function modelPayload() {
   // A blank key becomes null so the server keeps the saved one.
   // 密钥留空时传 null，由服务端保留已保存的 Key。
@@ -1372,6 +2259,8 @@ function renderModel(data) {
     : t("admin.modelKeyPlaceholder");
   $("modelSource").textContent =
     data.source === "override" ? t("admin.modelSourceOverride") : t("admin.modelSourceEnv");
+  modelBaseline = JSON.stringify(modelPayload());
+  updateModelDirty();
 }
 
 async function loadModel() {
@@ -1539,10 +2428,10 @@ async function openVectorChunks(docId, source, offset = 0) {
 async function searchVectors() {
   const query = $("vectorQuery").value.trim();
   if (!query) {
-    setMsg($("fileMsg"), t("admin.vectorQueryRequired"), "error");
+    setMsg($("indexMsg"), t("admin.vectorQueryRequired"), "error");
     return;
   }
-  setMsg($("fileMsg"), t("admin.vectorSearching"), "ok");
+  setMsg($("indexMsg"), t("admin.vectorSearching"), "ok");
   try {
     const data = await api("/admin/api/vectors/search", {
       method: "POST",
@@ -1562,16 +2451,16 @@ async function searchVectors() {
     });
     renderVectorResults(data.results);
     updateVectorPager();
-    setMsg($("fileMsg"), "", "ok");
+    setMsg($("indexMsg"), "", "ok");
   } catch (error) {
-    setMsg($("fileMsg"), error.message, "error");
+    setMsg($("indexMsg"), error.message, "error");
   }
 }
 
 async function deleteVector(docId, source) {
   if (!docId) return;
   const label = source || docId.slice(0, 10);
-  if (!confirm(t("admin.vectorDeleteConfirm", { source: label }))) return;
+  if (!(await askConfirm(t("admin.vectorDeleteConfirm", { source: label })))) return;
   const data = await api("/admin/api/vectors/" + encodeURIComponent(docId), {
     method: "DELETE",
   });
@@ -1588,10 +2477,10 @@ async function deleteVector(docId, source) {
 }
 
 async function pruneVectors() {
-  if (!confirm(t("admin.vectorPruneConfirm"))) return;
+  if (!(await askConfirm(t("admin.vectorPruneConfirm")))) return;
   const data = await api("/admin/api/vectors/prune", { method: "POST" });
   setMsg(
-    $("fileMsg"),
+    $("indexMsg"),
     t("admin.vectorPruned", {
       docs: data.documents_removed,
       chunks: data.chunks_removed,
@@ -1603,10 +2492,124 @@ async function pruneVectors() {
   await loadFiles();
 }
 
-deptSel.onchange = () => {
-  currentDept = deptSel.value;
+deptSel.onchange = () => changeDept(deptSel.value);
+$("deptHeader").onchange = () => changeDept($("deptHeader").value);
+$("uploadDept").onchange = () => changeDept($("uploadDept").value);
+
+function changeDept(value) {
+  currentDept = value;
+  if (deptSel.value !== value) deptSel.value = value;
+  updateDeptBadge();
   loadFiles().catch((e) => setMsg($("fileMsg"), e.message, "error"));
+}
+
+// --- theme controls -------------------------------------------------------
+// Dark/light apply immediately; 自定义 opens the palette modal and only
+// commits when 应用 is pressed, so cancelling keeps the previous theme.
+// 深色/浅色立即生效；“自定义”打开配色弹窗，只有点“应用”才保存，取消则保留原主题。
+const themeSelect = $("theme");
+const themeModal = $("themeModal");
+let previousTheme = currentThemeMode();
+themeSelect.value = previousTheme;
+
+function fillThemeInputs(custom) {
+  $("themeBg").value = custom.bg;
+  $("themePanel").value = custom.panel;
+  $("themeText").value = custom.text;
+  $("themeAccent").value = custom.accent;
+}
+
+function themeInputsValue() {
+  return {
+    bg: $("themeBg").value,
+    panel: $("themePanel").value,
+    text: $("themeText").value,
+    accent: $("themeAccent").value,
+  };
+}
+
+const THEME_PRESETS = [
+  { key: "admin.theme.preset.night", bg: "#101827", panel: "#1a2438", text: "#e8eefc", accent: "#4f8cff" },
+  { key: "admin.theme.preset.forest", bg: "#0f1a16", panel: "#182a22", text: "#e6f2ec", accent: "#3ecf8e" },
+  { key: "admin.theme.preset.sand", bg: "#faf5ec", panel: "#fffdf8", text: "#2a241b", accent: "#b26a00" },
+  { key: "admin.theme.preset.slate", bg: "#14181d", panel: "#1e242c", text: "#eef2f7", accent: "#8ab4ff" },
+];
+
+function renderThemePresets() {
+  const box = $("themePresets");
+  if (!box) return;
+  box.innerHTML = "";
+  for (const preset of THEME_PRESETS) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "themePreset";
+    button.title = t(preset.key);
+    button.setAttribute("aria-label", t(preset.key));
+    button.dataset.i18nTitle = preset.key;
+    for (const key of ["bg", "panel", "text", "accent"]) {
+      const swatch = document.createElement("span");
+      swatch.style.background = preset[key];
+      button.appendChild(swatch);
+    }
+    button.onclick = () => {
+      fillThemeInputs(preset);
+      applyTheme("custom", preset);
+    };
+    box.appendChild(button);
+  }
+}
+
+renderThemePresets();
+
+function openThemeModal() {
+  fillThemeInputs(loadCustomTheme());
+  themeModal.hidden = false;
+}
+
+function closeThemeModal(revertTo) {
+  themeModal.hidden = true;
+  if (revertTo) {
+    applyTheme(revertTo, loadCustomTheme());
+    themeSelect.value = revertTo;
+  }
+}
+
+// Preview every color change immediately; the palette is only persisted when
+// 应用 is pressed.
+// 改动颜色时实时预览，只有点“应用”才写入 localStorage。
+["themeBg", "themePanel", "themeText", "themeAccent"].forEach((id) => {
+  $(id).addEventListener("input", () => applyTheme("custom", themeInputsValue()));
+});
+
+themeSelect.onchange = () => {
+  const mode = themeSelect.value;
+  if (mode === "custom" || mode === "custom-edit") {
+    if (mode === "custom-edit") themeSelect.value = previousTheme;
+    openThemeModal();
+    return;
+  }
+  previousTheme = mode;
+  applyTheme(mode);
+  saveThemeMode(mode);
 };
+
+$("themeApply").onclick = () => {
+  const custom = themeInputsValue();
+  previousTheme = "custom";
+  applyTheme("custom", custom);
+  saveCustomTheme(custom);
+  saveThemeMode("custom");
+  themeSelect.value = "custom";
+  closeThemeModal();
+};
+$("themeReset").onclick = () => {
+  fillThemeInputs(THEME_DEFAULT_CUSTOM);
+  applyTheme("custom", THEME_DEFAULT_CUSTOM);
+};
+$("themeClose").onclick = () => closeThemeModal(previousTheme);
+themeModal.addEventListener("click", (event) => {
+  if (event.target === themeModal) closeThemeModal(previousTheme);
+});
 
 $("refresh").onclick = refreshAll;
 
@@ -1614,8 +2617,47 @@ $("modelTest").onclick = testModel;
 $("modelSave").onclick = saveModel;
 $("modelReset").onclick = resetModel;
 
+["modelBase", "modelName", "modelKey", "modelTemp", "modelTokens"].forEach((id) => {
+  $(id).addEventListener("input", updateModelDirty);
+});
+
+window.addEventListener("beforeunload", (event) => {
+  if (!modelBaseline || $("modelDirty").hidden) return;
+  event.preventDefault();
+  event.returnValue = "";
+});
+
 $("vectorRefresh").onclick = () =>
   loadFiles().catch((e) => setMsg($("fileMsg"), e.message, "error"));
+
+document.querySelectorAll("th[data-sort]").forEach((th) => {
+  th.onclick = () => {
+    const key = th.dataset.sort;
+    fileSort = { key, dir: fileSort.key === key ? -fileSort.dir : 1 };
+    document.querySelectorAll("th[data-sort]").forEach((other) => {
+      const active = other === th;
+      other.classList.toggle("sortAsc", active && fileSort.dir === 1);
+      other.classList.toggle("sortDesc", active && fileSort.dir === -1);
+      other.setAttribute(
+        "aria-sort",
+        active ? (fileSort.dir === 1 ? "ascending" : "descending") : "none"
+      );
+    });
+    filePage = 0;
+    renderFileRows();
+  };
+});
+$("filePrev").onclick = () => {
+  filePage -= 1;
+  renderFileRows();
+};
+$("fileNext").onclick = () => {
+  filePage += 1;
+  renderFileRows();
+};
+$("auditSearch").addEventListener("input", renderAudit);
+$("auditSince").onchange = renderAudit;
+$("auditLimit").onchange = () => loadAudit().catch(() => {});
 $("vectorSearch").onclick = () => searchVectors();
 $("vectorPrune").onclick = () =>
   pruneVectors().catch((e) => setMsg($("fileMsg"), e.message, "error"));
@@ -1636,8 +2678,38 @@ $("vectorClose").onclick = closeVectorModal;
 $("vectorModal").addEventListener("click", (event) => {
   if (event.target === $("vectorModal")) closeVectorModal();
 });
+
+// One themed confirmation dialog for every destructive action; callers await
+// the promise instead of the browser's native confirm().
+// 所有破坏性操作共用主题化确认弹窗，调用方 await 结果，不再使用原生 confirm。
+let confirmResolve = null;
+function askConfirm(message, options) {
+  const opts = options || {};
+  return new Promise((resolve) => {
+    $("confirmTitle").textContent = opts.title || t("admin.confirmTitle");
+    $("confirmText").textContent = message;
+    $("confirmOk").textContent = opts.confirmText || t("common.confirm");
+    $("confirmOk").className = opts.danger === false ? "" : "danger";
+    $("confirmModal").hidden = false;
+    confirmResolve = resolve;
+    $("confirmCancel").focus();
+  });
+}
+function settleConfirm(value) {
+  $("confirmModal").hidden = true;
+  if (confirmResolve) confirmResolve(value);
+  confirmResolve = null;
+}
+$("confirmOk").onclick = () => settleConfirm(true);
+$("confirmCancel").onclick = () => settleConfirm(false);
+$("confirmModal").addEventListener("click", (event) => {
+  if (event.target === $("confirmModal")) settleConfirm(false);
+});
 document.addEventListener("keydown", (event) => {
-  if (event.key === "Escape" && !$("vectorModal").hidden) closeVectorModal();
+  if (event.key !== "Escape") return;
+  if (!$("confirmModal").hidden) settleConfirm(false);
+  else if (!themeModal.hidden) closeThemeModal(previousTheme);
+  else if (!$("vectorModal").hidden) closeVectorModal();
 });
 
 $("createUser").onclick = () => {
@@ -1658,6 +2730,7 @@ $("createDept").onclick = async () => {
     await refreshAll();
     deptSel.value = name;
     currentDept = name;
+    updateDeptBadge();
     await loadFiles();
     setMsg($("fileMsg"), t("admin.deptReady", { name }), "ok");
   } catch (error) {
@@ -1682,12 +2755,25 @@ $("ingestDept").onclick = () => {
 
 $("ingestAll").onclick = () => startIngest(null, false);
 
+$("jobPill").onclick = () => {
+  showSection("filesCard");
+  rememberSection("filesCard");
+  $("jobCard").scrollIntoView({ behavior: "smooth", block: "start" });
+};
+
+updateDeptBadge();
+
 $("resetBtn").onclick = () => {
   if (!$("resetFlag").checked) {
-    setMsg($("fileMsg"), t("admin.confirmRequired"), "error");
+    setMsg($("rebuildMsg"), t("admin.confirmRequired"), "error");
     return;
   }
-  if (!confirm(t("admin.resetConfirm"))) return;
+  if (($("resetPhrase").value || "").trim().toUpperCase() !== "RESET") {
+    setMsg($("rebuildMsg"), t("admin.resetNeedPhrase"), "error");
+    return;
+  }
+  setMsg($("rebuildMsg"), "", "");
+  $("resetPhrase").value = "";
   startIngest(null, true);
 };
 
@@ -1753,7 +2839,7 @@ async function guarded(fn) {
 document.addEventListener("i18n:change", () => {
   if (!$("console").hidden) {
     renderIdentity(session);
-    refreshAll();
+    refreshAll().finally(updateDocumentTitle);
   }
 });
 
@@ -1761,8 +2847,12 @@ document.addEventListener("i18n:change", () => {
   const fromSso = consumeTokenFragment();
   await loadLoginOptions();
   const authed = await resolveSession();
-  if (authed) await refreshAll();
-  else if (fromSso) showGate(t("auth.adminInvalidSso"));
+  if (authed) {
+    await refreshAll();
+    await restoreJob();
+  } else if (fromSso) {
+    showGate(t("auth.adminInvalidSso"));
+  }
 })();
 </script>
 </body>
