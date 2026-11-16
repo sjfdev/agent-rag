@@ -236,3 +236,63 @@ def test_header_groups_account_controls_and_merges_theme_edit():
     assert '<option value="custom-edit"' in text
     assert 'id="themeEdit"' not in text
     assert text.index('id="lang"') < text.index('id="userMenu"')
+
+
+def test_chat_prevents_ime_send_and_duplicate_retry():
+    text = INDEX.read_text()
+    assert "e.isComposing" in text
+    assert "send({ text, retry: true })" in text
+    assert "sendBtn.onclick = () => send();" in text
+
+
+def test_chat_aborts_on_context_switch_and_keeps_scroll_position():
+    text = INDEX.read_text()
+    assert "function startNewSession(key, vars) {\n  if (busy && abortController) abortController.abort();" in text
+    assert 'id="scrollBottom"' in text
+    assert "scrollChat(role === \"user\")" in text
+
+
+def test_chat_exposes_live_status_and_dialog_focus():
+    text = INDEX.read_text()
+    assert 'id="srStatus"' in text
+    assert 'aria-live="polite"' in text
+    assert "previewReturnFocus" in text
+    assert 'id="sessionClose"' in text
+
+
+def test_chat_hides_dev_status_and_reads_identity_from_token():
+    text = INDEX.read_text()
+    assert "测试台" not in text
+    assert 'class="chatStatus"' in text
+    assert 'id="whoami"' in text
+    assert 'id="chatTheme"' in text
+    assert "deptSel.disabled = info.depts.length === 1" in text
+
+
+def test_chat_citations_are_numbered_and_answers_have_actions():
+    text = INDEX.read_text()
+    assert "srchitNum" in text
+    assert "box.open = sources.length <= 3;" in text
+    assert "addActions(bubble, answer, { question: text })" in text
+    assert "function regenerateAnswer(" in text
+
+
+def test_chat_composer_debug_and_export_controls():
+    text = INDEX.read_text()
+    assert 'id="charCount"' in text
+    assert "function updateCharCount()" in text
+    assert 'id="debugToggle"' in text
+    assert 'localStorage.getItem("chatDebug")' in text
+    assert "function exportChat()" in text
+    assert "function renderTimings(" in text
+
+
+def test_sessions_search_loading_and_themed_confirmation():
+    text = INDEX.read_text()
+    assert 'id="sessionSearch"' in text
+    assert 'id="sessionStatus"' in text
+    assert 'id="sessionRetry"' in text
+    assert "sessions.noMatch" in text
+    assert 'id="confirm"' in text
+    assert "askConfirm(" in text
+    assert "window.confirm" not in text

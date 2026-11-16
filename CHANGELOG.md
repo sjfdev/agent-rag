@@ -160,6 +160,36 @@ three agree before you push a tag.
   <br>**管理台：上传并入文件、顶栏收纳（中文）**：上传卡并入文件列表，卡内即可
   选择上传部门，选文件与看入库状态在同一处；身份、语言、主题、返回对话与退出收进
   账户菜单（语言仍在顶栏一级），原「配色」按钮改为主题下拉里的「配色…」选项。
+- **Chat UI: safer sending, retry and accessibility**: Enter no longer submits
+  while an IME is composing; switching chat/department/user aborts the running
+  stream instead of leaving a detached response; retry reuses the question
+  without adding a duplicate user bubble; the transcript only auto-scrolls when
+  the reader is at the bottom, with a 「回到底部」 button; answers announce
+  completion through a live region, and the source preview and mobile session
+  drawer trap focus and restore it on close.
+  <br>**对话页：输入安全、重试与无障碍（中文）**：输入法组词时回车不再误发送；
+  切换会话/部门/用户会中止正在生成的回答，避免串台；重试复用原问题、不再重复
+  用户气泡；阅读上翻时不再强制滚底，并提供「回到底部」；回答完成通过读屏区域
+  播报，引用预览与移动会话抽屉会锁定焦点并在关闭后归还。
+- **Chat UI: production identity, citations and session controls**: JWT mode
+  now hides the editable user field and offers only the token's departments
+  (read-only when there is one), with the backend/model badges folded into a
+  「状态」 popover that also carries a dark/light/custom theme shared with the
+  console. Sources are numbered, expand automatically for small sets and rank
+  by order instead of showing a misleading score; the preview can copy its
+  text. Answers gain a copy/regenerate toolbar, answers can be exported as
+  Markdown, the composer grows with the text and warns near the 4,000-character
+  cap, stopped answers keep their Markdown, and timing chips stay behind a
+  「调试信息」 toggle. Session deletion uses the themed dialog, the list has
+  search plus loading/error/retry states, and the demo prompts disappear once a
+  conversation starts or when their department is not available.
+  <br>**对话页：生产身份、引用与会话控制（中文）**：JWT 模式隐藏可编辑的用户名，
+  只提供 token 内的部门（单部门只读）；后端/模型徽标收进「状态」弹层，并可在其中
+  切换与管理台共享的深色/浅色/自定义主题。引用带编号、少量引用自动展开、按顺序
+  标注排名而不再显示易误解的分数，预览支持复制全文。回答新增复制/重新生成工具条，
+  可导出 Markdown；输入框随内容增高并在接近 4000 字时提示；停止生成保留 Markdown；
+  耗时 chip 收进「调试信息」开关。删除会话改用统一确认弹窗，会话列表支持搜索及
+  载入/失败/重试状态，对话开始或部门不可用时隐藏示例问题。
 
 ### Fixed
 
