@@ -317,6 +317,18 @@ three agree before you push a tag.
   带时间戳与引用；长会话只先渲染最近 60 条并提供「显示更早」；`GET /sessions` 支持
   `limit`/`offset`，侧栏新增「加载更多」。
 
+- **Ingestion monitor**: the admin console now has a 运行监视 card and a
+  header shortcut. It polls `GET /admin/api/jobs/{id}` and shows status,
+  processed/total documents and percent, chunks written, elapsed time,
+  throughput, ETA (after 40% progress), the current file and the live log. The
+  API derives `progress` from the persisted job log, so it also works for
+  jobs that were already running before the panel existed; completed jobs keep
+  their summary.
+  <br>**入库运行监视（中文）**：管理台新增「运行监视」卡片和顶栏入口，轮询
+  `GET /admin/api/jobs/{id}`，展示状态、已处理/总文档与百分比、已写 chunk、已用时、
+  速度、预计剩余（进度 40% 后）、当前文件与实时日志。后端从持久化任务日志推导
+  `progress`，因此面板上线前已启动的任务也能显示；完成后保留汇总。
+
 ### Fixed
 
 - **Admin account management and account switching**: the 账号 card now edits

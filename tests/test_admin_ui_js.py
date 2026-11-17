@@ -28,6 +28,7 @@ NAV_TARGETS = [
     "modelCard",
     "chunkCard",
     "usersCard",
+    "jobCard",
     "indexCard",
     "licenseCard",
     "auditCard",
@@ -72,8 +73,8 @@ def test_menu_entries_use_bilingual_nav_keys():
     text = ADMIN.read_text()
     keys = set(re.findall(r'data-i18n="(admin\.nav\.[^"]+)"', text))
     assert keys == {f"admin.nav.{name}" for name in
-                    ("dept", "files", "model", "chunk", "accounts", "index",
-                     "license", "rebuild", "audit")}
+                    ("dept", "files", "model", "chunk", "accounts", "monitor",
+                     "index", "license", "rebuild", "audit")}
 
 
 def test_license_card_installs_without_the_shell():
@@ -478,3 +479,30 @@ def test_chunking_is_configurable_from_the_console():
     # Saving is guarded by the themed confirmation before a full re-ingestion.
     assert "admin.chunkReingestConfirm" in text
     assert "admin.chunkResetConfirm" in text
+
+
+def test_ingestion_monitor_panel():
+    text = ADMIN.read_text()
+    for marker in (
+        'id="jobCard"',
+        'data-target="jobCard"',
+        'id="jobFill"',
+        'id="jobBadge"',
+        'id="jobDocs"',
+        'id="jobChunks"',
+        'id="jobElapsed"',
+        'id="jobRate"',
+        'id="jobEta"',
+        'id="jobCurrent"',
+        'id="jobLog"',
+    ):
+        assert marker in text, marker
+    assert "function renderJob(" in text
+    assert "function loadJobMonitor(" in text
+    assert "progress.percent" in text
+    assert "progress.eta_seconds" in text
+    assert 'jobCard: { run: loadJobMonitor' in text
+    assert 'name: "admin.panel.monitor"' in text
+    # Job progress is surfaced in the API and rendered by the monitor.
+    assert 'api("/admin/api/jobs"' in text
+    assert 'api("/admin/api/jobs/" + latest.id)' in text

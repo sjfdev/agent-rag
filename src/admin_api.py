@@ -244,6 +244,99 @@ def _iter_files(dept: Optional[str] = None):
             yield _describe_file(path, name, supported, summary)
 
 
+_JOB_ACTION_RE = re.compile(r"^\s*(add|update|skip|error)\s+(.+?)(?:\s+\(|$)")
+_JOB_CHUNK_RE = re.compile(r"\((\d+) chunks\)")
+_TOTAL_FILES_CACHE = {"key": None, "value": 0, "at": 0.0}
+
+
+def _count_supported_files(dept: Optional[str] = None) -> int:
+    """Supported files on disk for a department (or all departments).
+
+    Cached briefly: the monitor polls the job endpoint, and walking a large
+    data directory on every poll would be wasteful.
+    """
+    key = dept or ""
+    now = time.monotonic()
+    if _TOTAL_FILES_CACHE["key"] == key and now - _TOTAL_FILES_CACHE["at"] < 5:
+        return int(_TOTAL_FILES_CACHE["value"])
+    root = _data_root().resolve()
+    depts = [dept] if dept else _list_depts()
+    total = 0
+    for name in depts:
+        folder = root / name
+        if not folder.is_dir():
+            continue
+        for path in folder.rglob("*"):
+            if (
+                path.is_file()
+                and not path.name.startswith((".", "~$"))
+                and path.suffix.lower() in SUPPORTED_EXTENSIONS
+            ):
+                total += 1
+    _TOTAL_FILES_CACHE.update({"key": key, "value": total, "at": now})
+    return total
+
+
+def _job_progress(job: Dict[str, Any]) -> Dict[str, Any]:
+    """Derive human-readable progress from a persisted job record.
+
+    The ingestion thread writes one log line per file; parsing that log avoids
+    changing the job-store schema for every processed file and also works for
+    jobs that were already running when this monitor was added.
+    """
+    log = job.get("log") or []
+    processed = 0
+    chunks = 0
+    current = ""
+    for line in log:
+        match = _JOB_ACTION_RE.match(str(line))
+        if not match:
+            continue
+        processed += 1
+        current = match.group(2).strip()
+        chunk_match = _JOB_CHUNK_RE.search(str(line))
+        if chunk_match:
+            chunks += int(chunk_match.group(1))
+
+    stats = job.get("stats") or {}
+    if stats:
+        chunks = int(stats.get("chunks") or chunks)
+
+    total = _count_supported_files(job.get("dept"))
+    status = str(job.get("status") or "queued")
+    started = job.get("started") or job.get("created")
+    finished = job.get("finished")
+    now = time.time()
+    elapsed = 0.0
+    if started:
+        elapsed = max(0.0, float(finished or now) - float(started))
+    if status == "done":
+        processed = total or processed
+        percent = 100.0
+    else:
+        percent = (processed / total * 100.0) if total else 0.0
+    percent = max(0.0, min(100.0, percent))
+
+    eta = None
+    if status == "running" and total > processed and processed > 0 and elapsed > 0:
+        # Early progress is biased by small files; only estimate after 40%.
+        if processed >= max(5, int(total * 0.4)):
+            eta = elapsed * (total - processed) / processed
+
+    minutes = elapsed / 60.0 if elapsed else 0.0
+    return {
+        "processed": processed,
+        "total": total,
+        "percent": round(percent, 1),
+        "chunks": chunks,
+        "elapsed_seconds": round(elapsed, 1),
+        "eta_seconds": round(eta, 1) if eta is not None else None,
+        "rate_docs_per_min": round(processed / minutes, 1) if minutes else 0.0,
+        "rate_chunks_per_min": round(chunks / minutes, 1) if minutes else 0.0,
+        "current": current,
+    }
+
+
 class DeptRequest(BaseModel):
     name: str = Field(min_length=1, max_length=64)
 
@@ -707,7 +800,9 @@ def job_status(job_id: str):
     job = _job_store.get(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="job not found")
-    return job
+    data = dict(job)
+    data["progress"] = _job_progress(data)
+    return data
 
 
 @router.get("/jobs")

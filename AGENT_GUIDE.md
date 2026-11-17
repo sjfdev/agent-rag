@@ -99,7 +99,7 @@ agent-rag/
 ├── volumes/                 # Milvus/etcd 数据卷
 ├── eval/cases.jsonl         # 检索评测集（命中 + 泄漏用例）
 ├── config/acl.example.json  # 文档级 ACL 规则示例
-├── tests/                   # pytest 离线测试（742 项，覆盖率 93%）
+├── tests/                   # pytest 离线测试（746 项，覆盖率 93%）
 ├── Makefile                 # 常用命令（make help）
 ├── .github/workflows/ci.yml # ruff + pytest（CI）
 ├── WORKLOG.md               # 本轮迭代记录与验证矩阵
@@ -727,7 +727,7 @@ python scripts/check_loaders.py      # 9 种格式解析（不写向量库）
 python scripts/check_admin.py        # 管理台上传→入库→删除冒烟
 python scripts/bench_retrieval.py    # embedding / FAISS / Milvus / LLM 延迟
 python scripts/generate_demo_files.py  # 重建 data/Demo 多格式样例
-pytest -q                            # 离线测试（742 项，~30s，覆盖率 93%，无需服务/LLM）
+pytest -q                            # 离线测试（746 项，~30s，覆盖率 93%，无需服务/LLM）
 ruff check src tests main.py run_ingestion.py   # 代码检查
 python test_agent.py                 # 端到端 18 项断言（需服务已启动）
 ```
@@ -809,6 +809,8 @@ VECTOR_STORE_TYPE=milvus python scripts/eval_retrieval.py
 打开 `http://localhost:8000/admin`（对话页左下角也有入口）：
 
 「分片」卡片可配置每片 token 数、重叠、中文标点优先与标题前缀；保存后点「保存并重新入库」，系统会按新的分片签名自动重切已入库文档（查询期间仍可用）。
+
+「运行监视」卡片显示任务状态、已处理/总文档与百分比、已写 chunk、已用时、速度、预计剩余（40% 后给出）、当前文件与实时日志；顶栏「入库中」可直接跳转。进度来自 `/admin/api/jobs/{id}` 的 `progress` 字段。
 
 - **部门**：切换/创建部门，显示文件总数与各状态数量
 - **上传**：拖拽或选择多文件，可指定子目录；单文件上限 `MAX_UPLOAD_MB`

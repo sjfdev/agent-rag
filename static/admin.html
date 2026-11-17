@@ -155,7 +155,7 @@
      card stays visible because it reports work started from any section. */
   /* 左侧菜单即标签页：右侧只渲染当前分区；任务日志卡片保持可见，因为它可能由
      任意分区触发。 */
-  #console > section.card:not(#jobCard):not(.sectionActive) { display: none; }
+  #console > section.card:not(.sectionActive) { display: none; }
   @media (max-width: 760px) {
     .shell { grid-template-columns: 1fr; padding: 12px 12px 32px; gap: 12px; }
     .sidebar { position: static; }
@@ -243,6 +243,15 @@
     border-radius: 8px; padding: 10px; font-size: 12px; color: var(--log-text); white-space: pre-wrap;
   }
   #jobStatus { margin-left: 6px; font-size: 12px; }
+  .monitorBar { margin-top: 10px; }
+  .monitorGrid {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+    gap: 8px 14px; margin-top: 10px; font-size: 12px; color: var(--muted);
+  }
+  .monitorGrid span { display: flex; justify-content: space-between; gap: 10px; }
+  .monitorGrid b { color: var(--text); font-weight: 500; }
+  #jobCurrent { margin-top: 8px; word-break: break-all; }
+  #jobCard .bar { margin-top: 10px; }
   .tokenRow { display: flex; gap: 8px; align-items: center; margin-top: 8px; }
   .tokenRow input { flex: 1; min-width: 180px; }
   .identity { display: flex; gap: 8px; align-items: center; font-size: 12px; color: var(--muted); }
@@ -559,6 +568,7 @@
       </div>
       <div class="navGroup">
         <span class="navGroupLabel" data-i18n="admin.navGroup.ops">运维</span>
+        <button class="navBtn" role="tab" id="tab-jobCard" aria-controls="jobCard" data-target="jobCard" data-i18n="admin.nav.monitor">运行监视</button>
         <button class="navBtn" role="tab" id="tab-indexCard" aria-controls="indexCard" data-target="indexCard" data-i18n="admin.nav.index">索引维护</button>
         <button class="navBtn" role="tab" id="tab-licenseCard" aria-controls="licenseCard" data-target="licenseCard" data-i18n="admin.nav.license">许可</button>
         <button class="navBtn" role="tab" id="tab-auditCard" aria-controls="auditCard" data-target="auditCard" data-i18n="admin.nav.audit">操作审计</button>
@@ -806,9 +816,20 @@
     <div class="msg" id="rebuildMsg" aria-live="polite"></div>
   </section>
 
-  <section class="card" id="jobCard" hidden>
-    <h2><span data-i18n="admin.jobTitle">任务</span><span id="jobStatus"></span></h2>
+  <section class="card" id="jobCard">
+    <h2><span data-i18n="admin.jobTitle">运行监视</span><span class="badge" id="jobBadge" hidden></span></h2>
+    <div class="bar monitorBar" aria-hidden="true"><div class="fill" id="jobFill"></div></div>
+    <div class="monitorGrid">
+      <span><span data-i18n="admin.jobStatusLabel">状态</span> <b id="jobStatus">—</b></span>
+      <span><span data-i18n="admin.jobDocsLabel">文档</span> <b id="jobDocs">—</b></span>
+      <span><span data-i18n="admin.jobChunksLabel">已写 chunk</span> <b id="jobChunks">—</b></span>
+      <span><span data-i18n="admin.jobElapsedLabel">已用时</span> <b id="jobElapsed">—</b></span>
+      <span><span data-i18n="admin.jobRateLabel">速度</span> <b id="jobRate">—</b></span>
+      <span><span data-i18n="admin.jobEtaLabel">预计剩余</span> <b id="jobEta">—</b></span>
+    </div>
+    <div class="hint" id="jobCurrent"></div>
     <pre id="jobLog"></pre>
+    <div class="msg" id="jobMsg" aria-live="polite"></div>
   </section>
 
   <section class="card" id="auditCard">
@@ -1034,6 +1055,7 @@ const SECTION_LOADERS = {
   indexCard: { run: loadFiles, msg: "indexMsg", name: "admin.panel.index" },
   usersCard: { run: loadUsers, msg: "userMsg", name: "admin.panel.accounts" },
   chunkCard: { run: loadChunking, msg: "chunkMsg", name: "admin.panel.chunking" },
+  jobCard: { run: loadJobMonitor, msg: "jobMsg", name: "admin.panel.monitor" },
   modelCard: { run: loadModel, msg: "modelMsg", name: "admin.panel.model" },
   licenseCard: { run: loadLicense, msg: "licenseMsg", name: "admin.panel.license" },
   auditCard: { run: loadAudit, msg: null, name: "admin.panel.audit" },
@@ -1163,7 +1185,6 @@ function showSection(id, refresh) {
   }
   activeSection = target ? target.id : "";
   navSections.forEach((section) => {
-    if (section.id === "jobCard") return;
     section.classList.toggle("sectionActive", section === target);
   });
   setActiveNav(activeSection);
@@ -1277,6 +1298,7 @@ let bearer = authStore.get(BEARER_KEY) || authStore.get(SHARED_BEARER_KEY) || ""
 let session = null;
 let currentDept = "";
 let metaLoaded = false;
+let metaCounts = {};
 let jobId = null;
 const JOB_KEY = "adminJobId";
 let pollTimer = null;
@@ -1660,6 +1682,7 @@ async function loadMeta() {
   updateDeptBadge();
 
   const c = meta.counts || {};
+  metaCounts = c;
   $("stats").innerHTML = "";
   const pills = [
     ["admin.totalFiles", (meta.depts || []).reduce((n, d) => n + d.files, 0)],
@@ -1983,6 +2006,7 @@ async function refreshAll() {
     { name: "admin.panel.accounts", run: loadUsers, msg: "userMsg", card: "usersCard" },
     { name: "admin.panel.model", run: loadModel, msg: "modelMsg", card: "modelCard" },
     { name: "admin.panel.chunking", run: loadChunking, msg: "chunkMsg", card: "chunkCard" },
+    { name: "admin.panel.monitor", run: loadJobMonitor, msg: "jobMsg", card: "jobCard" },
     { name: "admin.panel.license", run: loadLicense, msg: "licenseMsg", card: "licenseCard" },
   ];
   panels.forEach((panel) => (panel.cards || [panel.card]).forEach((card) => markLoading(card, true)));
@@ -2504,13 +2528,167 @@ function updateDeptBadge() {
   syncActionButtons();
 }
 
+function formatDuration(seconds) {
+  const total = Math.max(0, Math.round(Number(seconds) || 0));
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const secs = total % 60;
+  if (hours) return `${hours}h ${minutes}m`;
+  if (minutes) return `${minutes}m ${secs}s`;
+  return `${secs}s`;
+}
+
+function jobProgressFromLog(job) {
+  // Fallback for servers that predate the progress field: derive the numbers
+  // from the per-file job log and the file-list counts already on screen.
+  const log = job.log || [];
+  let processed = 0;
+  let chunks = 0;
+  let current = "";
+  for (const line of log) {
+    const match = String(line).match(/^\s*(add|update|skip|error)\s+(.+?)(?:\s+\(|$)/);
+    if (!match) continue;
+    processed += 1;
+    current = match[2].trim();
+    const chunkMatch = String(line).match(/\((\d+) chunks\)/);
+    if (chunkMatch) chunks += Number(chunkMatch[1]);
+  }
+  const stats = job.stats || {};
+  if (stats.chunks) chunks = Number(stats.chunks);
+  const total =
+    Number((job.progress || {}).total) ||
+    Object.values(metaCounts || {}).reduce((sum, value) => sum + (Number(value) || 0), 0);
+  const started = job.started || job.created;
+  const finished = job.finished || Date.now() / 1000;
+  const elapsed = started ? Math.max(0, finished - started) : 0;
+  const done = job.status === "done";
+  if (done) processed = total || processed;
+  const percent = done ? 100 : total ? Math.min(100, (processed / total) * 100) : 0;
+  let eta = null;
+  if (
+    job.status === "running" &&
+    total > processed &&
+    processed >= Math.max(5, Math.floor(total * 0.4)) &&
+    elapsed > 0
+  ) {
+    eta = (elapsed * (total - processed)) / processed;
+  }
+  const minutes = elapsed / 60;
+  return {
+    processed,
+    total,
+    percent: Math.round(percent * 10) / 10,
+    chunks,
+    elapsed_seconds: elapsed,
+    eta_seconds: eta,
+    rate_docs_per_min: minutes ? processed / minutes : 0,
+    rate_chunks_per_min: minutes ? chunks / minutes : 0,
+    current,
+  };
+}
+
+function renderJob(job) {
+  const card = $("jobCard");
+  if (!card) return;
+  if (!job) {
+    $("jobBadge").hidden = true;
+    $("jobStatus").textContent = t("admin.jobIdle");
+    $("jobDocs").textContent = "—";
+    $("jobChunks").textContent = "—";
+    $("jobElapsed").textContent = "—";
+    $("jobRate").textContent = "—";
+    $("jobEta").textContent = "—";
+    $("jobCurrent").textContent = "";
+    $("jobFill").style.width = "0%";
+    $("jobLog").textContent = "";
+    return;
+  }
+  const status = String(job.status || "queued");
+  const progress = job.progress || jobProgressFromLog(job);
+  const total = Number(progress.total) || 0;
+  const processed = Number(progress.processed) || 0;
+  const percent = Math.max(0, Math.min(100, Number(progress.percent) || 0));
+  const badgeClass =
+    status === "done" ? "b-indexed" : status === "error" ? "b-fail" : status === "running" || status === "queued" ? "b-pending" : "b-unknown";
+  $("jobBadge").hidden = false;
+  $("jobBadge").className = "badge " + badgeClass;
+  $("jobBadge").textContent = jobStatusLabel(status);
+  $("jobStatus").textContent = jobStatusLabel(status);
+  $("jobDocs").textContent = total
+    ? t("admin.jobDocsValue", { processed, total, percent: Math.round(percent) })
+    : "—";
+  $("jobChunks").textContent = String(progress.chunks || 0);
+  $("jobElapsed").textContent = formatDuration(progress.elapsed_seconds || 0);
+  $("jobRate").textContent =
+    progress.rate_docs_per_min || progress.rate_chunks_per_min
+      ? t("admin.jobRateValue", {
+          docs: Number(progress.rate_docs_per_min || 0).toFixed(1),
+          chunks: Number(progress.rate_chunks_per_min || 0).toFixed(1),
+        })
+      : "—";
+  $("jobEta").textContent =
+    progress.eta_seconds != null
+      ? "≈ " + formatDuration(progress.eta_seconds)
+      : status === "running"
+        ? t("admin.jobEtaComputing")
+        : "—";
+  $("jobFill").style.width = percent + "%";
+  $("jobCurrent").textContent = progress.current
+    ? t("admin.jobCurrent", { source: progress.current })
+    : status === "done"
+      ? t("admin.jobFinished")
+      : "";
+  $("jobLog").textContent = (job.log || []).join("\n");
+  $("jobLog").scrollTop = $("jobLog").scrollHeight;
+}
+
+async function loadJobMonitor() {
+  try {
+    // The monitor and the overview load in parallel; make sure the total file
+    // count is known before the first render so the bar never flashes 0%.
+    if (!Object.keys(metaCounts || {}).length) {
+      await loadMeta().catch(() => {});
+    }
+    const data = await api("/admin/api/jobs");
+    const latest = (data.jobs || [])[0];
+    if (!latest) {
+      renderJob(null);
+      return;
+    }
+    const job = await api("/admin/api/jobs/" + latest.id);
+    renderJob(job);
+    if (job.status === "running" || job.status === "queued") {
+      $("jobPill").hidden = false;
+      if (jobId !== job.id) {
+        jobId = job.id;
+        localStorage.setItem(JOB_KEY, jobId);
+        pollJob();
+      }
+      setBusy(true);
+    } else {
+      if (jobId === job.id) {
+        jobId = null;
+        localStorage.removeItem(JOB_KEY);
+      }
+      $("jobPill").hidden = true;
+      setBusy(false);
+    }
+  } catch (error) {
+    errorMsg($("jobMsg"), t("admin.jobLoadFailed", { error: error.message }), loadJobMonitor);
+  }
+}
+
 async function startIngest(dept, reset) {
   setBusy(true);
   jobId = null;
-  $("jobCard").hidden = false;
   $("jobPill").hidden = false;
   $("jobStatus").textContent = t("admin.jobStarting");
+  $("jobBadge").hidden = true;
   $("jobLog").textContent = "";
+  $("jobCurrent").textContent = "";
+  $("jobFill").style.width = "0%";
+  showSection("jobCard");
+  rememberSection("jobCard");
   try {
     const body = { reset: !!reset };
     if (dept) body.dept = dept;
@@ -2537,9 +2715,7 @@ async function pollJob() {
   if (!jobId) return;
   try {
     const job = await api("/admin/api/jobs/" + jobId);
-    $("jobStatus").textContent = jobStatusLabel(job.status);
-    $("jobLog").textContent = job.log.join("\n");
-    $("jobLog").scrollTop = $("jobLog").scrollHeight;
+    renderJob(job);
     if (job.status === "done" || job.status === "error") {
       setBusy(false);
       $("jobPill").hidden = true;
@@ -2573,29 +2749,27 @@ async function restoreJob() {
   const saved = localStorage.getItem(JOB_KEY);
   if (!saved) return;
   jobId = saved;
-  $("jobCard").hidden = false;
   $("jobPill").hidden = false;
   $("jobStatus").textContent = t("admin.jobRestored");
   try {
     const job = await api("/admin/api/jobs/" + jobId);
-    $("jobLog").textContent = job.log.join("\n");
+    renderJob(job);
     if (job.status === "done" || job.status === "error") {
-      $("jobStatus").textContent = jobStatusLabel(job.status);
       $("jobPill").hidden = true;
       jobId = null;
       localStorage.removeItem(JOB_KEY);
+      setBusy(false);
       return;
     }
-    $("jobStatus").textContent = jobStatusLabel(job.status);
     setBusy(true);
+    showSection("jobCard");
     pollJob();
   } catch (error) {
     jobId = null;
     localStorage.removeItem(JOB_KEY);
     $("jobPill").hidden = true;
-    if (error.status === 404) {
-      $("jobCard").hidden = true;
-    } else {
+    renderJob(null);
+    if (error.status !== 404) {
       $("jobStatus").textContent = t("admin.jobPollFailed", { error: error.message });
     }
   }
@@ -3433,9 +3607,8 @@ $("ingestDept").onclick = () => {
 $("ingestAll").onclick = () => startIngest(null, false);
 
 $("jobPill").onclick = () => {
-  showSection("filesCard");
-  rememberSection("filesCard");
-  $("jobCard").scrollIntoView({ behavior: "smooth", block: "start" });
+  showSection("jobCard", true);
+  rememberSection("jobCard");
 };
 
 updateDeptBadge();
