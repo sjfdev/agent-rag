@@ -80,6 +80,9 @@ services:
       AUTH_USERS_FILE: /app/config/users.json
       BACKUP_DIR: /app/backups
       ACL_FILE: /app/config/acl.json
+      # Offline license: ./config is mounted below, so the vendor-issued file
+      # survives container recreation. Set LICENSE_ENABLED=true in .env.
+      LICENSE_FILE: /app/config/license.json
     volumes:
       - ${DOCKER_VOLUME_DIRECTORY:-.}/data:/app/data
       - ${DOCKER_VOLUME_DIRECTORY:-.}/logs:/app/logs

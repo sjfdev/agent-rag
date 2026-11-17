@@ -30,6 +30,13 @@ monitoring/alertmanager/smtp_password
 # Local account database (contains password hashes): never commit.
 config/users.json
 config/users.json.tmp
+# Vendor license signing key and issued licenses: never commit the private key.
+config/license_private.pem
+config/license_private*.pem
+config/license.json
+licenses/
+# Delivery bundles built by scripts/package_release.py.
+dist/
 # Real ACL rules (may name people/doc paths); the example is committed instead.
 config/acl.json
 config/model_settings.json

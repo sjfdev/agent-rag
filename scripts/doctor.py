@@ -136,6 +136,43 @@ def main() -> int:
 
     # --- access control ---------------------------------------------------
     from src import acl, local_auth
+    from src import license as license_module
+
+    lic = license_module.status()
+    if not lic["enabled"]:
+        check("License", OK, "disabled (development / unlicensed build)")
+    elif lic["state"] in ("missing", "invalid"):
+        # Same rule as startup: refuse to run without a valid license.
+        check("License", FAIL, str(lic["error"]))
+    elif lic["state"] == "expired":
+        check(
+            "License",
+            FAIL,
+            f"{lic['licensee']} expired on {lic['expires_at']}; admin writes are blocked",
+        )
+    elif lic["state"] == "grace":
+        check(
+            "License",
+            WARN,
+            f"{lic['licensee']} expired {abs(lic['days_left'])} day(s) ago, "
+            f"grace period ({lic['grace_days'] + lic['days_left']} day(s) left)",
+        )
+    elif lic["warn"]:
+        check(
+            "License",
+            WARN,
+            f"{lic['licensee']} expires in {lic['days_left']} day(s) ({lic['expires_at']})",
+        )
+    else:
+        limits = []
+        if lic["max_depts"]:
+            limits.append(f"{lic['max_depts']} dept(s)")
+        if lic["max_docs"]:
+            limits.append(f"{lic['max_docs']} doc(s)")
+        detail = f"{lic['licensee']}, expires {lic['expires_at']}"
+        if limits:
+            detail += " (" + ", ".join(limits) + ")"
+        check("License", OK, detail)
 
     acl_state = acl.status()
     if not acl_state["enabled"]:

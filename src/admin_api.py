@@ -251,6 +251,12 @@ class IngestRequest(BaseModel):
     reset: bool = False
 
 
+class LicenseInstallRequest(BaseModel):
+    """The parsed contents of a vendor-issued license file."""
+
+    license: Dict[str, Any]
+
+
 class UserCreateRequest(BaseModel):
     username: str = Field(min_length=1, max_length=64)
     password: str = Field(min_length=1, max_length=256)
@@ -394,6 +400,50 @@ def _run_job(job_id: str, dept: Optional[str], reset: bool) -> None:
         observe_ingest_job("error")
     finally:
         _ingest_lock.release()
+
+
+@router.get("/license")
+def admin_license():
+    """Offline license state plus the limits the console should surface."""
+    from src import license as license_module
+
+    state = license_module.status()
+    state.pop("file", None)
+    return state
+
+
+@router.post("/license")
+def install_license(req: LicenseInstallRequest, request: Request):
+    """Verify and install a license without touching the filesystem by hand.
+
+    Allowed even while the current license is expired (the write gate in
+    ``main.py`` exempts this path), which is exactly the renewal flow. The
+    signature is checked first, so a bad upload never replaces a working file.
+    """
+    from src import license as license_module
+
+    try:
+        result = license_module.install(req.license)
+    except license_module.LicenseError as exc:
+        audit.log_event("license.install", _actor(request), ok=False, detail={"error": str(exc)})
+        raise _bad_request(exc)
+    except OSError as exc:
+        audit.log_event("license.install", _actor(request), ok=False, detail={"error": str(exc)})
+        raise HTTPException(status_code=500, detail=f"cannot write license file: {exc}")
+
+    payload = result["payload"]
+    audit.log_event(
+        "license.install",
+        _actor(request),
+        detail={
+            "licensee": payload.get("licensee"),
+            "license_id": payload.get("license_id"),
+            "expires_at": payload.get("expires_at"),
+        },
+    )
+    state = dict(result["license"])
+    state.pop("file", None)
+    return {"license": state, "payload": payload}
 
 
 @router.get("/meta")

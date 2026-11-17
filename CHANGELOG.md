@@ -29,6 +29,60 @@ three agree before you push a tag.
   ACL 校验后打开/下载原始文件。「调试信息」可展开改写 query 与召回/重排候选，流式
   回答按节流增量渲染 Markdown，生成中 Esc 可停止，两个页面都提供切换账号与忘记
   密码提示。
+- **Offline licensing**: private deployments can require a signed license
+  without any network call. `src/license.py` verifies an Ed25519-signed JSON
+  (`config/license.json`, public key compiled in, private key stays offline)
+  and reports `valid`/`grace`/`expired`/`missing`/`invalid` through `/info` and
+  `GET /admin/api/license`. A missing or forged license refuses startup (fail
+  closed, like the document ACL); an expired one keeps chat, citations and
+  sessions working and only blocks admin writes (uploads, ingestion, model
+  changes) after `LICENSE_GRACE_DAYS`. Limits (`max_depts`/`max_docs`), edition
+  and feature flags are carried by the license and surfaced by the console and
+  `scripts/doctor.py`. The admin 许可 card flips its badge to "expiring soon"
+  within `LICENSE_WARN_DAYS` and spells out the renewal path (paste a signed
+  file, effective immediately) and the grace-period window.
+  `scripts/issue_license.py` creates the signing key and issues/verifies
+  licenses; `make license-init` / `make license-verify`.
+  <br>**离线许可（中文）**：私有化部署可要求签名许可，无需联网。`src/license.py`
+  校验 Ed25519 签名 JSON（`config/license.json`，公钥内置，私钥离线保存），通过
+  `/info` 与 `GET /admin/api/license` 暴露 `valid`/`grace`/`expired`/`missing`/
+  `invalid`。许可缺失或签名不符时拒绝启动（与文档 ACL 一样 fail closed）；过期后
+  对话、引用与会话照常可用，仅在 `LICENSE_GRACE_DAYS` 宽限期结束后阻止管理端写入
+  （上传、入库、改模型）。部门/文档上限、版本与功能开关随许可下发，控制台与
+  `scripts/doctor.py` 会展示。管理台「许可」卡片在 `LICENSE_WARN_DAYS` 内把徽章
+  切到「即将到期」，并写明续期方式（粘贴签名文件即刻生效）与宽限期剩余天数。
+  `scripts/issue_license.py` 负责建密钥与签发/校验，入口 `make license-init` /
+  `make license-verify`。
+- **License console**: `scripts/license_console.py` (`make license-console`) is a
+  vendor-side local web UI for issuing and verifying licenses: it reads the
+  Ed25519 private key, shows the matching public key, signs the form, writes
+  `licenses/<licensee>-<expiry>-<id>.json` (0600), re-verifies every issued file
+  and lets you paste an existing license to check it. The server binds to
+  loopback and every API call carries a per-process token injected into the
+  page, so the private key never reaches the browser and a random website
+  cannot drive it. `make package LICENSE=<file>` / `--license` embeds a
+  customer-specific license as `config/license.json` (0600, listed in
+  `PACKAGE.json`), and the admin 许可 card installs renewals online.
+  <br>**许可控制台（中文）**：`scripts/license_console.py`（`make license-console`）
+  是厂商侧本地网页工具，读取 Ed25519 私钥、显示对应公钥、签发并落盘
+  `licenses/<授权方>-<到期日>-<编号>.json`（0600），逐个复验已签发文件，也可粘贴
+  已有许可验签。服务仅绑定回环地址，页面注入每进程随机令牌保护所有 API，私钥
+  永不进入浏览器，外部网站无法驱动它。`make package LICENSE=<文件>` 可把客户
+  专属许可打进交付包的 `config/license.json`（0600，计入 `PACKAGE.json`）；客户
+  续期在管理台「许可」卡片在线完成。
+- **Delivery package**: `scripts/package_release.py` (or `make package`) builds
+  `dist/agent-rag-<version>-delivery.tar.gz` with the production compose files,
+  Dockerfile, source/static/scripts, docs and `.env.example`, plus a generated
+  `INSTALL.md` and `PACKAGE.json` (version, commit, per-file SHA256) and a
+  `.sha256` sidecar. Runtime state (`data/`, `logs/`, `backups/`, `volumes/`),
+  tests, `.env`, rendered Alertmanager secrets and the license private key are
+  never included. `--with-image` adds a `docker save` of the app image.
+  <br>**交付打包（中文）**：`scripts/package_release.py`（或 `make package`）生成
+  `dist/agent-rag-<版本>-delivery.tar.gz`，包含生产 compose、Dockerfile、源码/
+  静态资源/脚本、文档与 `.env.example`，并附自动生成的 `INSTALL.md` 与
+  `PACKAGE.json`（版本、提交、逐文件 SHA256）及 `.sha256` 边车。运行态目录
+  （`data/`、`logs/`、`backups/`、`volumes/`）、测试、`.env`、渲染后的
+  Alertmanager 密钥与许可私钥一律不打入；`--with-image` 额外执行 `docker save`。
 - **Console file & vector management**: the 入库文件 card and the vector
   browser are merged into one 文件与向量 card that inspects what is actually
   indexed: `GET /admin/api/vectors` returns backend

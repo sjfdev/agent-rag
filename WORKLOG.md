@@ -1409,4 +1409,43 @@ tests and hit@4=18/18 / MRR=0.89 / leaks=0 on both backends.
 
 ---
 
-## 23. 相关文档
+## 23. 私有化交付：离线许可与交付包（2026-11-17）
+
+目标：把现有单机部署包装成可交付、可续费的产品，不改多租户/计费架构。
+
+### 离线许可（`src/license.py`）
+
+- 许可文件 = `{"payload": {...}, "signature": base64}`，payload 用规范化 JSON（键排序、无空白）签名；Ed25519 公钥内置在 `src/license.py`，私钥只在供应商机器上（`config/license_private.pem`，0600、gitignore）。
+- 字段：`v`、`license_id`、`licensee`、`edition`、`issued_at`/`not_before`/`expires_at`、`max_depts`、`max_docs`、`features`。
+- 状态：`disabled`（`LICENSE_ENABLED=false`，开发/CI 默认）、`valid`、`grace`（过期但在 `LICENSE_GRACE_DAYS` 内）、`expired`、`missing`、`invalid`。
+- 策略：缺失/签名不符 → 启动失败（fail closed）；过期 → 只读模式，`POST/PUT/PATCH/DELETE /admin/api/*` 返回 403 `license_expired`，对话/引用/会话不受影响；宽限期内写入仍允许并告警。
+- 暴露：`/info.license`、`GET /admin/api/license`（管理员）、`scripts/doctor.py` 的 `License` 检查（快到期 WARN、过期/缺失 FAIL）。
+- 管理台「许可」卡片：`valid` 且在 `LICENSE_WARN_DAYS` 内时徽章显示「有效（即将到期）」，提示条给出到期日、宽限天数与续期入口（粘贴/上传即刻生效）；`grace` 显示剩余宽限天数。
+- 工具：`scripts/issue_license.py --init-keys|--licensee ...|--verify`，`make license-init` / `make license-verify LICENSE=...`。
+- 厂商网页控制台：`scripts/license_console.py`（`make license-console`）读取私钥、展示公钥、表单签发到 `licenses/`（0600）、复验历史文件、粘贴验签；仅绑定回环地址，所有 API 需页面注入的每进程 `X-Console-Token`，私钥不进入浏览器。
+- 客户侧安装：管理台「许可」卡片可粘贴或上传许可并即时生效；`license_write_gate` 对 `POST /admin/api/license` 豁免，所以过期/宽限期也能续期。首次安装因 fail-closed 必须在启动前放好文件（随包交付或手工放到 `config/license.json`）。
+
+### 交付包（`scripts/package_release.py`）
+
+- `make package` → `dist/agent-rag-<version>-delivery.tar.gz` + `.sha256`，内含生产 compose、Dockerfile、`src/static/scripts/eval/monitoring`、文档、`.env.example`、`config/acl.example.json`，以及 `INSTALL.md`（安装/许可/验收/运维/升级）与 `PACKAGE.json`（版本、git commit、逐文件 SHA256）。
+- 排除：`data/logs/backups/volumes/db`、`tests`、`.env`、`*.pem`、`config/users.json`、渲染后的 `monitoring/alertmanager/alertmanager.yml` 与 SMTP 密码、`metrics_token`。
+- `make package-image` 追加 `docker save` 的镜像 tar.gz（需要本机 Docker 与已构建镜像）。
+- 工作区有未提交改动时照常打包，但 `PACKAGE.json` 记录 `"dirty": true` 并告警。
+- `LICENSE=<path>`（或 `--license`）把客户专属许可验签后写为包内 `config/license.json`（0600），`PACKAGE.json` 记录 `licensee/license_id/expires_at`，`INSTALL.md` 顶部显示授权方与到期日。
+
+### 验证（2026-11-17）
+
+- 签发 → 校验 → 运行时状态：真实密钥签发 `ACME Demo`（365 天，5 部门/10 万文档），`issue_license.py --verify` OK，`license.status()` 为 `valid`。
+- `python scripts/package_release.py --out /tmp/agent-rag-dist`：95 个文件（+`PACKAGE.json`）、归档 1.0 MB，`PACKAGE.json`/`INSTALL.md` 齐全，私钥与运行态目录未打入。
+- `pytest -q tests/test_license.py tests/test_package_release.py tests/test_license_console.py`：通过（状态机、宽限期、篡改、缺文件、写入闸门、清单哈希、排除项、控制台签发/HTTP 令牌/路径穿越）。
+- `python scripts/package_release.py --license <issued.json>`：96 个文件，`config/license.json` 为 0600 且计入清单，`INSTALL.md` 与 `PACKAGE.json` 显示 `ACME Demo` 到期日。
+
+### 已知限制
+
+- 许可只是合同锚点不是 DRM：源码 MIT，客户有 shell 就能改 `LICENSE_ENABLED`；真正的约束是合同、发票与支持服务。
+- `max_depts`/`max_docs` 目前只展示不强制；如需强制，可在管理台写入路径按实际部门/文档数校验。
+- CLI 入库（`run_ingestion.py`）不受许可闸门限制，避免客户因续费问题无法恢复自己的索引。
+
+---
+
+## 24. 相关文档

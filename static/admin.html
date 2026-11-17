@@ -201,6 +201,15 @@
   .msg { font-size: 12px; color: var(--muted); margin-top: 8px; min-height: 18px; }
   .msg.error { color: var(--bad); }
   .msg.ok { color: var(--ok); }
+  /* Inline advisory for the license card (grace period, renewal, disabled). */
+  /* 许可卡片的内联提示（宽限期、续期、未启用）。 */
+  .note {
+    margin-top: 10px; padding: 8px 10px; border-radius: 8px;
+    border: 1px solid var(--warn-border); background: var(--warn-bg);
+    color: var(--warn); font-size: 12px;
+  }
+  .note.error { border-color: var(--danger-border); background: var(--panel-2); color: var(--bad); }
+  .note.ok { border-color: var(--ok-border); background: var(--ok-bg); color: var(--ok); }
   /* Toast: action results stay visible even when the message sits below a
      long table. It only mirrors setMsg; the inline message is still written. */
   /* 浮动提示：操作结果在表格很长导致行内消息不可见时仍能看到；行内消息照常写入。 */
@@ -355,7 +364,8 @@
     gap: 10px; margin-bottom: 10px;
   }
   .field { display: grid; gap: 4px; font-size: 12px; color: var(--muted); }
-  .field input, .field select { width: 100%; }
+  .field input, .field select, .field textarea { width: 100%; }
+  .field textarea { resize: vertical; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
   .dirty {
     font-size: 11px; color: var(--warn); background: var(--warn-bg);
     border: 1px solid var(--warn-border); border-radius: 999px; padding: 1px 8px;
@@ -542,6 +552,7 @@
       <div class="navGroup">
         <span class="navGroupLabel" data-i18n="admin.navGroup.ops">运维</span>
         <button class="navBtn" role="tab" id="tab-indexCard" aria-controls="indexCard" data-target="indexCard" data-i18n="admin.nav.index">索引维护</button>
+        <button class="navBtn" role="tab" id="tab-licenseCard" aria-controls="licenseCard" data-target="licenseCard" data-i18n="admin.nav.license">许可</button>
         <button class="navBtn" role="tab" id="tab-auditCard" aria-controls="auditCard" data-target="auditCard" data-i18n="admin.nav.audit">操作审计</button>
       </div>
       <div class="navGroup navDanger">
@@ -632,6 +643,39 @@
     </details>
     <div class="stats" id="vectorStats"></div>
     <div class="msg" id="indexMsg" aria-live="polite"></div>
+  </section>
+
+  <!-- Offline license: status, limits and renewal upload. / 离线许可：状态、上限与续期上传。 -->
+  <section class="card" id="licenseCard">
+    <h2><span data-i18n="admin.licenseTitle">许可</span><span class="badge" id="licenseState" hidden></span></h2>
+    <p class="hint" style="margin:0 0 10px" data-i18n="admin.licenseHint">
+      许可文件离线校验。过期后对话、引用与会话照常可用，只有上传/入库/改模型等管理端写入会暂停，续期后立即恢复。
+    </p>
+    <div class="stats" style="margin-top:0">
+      <span class="pill"><span data-i18n="admin.licenseLicensee">授权方</span> <b id="licenseLicensee">-</b></span>
+      <span class="pill"><span data-i18n="admin.licenseEdition">版本</span> <b id="licenseEdition">-</b></span>
+      <span class="pill"><span data-i18n="admin.licenseExpires">到期</span> <b id="licenseExpires">-</b></span>
+      <span class="pill" id="licenseIdPill" hidden><span data-i18n="admin.licenseIdLabel">编号</span> <b id="licenseId">-</b></span>
+    </div>
+    <div class="hint" id="licenseLimits" style="margin-top:8px"></div>
+    <div class="note" id="licenseNote" hidden></div>
+    <details id="licenseInstallBox" style="margin-top:12px">
+      <summary data-i18n="admin.licenseInstallSummary">安装或更新许可</summary>
+      <div class="formGrid" style="margin-top:8px">
+        <label class="field"><span data-i18n="admin.licenseFileLabel">许可文件（license.json）</span>
+          <input id="licenseFile" type="file" accept=".json,application/json">
+        </label>
+        <label class="field"><span data-i18n="admin.licensePasteLabel">或粘贴文件内容</span>
+          <textarea id="licenseText" rows="5" placeholder='{"payload": {...}, "signature": "..."}'></textarea>
+        </label>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <button id="licenseInstall" class="primary" data-i18n="admin.licenseInstallBtn">校验并安装</button>
+        <button id="licenseCopy" data-i18n="admin.licenseCopy">复制诊断信息</button>
+        <span class="hint" data-i18n="admin.licenseInstallHint">文件先校验签名，通过后才会覆盖现有许可。</span>
+      </div>
+    </details>
+    <div class="msg" id="licenseMsg" aria-live="polite"></div>
   </section>
 
   <section class="card" id="usersCard" hidden>
@@ -886,6 +930,7 @@ const SECTION_LOADERS = {
   indexCard: { run: loadFiles, msg: "indexMsg", name: "admin.panel.index" },
   usersCard: { run: loadUsers, msg: "userMsg", name: "admin.panel.accounts" },
   modelCard: { run: loadModel, msg: "modelMsg", name: "admin.panel.model" },
+  licenseCard: { run: loadLicense, msg: "licenseMsg", name: "admin.panel.license" },
   auditCard: { run: loadAudit, msg: null, name: "admin.panel.audit" },
 };
 
@@ -1813,6 +1858,7 @@ async function refreshAll() {
     { name: "admin.panel.audit", run: loadAudit, msg: "auditMsg", card: "auditCard" },
     { name: "admin.panel.accounts", run: loadUsers, msg: "userMsg", card: "usersCard" },
     { name: "admin.panel.model", run: loadModel, msg: "modelMsg", card: "modelCard" },
+    { name: "admin.panel.license", run: loadLicense, msg: "licenseMsg", card: "licenseCard" },
   ];
   panels.forEach((panel) => (panel.cards || [panel.card]).forEach((card) => markLoading(card, true)));
   const results = await Promise.allSettled(panels.map((panel) => panel.run()));
@@ -2323,6 +2369,155 @@ async function resetModel() {
   }
 }
 
+// --- license ---------------------------------------------------------------
+// The license is verified offline by the server. This card never sees the
+// signing key: it only uploads a signed file and renders the resulting state.
+// 许可由服务端离线校验；卡片只上传签名文件并展示状态，接触不到签名私钥。
+const LICENSE_BADGE = {
+  valid: "b-indexed",
+  grace: "b-pending",
+  expired: "b-fail",
+  missing: "b-fail",
+  invalid: "b-fail",
+  disabled: "b-unknown",
+};
+const LICENSE_STATE_KEY = {
+  valid: "admin.licenseStateValid",
+  grace: "admin.licenseStateGrace",
+  expired: "admin.licenseStateExpired",
+  missing: "admin.licenseStateMissing",
+  invalid: "admin.licenseStateInvalid",
+  disabled: "admin.licenseStateDisabled",
+};
+let licenseState = null;
+
+function renderLicense(state) {
+  licenseState = state;
+  const badgeEl = $("licenseState");
+  badgeEl.hidden = false;
+  const expiring = state.enabled && state.state === "valid" && state.warn;
+  badgeEl.className = "badge " + (expiring ? "b-pending" : LICENSE_BADGE[state.state] || "b-unknown");
+  badgeEl.textContent = expiring
+    ? t("admin.licenseStateWarn")
+    : t(LICENSE_STATE_KEY[state.state] || "admin.licenseStateUnknown");
+  $("licenseLicensee").textContent = state.licensee || "—";
+  $("licenseEdition").textContent = state.edition || "—";
+  $("licenseExpires").textContent = state.expires_at || "—";
+  $("licenseIdPill").hidden = !state.license_id;
+  $("licenseId").textContent = state.license_id || "";
+
+  const limits = [];
+  if (state.max_depts) limits.push(t("admin.licenseDepts", { count: state.max_depts }));
+  if (state.max_docs) limits.push(t("admin.licenseDocs", { count: state.max_docs }));
+  if (state.features && state.features.length) {
+    limits.push(t("admin.licenseFeatures", { list: state.features.join(", ") }));
+  }
+  $("licenseLimits").textContent = limits.length
+    ? limits.join(" · ")
+    : t("admin.licenseNoLimits");
+
+  const note = $("licenseNote");
+  note.hidden = true;
+  note.className = "note";
+  if (!state.enabled) {
+    note.hidden = false;
+    note.textContent = t("admin.licenseDisabledNote");
+  } else if (state.state === "grace") {
+    note.hidden = false;
+    const graceLeft = Math.max(0, (state.grace_days || 0) + (state.days_left || 0));
+    note.textContent = t("admin.licenseGraceNote", {
+      days: Math.abs(state.days_left || 0),
+      left: graceLeft,
+    });
+  } else if (state.state === "expired") {
+    note.hidden = false;
+    note.className = "note error";
+    note.textContent = t("admin.licenseExpiredNote");
+  } else if (state.state === "missing" || state.state === "invalid") {
+    note.hidden = false;
+    note.className = "note error";
+    note.textContent = t("admin.licenseInvalidNote");
+  } else if (state.warn) {
+    note.hidden = false;
+    note.textContent = t("admin.licenseWarnNote", {
+      days: state.days_left,
+      expires: state.expires_at || "—",
+      grace: state.grace_days || 0,
+    });
+  }
+}
+
+async function loadLicense() {
+  renderLicense(await api("/admin/api/license"));
+}
+
+async function licenseBlobFromForm() {
+  const file = $("licenseFile").files && $("licenseFile").files[0];
+  const text = ((file ? await file.text() : $("licenseText").value) || "").trim();
+  if (!text) throw new Error(t("admin.licenseNeedFile"));
+  let blob;
+  try {
+    blob = JSON.parse(text);
+  } catch (error) {
+    throw new Error(t("admin.licenseBadJson"));
+  }
+  // Accept the downloaded file as-is or a {"license": {...}} wrapper.
+  if (blob && blob.license && !blob.payload) blob = blob.license;
+  return blob;
+}
+
+async function installLicense() {
+  const button = $("licenseInstall");
+  button.disabled = true;
+  try {
+    const blob = await licenseBlobFromForm();
+    const data = await api("/admin/api/license", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ license: blob }),
+    });
+    renderLicense(data.license);
+    $("licenseFile").value = "";
+    $("licenseText").value = "";
+    setMsg(
+      $("licenseMsg"),
+      t("admin.licenseInstalled", {
+        licensee: data.payload.licensee,
+        expires: data.payload.expires_at,
+      }),
+      "ok"
+    );
+    sectionLoadedAt.licenseCard = Date.now();
+  } catch (error) {
+    setMsg($("licenseMsg"), error.message, "error");
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function copyLicenseInfo() {
+  if (!licenseState) return;
+  const state = licenseState;
+  const lines = [
+    "agent-rag license",
+    "state: " + state.state,
+    "licensee: " + (state.licensee || "-"),
+    "edition: " + (state.edition || "-"),
+    "license_id: " + (state.license_id || "-"),
+    "issued_at: " + (state.issued_at || "-"),
+    "expires_at: " + (state.expires_at || "-"),
+    "days_left: " + (state.days_left ?? "-"),
+    "limits: " + (state.max_depts || 0) + " dept / " + (state.max_docs || 0) + " doc",
+    "features: " + ((state.features || []).join(",") || "-"),
+  ];
+  try {
+    await navigator.clipboard.writeText(lines.join("\n"));
+    setMsg($("licenseMsg"), t("admin.licenseCopied"), "ok");
+  } catch (error) {
+    setMsg($("licenseMsg"), t("admin.licenseCopyFailed"), "error");
+  }
+}
+
 // --- files & vectors -------------------------------------------------------
 // One table shows both. Deleting vectors keeps the source file, so the next
 // ingestion rebuilds them; orphan rows are file-less vectors that can be pruned.
@@ -2621,6 +2816,8 @@ $("refresh").onclick = refreshAll;
 $("modelTest").onclick = testModel;
 $("modelSave").onclick = saveModel;
 $("modelReset").onclick = resetModel;
+$("licenseInstall").onclick = installLicense;
+$("licenseCopy").onclick = copyLicenseInfo;
 
 ["modelBase", "modelName", "modelKey", "modelTemp", "modelTokens"].forEach((id) => {
   $(id).addEventListener("input", updateModelDirty);

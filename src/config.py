@@ -153,6 +153,19 @@ class Settings(BaseSettings):
     # Lifetime of a token obtained from the username/password login (seconds).
     # Shorter than AUTH_TOKEN_TTL so a revoked account stops working quickly.
     AUTH_LOCAL_TOKEN_TTL: int = 28800
+    # Offline license for private deployments (see src/license.py).
+    # Disabled by default so development and CI stay unencumbered. The delivery
+    # package sets it to true; a missing/invalid license then refuses startup,
+    # while an expired one only blocks admin writes (chat keeps answering).
+    LICENSE_ENABLED: bool = False
+    LICENSE_FILE: str = "./config/license.json"
+    # Vendor public key in base64 (32 raw bytes) or PEM. Empty uses the key
+    # compiled into src/license.py, which scripts/issue_license.py signs with.
+    LICENSE_PUBLIC_KEY: str = ""
+    # Grace period after expires_at during which writes are still allowed.
+    LICENSE_GRACE_DAYS: int = 14
+    # Remaining days at which status.warn flips to true (console/doctor hint).
+    LICENSE_WARN_DAYS: int = 30
     # Login attempts allowed per client IP per minute (0 disables). The
     # password hash is deliberately slow, so this also caps CPU abuse.
     AUTH_LOGIN_RATE_LIMIT: int = 10

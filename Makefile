@@ -8,7 +8,8 @@ endif
 .PHONY: help install data ingest run test lint cov milvus-up milvus-down milvus-logs \
         reset-faiss reset-milvus doctor check eval clean release release-check \
         backup restore daily-backup boot-recover agents-install agents-uninstall \
-        agents-status monitor-config monitor-up monitor-down monitor-logs monitor-check
+        agents-status monitor-config monitor-up monitor-down monitor-logs monitor-check \
+        license-init license-verify license-console package package-image
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | \
@@ -97,6 +98,22 @@ check: lint test ## Lint + tests
 
 eval: ## Retrieval evaluation (hit@k / MRR / leakage)
 	$(PYTHON) scripts/eval_retrieval.py
+
+license-init: ## Create the offline license signing key (keep it out of git)
+	$(PYTHON) scripts/issue_license.py --init-keys
+
+license-verify: ## Verify a license file (make license-verify LICENSE=config/license.json)
+	@test -n "$(LICENSE)" || (echo "usage: make license-verify LICENSE=config/license.json"; exit 1)
+	$(PYTHON) scripts/issue_license.py --verify "$(LICENSE)"
+
+license-console: ## Local web UI to issue and verify licenses (vendor machine only)
+	$(PYTHON) scripts/license_console.py
+
+package: ## Build the private-deployment delivery bundle (dist/; optional LICENSE=path)
+	$(PYTHON) scripts/package_release.py $(if $(LICENSE),--license "$(LICENSE)")
+
+package-image: ## Delivery bundle that also docker-saves the app image
+	$(PYTHON) scripts/package_release.py --with-image $(if $(LICENSE),--license "$(LICENSE)")
 
 release-check: ## Verify version/CHANGELOG/compose agree (no tests)
 	$(PYTHON) scripts/check_release.py --no-tests

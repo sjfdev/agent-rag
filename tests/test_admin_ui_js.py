@@ -28,6 +28,7 @@ NAV_TARGETS = [
     "modelCard",
     "usersCard",
     "indexCard",
+    "licenseCard",
     "auditCard",
     "rebuildCard",
 ]
@@ -70,8 +71,33 @@ def test_menu_entries_use_bilingual_nav_keys():
     text = ADMIN.read_text()
     keys = set(re.findall(r'data-i18n="(admin\.nav\.[^"]+)"', text))
     assert keys == {f"admin.nav.{name}" for name in
-                    ("dept", "files", "model", "accounts", "index",
+                    ("dept", "files", "model", "accounts", "index", "license",
                      "rebuild", "audit")}
+
+
+def test_license_card_installs_without_the_shell():
+    text = ADMIN.read_text()
+    # Status, limits and the renewal upload live in one card.
+    for marker in (
+        'id="licenseCard"',
+        'id="licenseState"',
+        'id="licenseLicensee"',
+        'id="licenseExpires"',
+        'id="licenseFile"',
+        'id="licenseText"',
+        'id="licenseInstall"',
+        'id="licenseCopy"',
+        'id="licenseMsg"',
+    ):
+        assert marker in text, marker
+    # Installing posts the parsed file; the signature is checked server-side.
+    assert 'api("/admin/api/license"' in text
+    assert 'method: "POST"' in text
+    assert "licenseBlobFromForm()" in text
+    assert "LICENSE_STATE_KEY" in text
+    # The card is wired into the section loaders and the startup refresh.
+    assert 'licenseCard: { run: loadLicense' in text
+    assert 'name: "admin.panel.license"' in text
 
 
 def test_sidebar_is_hidden_until_authenticated():
@@ -368,3 +394,14 @@ def test_chat_rename_search_and_original_file_controls():
     assert "fetch(ChatSources.filePath(base), { headers: authHeaders() })" in text
     assert 'id="switchAccount"' in text
     assert 'id="gateHelp"' in text
+
+
+def test_license_card_explains_renewal_and_expiry():
+    text = ADMIN.read_text()
+    # The badge flips to "expiring soon" and the note carries the renewal path.
+    assert 'admin.licenseStateWarn' in text
+    assert 't("admin.licenseWarnNote", {' in text
+    assert "expires: state.expires_at" in text
+    assert "grace: state.grace_days" in text
+    assert 't("admin.licenseGraceNote", {' in text
+    assert "left: graceLeft" in text

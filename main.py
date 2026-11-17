@@ -14,7 +14,7 @@ from fastapi.responses import (
 )
 from fastapi.staticfiles import StaticFiles
 
-from src import acl, auth, chat_service, local_auth, metrics, model_settings
+from src import acl, auth, chat_service, license, local_auth, metrics, model_settings
 from src.admin_api import _job_store
 from src.admin_api import router as admin_router
 from src.admin_api import session_router as admin_session_router
@@ -67,6 +67,40 @@ def root():
     return RedirectResponse(url="/ui/")
 
 
+_WRITE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
+
+
+@app.middleware("http")
+async def license_write_gate(request: Request, call_next):
+    """Block admin writes once a license is expired past its grace period.
+
+    Chat, citations, sessions and reads keep working: an expired license must
+    not take the customer's knowledge base offline. The static ``ADMIN_TOKEN``
+    break-glass path is gated too, otherwise it would be a trivial bypass.
+    """
+    # Installing a license is the renewal path, so it must work while the old
+    # one is expired (the endpoint verifies the signature before writing).
+    renewal = request.method == "POST" and request.url.path == "/admin/api/license"
+    if (
+        request.method in _WRITE_METHODS
+        and request.url.path.startswith("/admin/api")
+        and not renewal
+        and not license.writes_allowed()
+    ):
+        state = license.describe()
+        return JSONResponse(
+            status_code=403,
+            content={
+                "detail": {
+                    "error": "license_expired",
+                    "message": state.get("error") or "license is not valid",
+                    "expires_at": state.get("expires_at"),
+                }
+            },
+        )
+    return await call_next(request)
+
+
 @app.exception_handler(InvalidDepartment)
 async def _invalid_department_handler(request: Request, exc: InvalidDepartment):
     # Admin routes validate department names directly and rely on this mapping.
@@ -113,6 +147,8 @@ def info():
         # The chat UI keeps transcripts server-side when this is enabled.
         "sessions_enabled": settings.SESSIONS_ENABLED,
         "history_max_messages": settings.HISTORY_MAX_MESSAGES,
+        # Offline license state (disabled when LICENSE_ENABLED=false).
+        "license": license.describe(),
     }
 
 
@@ -132,6 +168,14 @@ async def startup_event():
         # every document. Refuse to start instead of leaking silently.
         logger.error("document ACL misconfigured: %s", exc)
         raise RuntimeError(f"document ACL misconfigured: {exc}") from exc
+
+    try:
+        license.validate_config()
+    except RuntimeError as exc:
+        # Missing/forged license fails closed; an expired one only warns and
+        # leaves chat running with admin writes blocked (see src/license.py).
+        logger.error("license misconfigured: %s", exc)
+        raise
 
     # Jobs that were mid-flight when the process died are marked failed so the
     # console does not show a permanently "running" task after a restart.
