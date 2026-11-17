@@ -12,6 +12,10 @@ an offline drive and never commit it (it is gitignored).
         --edition enterprise --depts 5 --docs 100000 \
         --features sso,audit --out /tmp/acme-license.json
 
+    # 30-day evaluation license (1 department / 5k documents, full feature set)
+    python scripts/issue_license.py --trial --licensee "ACME Corp" \
+        --out /tmp/acme-trial.json
+
     # verify what the customer received (uses the embedded/public key)
     python scripts/issue_license.py --verify /tmp/acme-license.json
 
@@ -121,17 +125,33 @@ def build_payload(
 
 
 def issue(args) -> int:
+    # A --trial license is an evaluation artefact: shorter than a normal
+    # contract and scoped down, but with the same feature flags so the prospect
+    # can test the real product. Explicit flags always win.
+    if args.trial:
+        edition = args.edition or "trial"
+        days = args.days if args.days is not None else 30
+        depts = args.depts if args.depts is not None else 1
+        docs = args.docs if args.docs is not None else 5000
+        features = args.features if args.features is not None else "sso,audit,monitoring"
+    else:
+        edition = args.edition or "enterprise"
+        days = args.days if args.days is not None else 365
+        depts = args.depts if args.depts is not None else 0
+        docs = args.docs if args.docs is not None else 0
+        features = args.features or ""
+
     try:
         payload = build_payload(
             args.licensee,
-            edition=args.edition,
-            days=args.days,
+            edition=edition,
+            days=days,
             expires=args.expires,
             issued_at=args.issued_at,
             not_before=args.not_before,
-            depts=args.depts,
-            docs=args.docs,
-            features=args.features,
+            depts=depts,
+            docs=docs,
+            features=features,
             license_id=args.license_id or "",
         )
     except (ValueError, license_module.LicenseError) as exc:
@@ -154,6 +174,8 @@ def issue(args) -> int:
     print(f"licensee={payload['licensee']} edition={payload['edition']} "
           f"expires={payload['expires_at']} depts={payload['max_depts']} "
           f"docs={payload['max_docs']}")
+    if payload["edition"] == license_module.TRIAL_EDITION:
+        print("trial license: evaluation only, do not use in production")
     return 0
 
 
@@ -176,14 +198,19 @@ def main() -> int:
     parser.add_argument("--key", default=DEFAULT_KEY, help=f"private key (default {DEFAULT_KEY})")
     parser.add_argument("--licensee", help="customer name")
     parser.add_argument("--license-id", help="license id (generated when omitted)")
-    parser.add_argument("--edition", default="enterprise", help="edition label")
-    parser.add_argument("--days", type=int, default=365, help="validity in days (default 365)")
+    parser.add_argument(
+        "--trial",
+        action="store_true",
+        help="evaluation license: 30 days, 1 dept, 5k docs (max 90 days)",
+    )
+    parser.add_argument("--edition", help="edition label (default enterprise; trial with --trial)")
+    parser.add_argument("--days", type=int, help="validity in days (default 365; 30 with --trial)")
     parser.add_argument("--expires", help="explicit expiry date YYYY-MM-DD")
     parser.add_argument("--issued-at", help="issue date YYYY-MM-DD (default today)")
     parser.add_argument("--not-before", help="activation date YYYY-MM-DD")
-    parser.add_argument("--depts", type=int, default=0, help="department limit (0 = unlimited)")
-    parser.add_argument("--docs", type=int, default=0, help="document limit (0 = unlimited)")
-    parser.add_argument("--features", default="", help="comma-separated feature flags")
+    parser.add_argument("--depts", type=int, help="department limit (0 = unlimited)")
+    parser.add_argument("--docs", type=int, help="document limit (0 = unlimited)")
+    parser.add_argument("--features", help="comma-separated feature flags")
     parser.add_argument("--out", default=DEFAULT_OUT, help=f"output file (default {DEFAULT_OUT})")
     parser.add_argument("--verify", help="verify an existing license file")
     parser.add_argument("--public-key", default="", help="base64/PEM key for --verify")
@@ -195,6 +222,8 @@ def main() -> int:
         return verify(args.verify, args.public_key or settings.LICENSE_PUBLIC_KEY)
     if not args.licensee:
         parser.error("--licensee is required unless --init-keys/--verify is used")
+    if args.trial and args.expires:
+        parser.error("use either --trial or --expires")
     return issue(args)
 
 

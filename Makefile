@@ -9,7 +9,8 @@ endif
         reset-faiss reset-milvus doctor check eval clean release release-check \
         backup restore daily-backup boot-recover agents-install agents-uninstall \
         agents-status monitor-config monitor-up monitor-down monitor-logs monitor-check \
-        license-init license-verify license-console package package-image
+        license-init license-verify license-console package package-image \
+        usage-report demo-up demo-seed demo-down demo-logs
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | \
@@ -108,6 +109,23 @@ license-verify: ## Verify a license file (make license-verify LICENSE=config/lic
 
 license-console: ## Local web UI to issue and verify licenses (vendor machine only)
 	$(PYTHON) scripts/license_console.py
+
+usage-report: ## Usage/value report (MONTH=2026-10 FORMAT=markdown; default last month)
+	$(PYTHON) scripts/usage_report.py $(if $(MONTH),--month "$(MONTH)") $(if $(FORMAT),--format "$(FORMAT)")
+
+demo-up: ## Start the public demo stack on 127.0.0.1:8080 (FAISS, no license)
+	@test -d data/Demo || (echo "data/Demo missing: run 'make data' first"; exit 1)
+	@test -f .env.demo || cp .env.demo.example .env.demo
+	docker compose -f docker-compose.demo.yml up -d --build
+
+demo-seed: ## Ingest data/Demo into the running demo stack
+	docker compose -f docker-compose.demo.yml exec app python run_ingestion.py
+
+demo-down: ## Stop the demo stack (keeps volumes-demo/)
+	docker compose -f docker-compose.demo.yml down
+
+demo-logs: ## Tail the demo stack logs
+	docker compose -f docker-compose.demo.yml logs -f --tail=100
 
 package: ## Build the private-deployment delivery bundle (dist/; optional LICENSE=path)
 	$(PYTHON) scripts/package_release.py $(if $(LICENSE),--license "$(LICENSE)")

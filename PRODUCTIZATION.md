@@ -12,7 +12,7 @@
 
 - 完整 RAG 链路、部门/文档权限、混合检索、引用、缓存、降级
 - 管理台、健康检查、指标、审计、限流
-- 568 项离线测试 + GitHub Actions
+- 716 项离线测试 + GitHub Actions
 - 一键启动（Makefile）与离线安装说明
 
 还缺的「产品」要素：
@@ -185,14 +185,48 @@ git push origin v1.2.0
 
 无论哪种形态，**先解决 2.1 身份与 2.2 租户**，否则无法对外。
 
+### 3.1 试用、演示与用量月报（已落地）
+
+**30 天试用许可（最长 90 天）**
+
+```bash
+python scripts/issue_license.py --trial --licensee "ACME 有限公司" \
+  --out /tmp/acme-trial.json
+```
+
+默认 `edition=trial`、30 天、1 个部门、5000 份文档、完整功能开关（`sso,audit,monitoring`）。`--days` 可缩短，超过 90 天会被拒绝；显式 `--depts/--docs/--features` 仍可覆盖。管理台「许可」卡片会显示试用提示，`GET /info.license.trial` 为 `true`。到期后对话与引用照常，宽限期结束只暂停管理端写入——试用转正式不需要停机。
+
+签发入口：`make license-console` 页面有「填入 30 天试用」按钮；打包时 `make package LICENSE=<trial.json>` 可把试用许可直接放进交付包。
+
+**演示站（公开试用/获客）**
+
+```bash
+cp .env.demo.example .env.demo     # 填 LLM_API_BASE / LLM_API_KEY / LLM_MODEL
+make data                          # 生成 data/Demo（已存在则跳过）
+make demo-up                       # 127.0.0.1:8080，FAISS，无许可
+make demo-seed                     # 入库 data/Demo
+```
+
+演示栈只挂载 `data/Demo`（不暴露真实部门）、关闭服务端会话（不保存访客对话）、关闭许可、管理端保持回环限制，并默认限流 10 次/分钟。对公网开放前必须在前面加 TLS 反向代理，并把 `DEMO_PORT` 改成内网端口；不要复用真实客户的 `.env`。
+
+**用量与价值月报**
+
+```bash
+python scripts/usage_report.py --month 2026-10 --format markdown \
+  --minutes-per-question 3 --hourly-rate 80 --out reports/acme-2026-10.md
+```
+
+读取 `logs/sessions.db`、`logs/admin_audit.log` 与当前许可，输出会话/活跃用户/提问/回答/引用覆盖/降级/满意度/部门分布与管理操作次数；`--minutes-per-question` + `--hourly-rate` 会额外生成「节省工时/折算金额」估算。报告只含聚合计数，不含对话原文或用户标识，可直接交给客户财务/采购，也是续费 QBR 的证据。`--format` 支持 `text/markdown/csv/json`；`--out` 的后缀会自动推断格式。
+
+
 ---
 
 ## 4. 建议的实施顺序
 
-1. **本周**：Docker 部署跑通（本仓库已提供）→ 找 1 个真实用户试用，收集问题
+1. **本周**：`make demo-up` 准备演示环境 → 找 1 个真实用户试用，发 30 天 `--trial` 许可，收集问题
 2. **第 2 周**：接 OIDC 登录（2.1-A），把 `user_id`/`user_dept` 变成服务端可信
 3. **第 3 周**：Grafana 告警 + 备份演练（2.4、2.8）
-4. **第 4 周**：前端产品化最小版（2.5）+ 服务端会话（2.6）
+4. **第 4 周**：前端产品化最小版（2.5）+ 服务端会话（2.6）；用 `scripts/usage_report.py` 出第一份月报
 5. **之后**：不再引入多租户/计费；按需做版本迭代，并完成真实 IdP 登录与每季度恢复演练
 
 ---

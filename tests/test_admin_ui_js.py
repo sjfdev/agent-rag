@@ -405,3 +405,42 @@ def test_license_card_explains_renewal_and_expiry():
     assert "grace: state.grace_days" in text
     assert 't("admin.licenseGraceNote", {' in text
     assert "left: graceLeft" in text
+
+
+def test_switch_account_shows_the_gate_and_stops_polling():
+    text = ADMIN.read_text()
+    # Regression: stopPolling() was called without ever being defined, so the
+    # click handler threw after clearCredential() and showGate() never ran:
+    # the credential was gone but the console stayed on screen.
+    assert "function stopPolling()" in text
+    assert "clearTimeout(pollTimer);" in text
+    assert text.count("stopPolling();") >= 3
+    assert 'showGate(t("auth.switched"));' in text
+    # The account menu must not stay open when the gate replaces the console.
+    assert '$("userMenu").open = false;' in text
+    # No jQuery-style lookup for the gate's password field.
+    assert '$("#password")' not in text
+
+
+def test_account_departments_are_managed_in_dialogs():
+    text = ADMIN.read_text()
+    for marker in (
+        'id="userModal"',
+        'id="passwordModal"',
+        'id="userDepts"',
+        'id="userGroups"',
+        'id="newPassword"',
+        'id="confirmPassword"',
+        'id="deptSuggestions"',
+    ):
+        assert marker in text, marker
+    # Existing accounts expose an editor for departments, groups and status.
+    assert "function openUserModal(" in text
+    assert "function openPasswordModal(" in text
+    assert 'body: JSON.stringify(changes)' in text
+    # Passwords use a dialog with confirmation, never the native prompt.
+    assert "= prompt(" not in text
+    assert "window.prompt" not in text
+    assert 'body: JSON.stringify({ password: value })' in text
+    # Suggestions merge index departments with those already assigned.
+    assert "knownDepts.concat(names)" in text

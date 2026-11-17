@@ -1,0 +1,55 @@
+# Public demo / evaluation stack: one app container, FAISS, no license.
+#
+#   cp .env.demo.example .env.demo     # fill LLM_API_BASE / LLM_API_KEY / LLM_MODEL
+#   make data                          # generate data/Demo fixtures
+#   make demo-up                       # start on 127.0.0.1:8080
+#   make demo-seed                     # ingest data/Demo
+#
+# The demo is intentionally read-only for visitors: no license, no server-side
+# sessions (nothing a visitor types is stored), a per-IP rate limit, and the
+# admin API stays loopback-only inside the container (leave ADMIN_TOKEN empty).
+name: agent-rag-demo
+
+services:
+  app:
+    container_name: agent-rag-demo-app
+    build:
+      context: .
+      args:
+        EMBEDDING_MODEL: ${LOCAL_EMBEDDING_MODEL:-BAAI/bge-small-zh-v1.5}
+    image: agent-rag:${APP_TAG:-demo}
+    restart: unless-stopped
+    env_file:
+      - .env.demo
+    environment:
+      # Demo-specific overrides: never inherit a production .env.
+      VECTOR_STORE_TYPE: faiss
+      DB_PATH: /app/db/vector_db
+      DATA_DIR: /app/data
+      LICENSE_ENABLED: "false"
+      AUTH_MODE: none
+      SESSIONS_ENABLED: "false"
+      AUDIT_LOG_PATH: /app/logs/admin_audit.log
+      JOBS_PATH: /app/logs/ingest_jobs.json
+      BACKUP_DIR: /app/backups
+      HF_HUB_OFFLINE: "1"
+    volumes:
+      # Only the synthetic Demo department is visible; real departments in
+      # ./data are not mounted into the demo container.
+      - ./data/Demo:/app/data/Demo:ro
+      - ./volumes-demo/faiss:/app/db
+      - ./volumes-demo/logs:/app/logs
+    ports:
+      # Loopback only. Put a TLS proxy in front before exposing it publicly.
+      - "127.0.0.1:${DEMO_PORT:-8080}:8000"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/info', timeout=5).status == 200 else 1)\""]
+      interval: 30s
+      timeout: 10s
+      start_period: 40s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "2"

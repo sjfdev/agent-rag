@@ -10,6 +10,10 @@ htmlcov/
 
 # Environment / local data
 .env
+.env.demo
+# Public demo stack state and generated customer reports.
+volumes-demo/
+reports/
 # Runtime department uploads; the Demo fixtures under data/ stay tracked.
 data/公共/
 db/

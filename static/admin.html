@@ -139,6 +139,14 @@
   .confirmCard { width: min(420px, 100%); }
   .confirmText { margin: 12px 0 18px; font-size: 13px; line-height: 1.6; color: var(--text); word-break: break-word; }
   .confirmActions { justify-content: flex-end; }
+  /* Account editor and password dialogs. Both use the themed modal frame so
+     they match the confirmation and theme dialogs. */
+  /* 账号编辑与改密码弹窗，复用主题化弹窗框架。 */
+  .userCard { width: min(600px, 100%); }
+  .passwordCard { width: min(460px, 100%); }
+  .fieldHint { font-size: 11px; color: var(--muted); line-height: 1.5; word-break: break-word; }
+  .fieldHint b { color: var(--text); font-weight: 500; }
+  .modalActions { margin-top: 14px; justify-content: flex-end; }
   @media (max-width: 760px) {
     .modal { padding: 0; }
     .modalCard { width: 100%; max-height: 100%; height: 100%; border-radius: 0; }
@@ -195,6 +203,7 @@
   td.mono, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: var(--muted); }
   .badge { font-size: 11px; border-radius: 999px; padding: 2px 8px; border: 1px solid transparent; white-space: nowrap; }
   .b-indexed { color: var(--ok); border-color: var(--ok-border); background: var(--ok-bg); }
+  .b-admin { color: var(--accent); border-color: var(--border-strong); background: var(--accent-soft); }
   .b-pending { color: var(--warn); border-color: var(--warn-border); background: var(--warn-bg); }
   .b-changed { color: var(--changed); border-color: var(--changed-border); background: var(--changed-bg); }
   .b-unsupported, .b-unknown, .b-orphan { color: var(--muted); border-color: var(--border-strong); background: var(--panel-2); }
@@ -262,8 +271,6 @@
     cursor: pointer; color: var(--muted); font-size: 12px; padding: 2px 0;
   }
   #tokenFallback[open] summary { margin-bottom: 6px; }
-  .userRow { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-  .userRow input[type=text], .userRow input[type=password] { min-width: 120px; flex: 1; }
   .roleFlag { font-size: 12px; color: var(--muted); display: flex; gap: 4px; align-items: center; }
   td.actions { display: flex; gap: 6px; }
   .off { opacity: .5; }
@@ -682,7 +689,7 @@
     <h2><span data-i18n="admin.accountsTitle">账号</span><span class="sub" id="userCount"></span></h2>
     <p class="hint" style="margin:0 0 10px">
       <span data-i18n="admin.accountsHintPrefix">仅</span> <code>AUTH_LOCAL_LOGIN_ENABLED=true</code><span data-i18n="admin.accountsHintMiddle">时可用。密码用 scrypt 哈希保存在</span>
-      <code id="usersPath">config/users.json</code><span data-i18n="admin.accountsHintSuffix">，改密码或停用会立即使该账号的旧 token 失效。</span>
+      <code id="usersPath">config/users.json</code><span data-i18n="admin.accountsHintSuffix">，改部门、组、密码或停用会立即使该账号的旧 token 失效。</span>
     </p>
     <div class="formGrid">
       <label class="field"><span data-i18n="admin.newUserLabel">用户名</span>
@@ -692,12 +699,14 @@
         <input id="newPass" type="password" placeholder="密码（≥10 位）" data-i18n-placeholder="admin.newPassPlaceholder" maxlength="256" autocomplete="new-password">
       </label>
       <label class="field"><span data-i18n="admin.newDeptsLabel">部门</span>
-        <input id="newDepts" type="text" placeholder="部门（必填），逗号分隔，如 Tech,HR" data-i18n-placeholder="admin.newDeptsPlaceholder" maxlength="200">
+        <input id="newDepts" type="text" list="deptSuggestions" placeholder="部门（必填），逗号分隔，如 Tech,HR" data-i18n-placeholder="admin.newDeptsPlaceholder" maxlength="200" autocomplete="off">
+        <span class="fieldHint" id="newDeptsHint"></span>
       </label>
       <label class="field"><span data-i18n="admin.newGroupsLabel">组</span>
-        <input id="newGroups" type="text" placeholder="组（可选）" data-i18n-placeholder="admin.newGroupsPlaceholder" maxlength="200">
+        <input id="newGroups" type="text" placeholder="组（可选）" data-i18n-placeholder="admin.newGroupsPlaceholder" maxlength="200" autocomplete="off">
       </label>
     </div>
+    <datalist id="deptSuggestions"></datalist>
     <div class="row">
       <label class="roleFlag"><input id="newAdmin" type="checkbox"> <span data-i18n="admin.adminLabel">管理员</span></label>
       <button id="createUser" class="primary" data-i18n="admin.createUser">创建账号</button>
@@ -860,6 +869,68 @@
       </div>
     </div>
   </div>
+</div>
+
+<div class="modal" id="userModal" hidden role="dialog" aria-modal="true" aria-labelledby="userModalTitle">
+  <form class="modalCard userCard" id="userForm">
+    <div class="modalHead">
+      <h2 id="userModalTitle" data-i18n="admin.editUserTitle">编辑账号</h2>
+      <span class="sub" id="userModalName"></span>
+      <button type="button" id="userModalClose" class="modalClose" data-i18n="common.close" data-i18n-aria-label="common.close" aria-label="关闭">关闭</button>
+    </div>
+    <div class="modalBody">
+      <div class="formGrid">
+        <label class="field"><span data-i18n="admin.userModal.depts">部门</span>
+          <input id="userDepts" type="text" list="deptSuggestions" placeholder="部门（必填），逗号分隔，如 Tech,HR" data-i18n-placeholder="admin.newDeptsPlaceholder" maxlength="200" autocomplete="off">
+          <span class="fieldHint" id="userDeptHint"></span>
+        </label>
+        <label class="field"><span data-i18n="admin.userModal.groups">组</span>
+          <input id="userGroups" type="text" placeholder="组（可选）" data-i18n-placeholder="admin.newGroupsPlaceholder" maxlength="200" autocomplete="off">
+        </label>
+      </div>
+      <p class="fieldHint" data-i18n="admin.userModal.deptsHint">
+        账号只能检索到所分配部门的文档；部门名需与知识库中的部门一致（可用下方候选项）。
+      </p>
+      <div class="row" style="margin-top:10px">
+        <label class="roleFlag"><input id="userAdmin" type="checkbox"> <span data-i18n="admin.adminLabel">管理员</span></label>
+        <label class="roleFlag"><input id="userEnabled" type="checkbox"> <span data-i18n="admin.userModal.enabled">启用</span></label>
+      </div>
+      <div class="msg" id="userModalMsg" aria-live="polite"></div>
+      <div class="row modalActions">
+        <button type="button" id="userCancel" data-i18n="common.cancel">取消</button>
+        <button type="submit" class="primary" id="userSave" data-i18n="common.save">保存</button>
+      </div>
+    </div>
+  </form>
+</div>
+
+<div class="modal" id="passwordModal" hidden role="dialog" aria-modal="true" aria-labelledby="passwordTitle">
+  <form class="modalCard passwordCard" id="passwordForm">
+    <div class="modalHead">
+      <h2 id="passwordTitle" data-i18n="admin.changePasswordTitle">修改密码</h2>
+      <span class="sub" id="passwordUser"></span>
+      <button type="button" id="passwordClose" class="modalClose" data-i18n="common.close" data-i18n-aria-label="common.close" aria-label="关闭">关闭</button>
+    </div>
+    <div class="modalBody">
+      <p class="hint" style="margin:0 0 10px" data-i18n="admin.passwordHint">
+        设置新密码后，该账号已签发的 token 会立即失效，需要重新登录。密码至少 10 位。
+      </p>
+      <div class="formGrid">
+        <label class="field"><span data-i18n="admin.newPassword">新密码</span>
+          <input id="newPassword" type="password" placeholder="密码（≥10 位）" data-i18n-placeholder="admin.newPassPlaceholder" maxlength="256" autocomplete="new-password">
+        </label>
+        <label class="field"><span data-i18n="admin.confirmPassword">确认新密码</span>
+          <input id="confirmPassword" type="password" placeholder="再输入一次" data-i18n-placeholder="admin.confirmPasswordPlaceholder" maxlength="256" autocomplete="new-password">
+        </label>
+      </div>
+      <div class="note" id="passwordSelfNote" hidden data-i18n="admin.passwordSelfNote">你正在修改当前登录账号的密码，保存后需要重新登录。</div>
+      <div class="msg" id="passwordMsg" aria-live="polite"></div>
+      <div class="row modalActions">
+        <button type="button" id="passwordCancel" data-i18n="common.cancel">取消</button>
+        <button type="submit" class="primary" id="passwordSave" data-i18n="common.save">保存</button>
+      </div>
+    </div>
+  </form>
 </div>
 
 <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
@@ -1242,6 +1313,7 @@ async function api(path, options = {}) {
     // instead of leaving every panel showing "加载失败".
     if (res.status === 401 && path !== "/admin/api/session") {
       clearCredential();
+      stopPolling();
       showGate(t("auth.expired"));
     }
     throw error;
@@ -1304,6 +1376,11 @@ function showGate(message) {
   const modal = $("vectorModal");
   if (modal) modal.hidden = true;
   if (!$("confirmModal").hidden) settleConfirm(false);
+  // Close every account dialog before hiding the console, otherwise it would
+  // reopen on top of the login gate after a credential change.
+  // 切换/退出账号时先把账号相关弹窗关掉，避免登录后残留。
+  closeUserModal();
+  closePasswordModal();
   $("gate").hidden = false;
   $("console").hidden = true;
   $("sidebar").hidden = true;
@@ -1311,8 +1388,16 @@ function showGate(message) {
   $("logout").hidden = true;
   $("switchAccount").hidden = true;
   $("userMenu").hidden = true;
+  $("userMenu").open = false;
+  $("password").value = "";
   document.title = t("page.adminTitle");
   if (message) $("gateErr").textContent = message;
+  else $("gateErr").textContent = "";
+  // Put the cursor where a new credential is expected, so switching accounts
+  // is one click plus typing instead of hunting for the input.
+  // 切换账号后直接把焦点放到凭据输入框。
+  if (!$("passwordFields").hidden) $("username").focus();
+  else $("credential").focus();
 }
 
 function hideGate() {
@@ -1377,6 +1462,7 @@ async function resolveSession() {
   } catch (error) {
     if (error.status === 401) {
       clearCredential();
+      stopPolling();
       showGate(t("auth.expired"));
     } else if (error.status === 403) {
       showGate(t("auth.adminNoAccess"));
@@ -1482,6 +1568,8 @@ async function login(raw) {
   authStore.set(TOKEN_KEY, token);
   $("credential").value = "";
   await refreshAll();
+  // Switching accounts must reattach the job poller the previous session stopped.
+  await restoreJob();
   return true;
 }
 
@@ -1514,6 +1602,7 @@ async function passwordLogin(username, password) {
   const ok = await resolveSession();
   if (!ok) return false;
   await refreshAll();
+  await restoreJob();
   return true;
 }
 
@@ -1531,6 +1620,7 @@ async function loadMeta() {
   fillDeptOptions(deptSel, meta.depts, previous, true);
   fillDeptOptions($("deptHeader"), meta.depts, previous, false);
   fillDeptOptions($("uploadDept"), meta.depts, previous, true);
+  setDeptSuggestions(meta.depts);
   currentDept = deptSel.value;
   metaLoaded = true;
   updateDeptBadge();
@@ -1907,6 +1997,54 @@ function userCell(text, mono) {
   return td;
 }
 
+// Known departments feed both the create form and the account editor. They
+// come from the index plus every account assignment, so a department with no
+// files yet is still offered and preserved.
+// 已知部门来自索引和现有账号分配，供创建/编辑账号时自动补全。
+let knownDepts = [];
+
+function setDeptSuggestions(depts) {
+  const names = (depts || [])
+    .map((dept) => (typeof dept === "string" ? dept : dept && dept.name))
+    .filter(Boolean);
+  // Merge instead of replace: metadata and the account list load in parallel,
+  // and departments assigned to accounts must survive whichever request wins.
+  // 合并而不是覆盖：概览与账号分区并行加载，账号已有的部门不能被晚到的请求冲掉。
+  knownDepts = Array.from(new Set(knownDepts.concat(names))).sort((a, b) =>
+    a.localeCompare(b)
+  );
+  const list = $("deptSuggestions");
+  if (list) {
+    list.innerHTML = "";
+    for (const name of knownDepts) {
+      const option = document.createElement("option");
+      option.value = name;
+      list.appendChild(option);
+    }
+  }
+  updateDeptHints();
+}
+
+function updateDeptHints() {
+  const text = knownDepts.length
+    ? t("admin.userModal.deptsAvailable", { names: knownDepts.join(", ") })
+    : "";
+  const createHint = $("newDeptsHint");
+  if (createHint) createHint.textContent = text;
+  const editHint = $("userDeptHint");
+  if (editHint) editHint.textContent = text;
+}
+
+function badgeCell(text, className, title) {
+  const td = document.createElement("td");
+  const span = document.createElement("span");
+  span.className = className;
+  span.textContent = text;
+  if (title) span.title = title;
+  td.appendChild(span);
+  return td;
+}
+
 function renderUsers(data) {
   const card = $("usersCard");
   if (!card) return;
@@ -1915,6 +2053,9 @@ function renderUsers(data) {
   $("navUsers").hidden = !users.length;
   $("navUsers").textContent = users.length > 99 ? "99+" : users.length;
   if (data.path) $("usersPath").textContent = data.path;
+  setDeptSuggestions(
+    knownDepts.concat(users.flatMap((user) => user.depts || []))
+  );
   const body = $("userBody");
   body.innerHTML = "";
   if (!users.length) {
@@ -1934,38 +2075,30 @@ function renderUsers(data) {
       .join(" · ");
     tr.appendChild(userCell(scope || t("admin.userNoDepts")));
 
-    const adminCell = document.createElement("td");
-    const adminBox = document.createElement("input");
-    adminBox.type = "checkbox";
-    adminBox.checked = !!user.admin;
-    adminBox.onchange = () =>
-      patchUser(user.username, { admin: adminBox.checked }, t("admin.permissionsUpdated"));
-    adminCell.appendChild(adminBox);
-    tr.appendChild(adminCell);
+    if (user.admin) {
+      tr.appendChild(badgeCell(t("admin.adminLabel"), "badge b-admin"));
+    } else {
+      tr.appendChild(userCell("—"));
+    }
 
-    const statusCell = document.createElement("td");
-    const disableBox = document.createElement("input");
-    disableBox.type = "checkbox";
-    disableBox.checked = !!user.disabled;
-    disableBox.onchange = () =>
-      patchUser(
-        user.username,
-        { disabled: disableBox.checked },
-        disableBox.checked ? t("admin.accountDisabled") : t("admin.accountEnabled")
-      );
-    const statusLabel = document.createElement("label");
-    statusLabel.className = "roleFlag";
-    statusLabel.appendChild(disableBox);
-    statusLabel.appendChild(document.createTextNode(t("admin.disable")));
-    statusCell.appendChild(statusLabel);
-    tr.appendChild(statusCell);
+    tr.appendChild(
+      badgeCell(
+        t(user.disabled ? "admin.userStatus.disabled" : "admin.userStatus.enabled"),
+        "badge " + (user.disabled ? "b-unsupported" : "b-indexed")
+      )
+    );
 
     const actions = document.createElement("td");
     actions.className = "actions";
+    const edit = document.createElement("button");
+    edit.className = "tiny";
+    edit.textContent = t("admin.editUser");
+    edit.onclick = () => openUserModal(user);
+    actions.appendChild(edit);
     const reset = document.createElement("button");
     reset.className = "tiny";
     reset.textContent = t("admin.changePassword");
-    reset.onclick = () => resetPassword(user.username);
+    reset.onclick = () => openPasswordModal(user);
     actions.appendChild(reset);
     const del = document.createElement("button");
     del.className = "tiny danger";
@@ -2000,26 +2133,169 @@ async function loadUsers() {
   }
 }
 
-async function patchUser(username, changes, okMessage) {
+// Editing rows happens in dialogs instead of inline controls: permissions,
+// departments, groups and status change in one save, and the password has its
+// own dialog with a confirmation field (no native prompt()).
+// 账号编辑改用弹窗：部门、组、管理员与启停一次保存；改密码单独弹窗并二次确认。
+let userModalUser = null;
+let passwordModalUser = null;
+let modalReturnFocus = null;
+
+function rememberModalFocus() {
+  modalReturnFocus = document.activeElement;
+}
+
+function restoreModalFocus() {
+  if (modalReturnFocus && typeof modalReturnFocus.focus === "function") {
+    modalReturnFocus.focus();
+  }
+  modalReturnFocus = null;
+}
+
+function currentUsername() {
+  return session && session.user_id ? session.user_id : "";
+}
+
+function setModalMsg(id, text, kind) {
+  const el = $(id);
+  if (!el) return;
+  el.textContent = text || "";
+  el.className = "msg" + (kind ? " " + kind : "");
+}
+
+function openUserModal(user) {
+  if (!user) return;
+  userModalUser = user;
+  rememberModalFocus();
+  $("userModalName").textContent = user.username;
+  $("userDepts").value = (user.depts || []).join(", ");
+  $("userGroups").value = (user.groups || []).join(", ");
+  $("userAdmin").checked = !!user.admin;
+  $("userEnabled").checked = !user.disabled;
+  setModalMsg("userModalMsg", "");
+  updateDeptHints();
+  $("userModal").hidden = false;
+  $("userDepts").focus();
+}
+
+function closeUserModal() {
+  const modal = $("userModal");
+  if (!modal || modal.hidden) return;
+  modal.hidden = true;
+  userModalUser = null;
+  setModalMsg("userModalMsg", "");
+  restoreModalFocus();
+}
+
+async function saveUser(event) {
+  if (event) event.preventDefault();
+  if (!userModalUser) return;
+  const username = userModalUser.username;
+  const depts = splitList($("userDepts").value);
+  const groups = splitList($("userGroups").value);
+  if (!depts.length) {
+    setModalMsg("userModalMsg", t("admin.enterDept"), "error");
+    $("userDepts").focus();
+    return;
+  }
+  const changes = {
+    depts,
+    groups,
+    admin: $("userAdmin").checked,
+    disabled: !$("userEnabled").checked,
+  };
+  const saveBtn = $("userSave");
+  saveBtn.disabled = true;
   try {
     await api("/admin/api/users/" + encodeURIComponent(username), {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(changes),
     });
-    setMsg($("userMsg"), okMessage, "ok");
+    closeUserModal();
+    setMsg($("userMsg"), t("admin.userUpdated", { user: username }), "ok");
+    await loadUsers().catch(() => {});
   } catch (error) {
-    setMsg($("userMsg"), t("admin.updateFailed", { error: error.message }), "error");
+    setModalMsg("userModalMsg", t("admin.updateFailed", { error: error.message }), "error");
+  } finally {
+    saveBtn.disabled = false;
   }
-  await loadUsers().catch(() => {});
 }
 
-async function resetPassword(username) {
-  const value = prompt(
-    t("admin.resetPasswordPrompt", { user: username })
+function openPasswordModal(user) {
+  if (!user) return;
+  passwordModalUser = user;
+  rememberModalFocus();
+  $("passwordUser").textContent = user.username;
+  $("newPassword").value = "";
+  $("confirmPassword").value = "";
+  setModalMsg("passwordMsg", "");
+  $("passwordSelfNote").hidden = !(
+    currentUsername() && currentUsername() === user.username
   );
-  if (!value) return;
-  await patchUser(username, { password: value }, t("admin.passwordUpdated"));
+  $("passwordModal").hidden = false;
+  $("newPassword").focus();
+}
+
+function closePasswordModal() {
+  const modal = $("passwordModal");
+  if (!modal || modal.hidden) return;
+  modal.hidden = true;
+  passwordModalUser = null;
+  $("newPassword").value = "";
+  $("confirmPassword").value = "";
+  setModalMsg("passwordMsg", "");
+  restoreModalFocus();
+}
+
+async function savePassword(event) {
+  if (event) event.preventDefault();
+  if (!passwordModalUser) return;
+  const username = passwordModalUser.username;
+  const value = $("newPassword").value;
+  const confirmation = $("confirmPassword").value;
+  if (!value) {
+    setModalMsg("passwordMsg", t("admin.passwordRequired"), "error");
+    $("newPassword").focus();
+    return;
+  }
+  if (value.length < 10) {
+    setModalMsg("passwordMsg", t("admin.passwordTooShort"), "error");
+    $("newPassword").focus();
+    return;
+  }
+  if (value !== confirmation) {
+    setModalMsg("passwordMsg", t("admin.passwordMismatch"), "error");
+    $("confirmPassword").focus();
+    return;
+  }
+  const changingSelf = Boolean(currentUsername()) && currentUsername() === username;
+  const saveBtn = $("passwordSave");
+  saveBtn.disabled = true;
+  try {
+    await api("/admin/api/users/" + encodeURIComponent(username), {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password: value }),
+    });
+    closePasswordModal();
+    if (changingSelf) {
+      // The server bumped the account's token_version, so this session's token
+      // is already invalid; return to the gate instead of letting every panel
+      // fail with 401s.
+      // 改自己的密码会立即吊销当前 token，直接回到登录页。
+      clearCredential();
+      stopPolling();
+      showGate(t("admin.passwordRelogin"));
+      return;
+    }
+    setMsg($("userMsg"), t("admin.passwordUpdated"), "ok");
+    await loadUsers().catch(() => {});
+  } catch (error) {
+    setModalMsg("passwordMsg", t("admin.updateFailed", { error: error.message }), "error");
+  } finally {
+    saveBtn.disabled = false;
+  }
 }
 
 async function deleteUser(username) {
@@ -2240,6 +2516,16 @@ async function pollJob() {
   pollTimer = setTimeout(pollJob, 800);
 }
 
+// Leaving the console (logout/switch account) must stop the job poller;
+// otherwise it keeps calling the API with a credential that no longer exists.
+// 退出或切换账号时要停掉入库轮询，否则会继续用已清空的凭据请求接口。
+function stopPolling() {
+  if (pollTimer) {
+    clearTimeout(pollTimer);
+    pollTimer = null;
+  }
+}
+
 // A reload while ingestion is running should reattach to the same job instead
 // of dropping the log and leaving the console idle.
 // 刷新页面后重新接入未完成的入库任务，避免日志与进度丢失。
@@ -2437,6 +2723,12 @@ function renderLicense(state) {
     note.hidden = false;
     note.className = "note error";
     note.textContent = t("admin.licenseInvalidNote");
+  } else if (state.trial) {
+    note.hidden = false;
+    note.textContent = t("admin.licenseTrialNote", {
+      days: state.days_left,
+      expires: state.expires_at || "—",
+    });
   } else if (state.warn) {
     note.hidden = false;
     note.textContent = t("admin.licenseWarnNote", {
@@ -2907,9 +3199,26 @@ $("confirmCancel").onclick = () => settleConfirm(false);
 $("confirmModal").addEventListener("click", (event) => {
   if (event.target === $("confirmModal")) settleConfirm(false);
 });
+
+$("userForm").onsubmit = saveUser;
+$("userCancel").onclick = closeUserModal;
+$("userModalClose").onclick = closeUserModal;
+$("userModal").addEventListener("click", (event) => {
+  if (event.target === $("userModal")) closeUserModal();
+});
+
+$("passwordForm").onsubmit = savePassword;
+$("passwordCancel").onclick = closePasswordModal;
+$("passwordClose").onclick = closePasswordModal;
+$("passwordModal").addEventListener("click", (event) => {
+  if (event.target === $("passwordModal")) closePasswordModal();
+});
+
 document.addEventListener("keydown", (event) => {
   if (event.key !== "Escape") return;
   if (!$("confirmModal").hidden) settleConfirm(false);
+  else if (!$("userModal").hidden) closeUserModal();
+  else if (!$("passwordModal").hidden) closePasswordModal();
   else if (!themeModal.hidden) closeThemeModal(previousTheme);
   else if (!$("vectorModal").hidden) closeVectorModal();
 });

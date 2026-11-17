@@ -70,6 +70,36 @@ three agree before you push a tag.
   永不进入浏览器，外部网站无法驱动它。`make package LICENSE=<文件>` 可把客户
   专属许可打进交付包的 `config/license.json`（0600，计入 `PACKAGE.json`）；客户
   续期在管理台「许可」卡片在线完成。
+- **Usage/value report**: `scripts/usage_report.py` (`make usage-report`) reads
+  the session SQLite store, the admin audit log and the installed license
+  offline and renders `text`/`markdown`/`csv`/`json`: sessions, active users,
+  questions and answers, citation coverage, degraded answers, satisfaction,
+  multi-turn sessions, department breakdown and admin action counts. Optional
+  `--minutes-per-question` / `--hourly-rate` add a time/value estimate. The
+  report contains aggregates only — no transcripts or user ids — so it can be
+  shared with a customer's finance/procurement team or used in a renewal QBR.
+  <br>**用量与价值月报（中文）**：`scripts/usage_report.py`（`make usage-report`）
+  离线读取会话 SQLite、审计日志与当前许可，输出 `text`/`markdown`/`csv`/`json`：
+  会话、活跃用户、提问/回答、引用覆盖、降级回答、满意度、多轮会话、部门分布与
+  管理操作次数；可选 `--minutes-per-question` / `--hourly-rate` 生成节省工时与
+  金额估算。报告只含聚合计数，不含对话原文或用户标识，可直接给客户财务/采购，
+  也适合作为续费 QBR 的证据。
+- **Trial licenses and demo stack**: `scripts/issue_license.py --trial` issues a
+  30-day evaluation license (1 department, 5,000 documents, full feature flags),
+  capped at 90 days by the validator; `edition=trial` is exposed as
+  `/info.license.trial`, warns in the last 7 days and shows a trial note in the
+  console. The license console gained a one-click "30-day trial" preset.
+  `docker-compose.demo.yml` + `.env.demo.example` + `make demo-up/demo-seed/
+  demo-down` run a license-free FAISS demo that mounts only `data/Demo`, disables
+  server-side sessions, keeps the admin API loopback-only and rate-limits
+  visitors.
+  <br>**试用许可与演示站（中文）**：`scripts/issue_license.py --trial` 签发
+  30 天试用许可（1 部门 / 5000 文档 / 完整功能开关），校验器硬性限制最长 90 天；
+  `edition=trial` 通过 `/info.license.trial` 暴露，最后 7 天进入提醒窗口，管理台
+  显示试用提示。许可控制台增加「填入 30 天试用」按钮。新增
+  `docker-compose.demo.yml`、`.env.demo.example` 与 `make demo-up/demo-seed/
+  demo-down`：无许可、FAISS、只挂载 `data/Demo`、关闭服务端会话、管理端仅回环，
+  并默认按 IP 限流。
 - **Delivery package**: `scripts/package_release.py` (or `make package`) builds
   `dist/agent-rag-<version>-delivery.tar.gz` with the production compose files,
   Dockerfile, source/static/scripts, docs and `.env.example`, plus a generated
@@ -275,6 +305,17 @@ three agree before you push a tag.
 
 ### Fixed
 
+- **Admin account management and account switching**: the 账号 card now edits
+  an existing account's departments, groups, admin flag and enabled status in a
+  dialog (previously only creation and password reset were exposed), password
+  changes use a themed dialog with a confirmation field and revoke old tokens,
+  and the header's 「切换账号」 / 「退出」 no longer leave the console visible
+  with a cleared credential (`stopPolling` was called without being defined, so
+  the handler threw before reaching `showGate`).
+  <br>**管理台账号管理与切换账号（中文）**：账号卡片可在弹窗中编辑既有账号的部门、
+  组、管理员与启停状态（此前只能新建和改密码）；改密码改为带二次确认的主题化弹窗，
+  改后旧 token 立即失效；顶栏「切换账号」/「退出」不再出现“凭据已清空但控制台仍在”
+  的问题（`stopPolling` 未定义，回调在显示登录页前抛错）。
 - **Image builds behind a flaky network**: the model-download layer sets
   `HF_HUB_DISABLE_XET=1`. Hugging Face's Xet CDN (`transfer.xethub.hf.co`) was
   dropping transfers mid-download even when the mirror itself worked, which

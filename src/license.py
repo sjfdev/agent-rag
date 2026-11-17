@@ -62,6 +62,12 @@ PUBLIC_KEY_B64 = "WuRyhixhR8+5/+DM8X1fAHo3d8euIGyR5pKSOXVL73A="
 LICENSE_VERSION = 1
 VALID_STATES = ("disabled", "valid", "grace", "expired", "missing", "invalid")
 WRITE_STATES = ("disabled", "valid", "grace")
+# Evaluation licenses: 30 days by default, never longer than 90. They carry the
+# same limits/features as a paid license so a prospect can test the real thing;
+# the short expiry and the console "trial" badge are the commercial boundary.
+TRIAL_EDITION = "trial"
+TRIAL_WARN_DAYS = 7
+MAX_TRIAL_DAYS = 90
 
 _lock = threading.Lock()
 _cache: Dict[str, Any] = {"key": None, "payload": None, "error": None}
@@ -121,6 +127,11 @@ def _validate_payload(payload: Dict[str, Any]) -> None:
     expires = _parse_date(payload.get("expires_at"), "expires_at")
     if expires < issued:
         raise LicenseError("expires_at is before issued_at")
+    if str(payload.get("edition", "")).strip().lower() == TRIAL_EDITION:
+        if (expires - issued).days > MAX_TRIAL_DAYS:
+            raise LicenseError(
+                f"trial licenses cannot exceed {MAX_TRIAL_DAYS} days"
+            )
     not_before = payload.get("not_before")
     if not_before is not None and _parse_date(not_before, "not_before") > expires:
         raise LicenseError("not_before is after expires_at")
@@ -212,6 +223,7 @@ def status(now: Optional[date] = None) -> Dict[str, Any]:
         "state": "disabled",
         "ok": True,
         "edition": None,
+        "trial": False,
         "licensee": None,
         "license_id": None,
         "features": [],
@@ -241,10 +253,12 @@ def status(now: Optional[date] = None) -> Dict[str, Any]:
     expires = _parse_date(payload["expires_at"], "expires_at")
     not_before = payload.get("not_before")
     days_left = (expires - today).days
+    trial = str(payload.get("edition", "")).strip().lower() == TRIAL_EDITION
     base.update(
         state="valid",
         ok=True,
         edition=payload.get("edition", "standard"),
+        trial=trial,
         licensee=payload["licensee"],
         license_id=payload.get("license_id"),
         features=list(payload.get("features", [])),
@@ -271,7 +285,8 @@ def status(now: Optional[date] = None) -> Dict[str, Any]:
             ),
         )
         return base
-    base["warn"] = days_left <= max(0, int(settings.LICENSE_WARN_DAYS))
+    warn_days = TRIAL_WARN_DAYS if trial else max(0, int(settings.LICENSE_WARN_DAYS))
+    base["warn"] = days_left <= warn_days
     return base
 
 
@@ -300,6 +315,12 @@ def validate_config() -> None:
             "license expired %d day(s) ago, running in grace period (%d day(s) left)",
             abs(state["days_left"]),
             state["grace_days"] + state["days_left"],
+        )
+    elif state.get("trial"):
+        logger.warning(
+            "trial license for %s: %d day(s) left, evaluation only",
+            state["licensee"],
+            state["days_left"],
         )
     elif state["warn"]:
         logger.warning("license expires in %d day(s)", state["days_left"])

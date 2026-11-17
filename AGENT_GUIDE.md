@@ -99,7 +99,7 @@ agent-rag/
 ├── volumes/                 # Milvus/etcd 数据卷
 ├── eval/cases.jsonl         # 检索评测集（命中 + 泄漏用例）
 ├── config/acl.example.json  # 文档级 ACL 规则示例
-├── tests/                   # pytest 离线测试（509 项，覆盖率 93%）
+├── tests/                   # pytest 离线测试（716 项，覆盖率 93%）
 ├── Makefile                 # 常用命令（make help）
 ├── .github/workflows/ci.yml # ruff + pytest（CI）
 ├── WORKLOG.md               # 本轮迭代记录与验证矩阵
@@ -727,7 +727,7 @@ python scripts/check_loaders.py      # 9 种格式解析（不写向量库）
 python scripts/check_admin.py        # 管理台上传→入库→删除冒烟
 python scripts/bench_retrieval.py    # embedding / FAISS / Milvus / LLM 延迟
 python scripts/generate_demo_files.py  # 重建 data/Demo 多格式样例
-pytest -q                            # 离线测试（509 项，~30s，覆盖率 93%，无需服务/LLM）
+pytest -q                            # 离线测试（716 项，~30s，覆盖率 93%，无需服务/LLM）
 ruff check src tests main.py run_ingestion.py   # 代码检查
 python test_agent.py                 # 端到端 18 项断言（需服务已启动）
 ```
@@ -1128,9 +1128,48 @@ python scripts/bench_retrieval.py
 
 ---
 
-## 11. 许可证
+## 11. 许可证与商业化工具
 
 本项目采用 [MIT License](./LICENSE)，Copyright (c) 2026 sjfdev。可自由使用、修改、分发与商用，需保留版权与许可声明。
+
+离线许可、试用许可、交付打包与用量月报是**交付辅助工具**，不是 DRM：源码可改，收费依赖合同、服务与信任。
+
+### 11.1 正式许可与试用许可
+
+```bash
+# 正式：一年期，5 部门 / 10 万文档
+python scripts/issue_license.py --licensee "ACME" --days 365 \
+  --edition enterprise --depts 5 --docs 100000 \
+  --features sso,audit,monitoring --out /tmp/acme-license.json
+
+# 试用：默认 30 天、1 部门 / 5000 文档、完整功能；最长 90 天
+python scripts/issue_license.py --trial --licensee "ACME" --out /tmp/acme-trial.json
+```
+
+- 客户把文件放到 `config/license.json`，或在管理台「许可」卡片粘贴；`LICENSE_ENABLED=true` 时缺失/伪造许可拒绝启动，过期后只锁管理端写入，对话不受影响。
+- `edition=trial` 会出现在 `/info.license.trial` 与管理台提示里；试用到期前安装正式许可即可无缝切换。
+- `make license-console` 的签发页有「填入 30 天试用」按钮；`make package LICENSE=<file>` 可把许可直接打进交付包。
+
+### 11.2 用量与价值月报
+
+```bash
+python scripts/usage_report.py --month 2026-10 --format markdown \
+  --minutes-per-question 3 --hourly-rate 80 --out reports/acme-2026-10.md
+```
+
+离线读取 `logs/sessions.db`、`logs/admin_audit.log` 与当前许可，输出：会话、活跃用户、提问/回答、引用覆盖、降级回答、满意度、多轮会话、部门分布、管理操作次数。`--minutes-per-question` 与 `--hourly-rate` 生成“节省工时/折算金额”的价值估算。支持 `text`、`markdown`、`csv`、`json`；报告只含聚合计数，不含对话原文或用户标识，可直接给客户或用于续费沟通。
+
+### 11.3 演示站
+
+```bash
+cp .env.demo.example .env.demo    # 填 LLM_*
+make data && make demo-up        # 127.0.0.1:8080，FAISS，无许可
+make demo-seed                   # 入库 data/Demo
+make demo-down
+```
+
+演示栈只挂载 `data/Demo`、关闭服务端会话与许可、管理端保持回环限制，并默认按 IP 限流。公网演示必须加 TLS 反向代理，且不要使用真实客户数据或 `.env`。演示栈面向销售/评估场景，交付包（`make package`）默认不含演示数据。
+
 
 ---
 

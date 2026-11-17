@@ -333,6 +333,7 @@ PAGE = """<!doctype html>
           <select name="edition">
             <option value="enterprise">enterprise</option>
             <option value="standard">standard</option>
+            <option value="trial">trial（试用）</option>
             <option value="evaluation">evaluation</option>
           </select>
         </label>
@@ -360,6 +361,7 @@ PAGE = """<!doctype html>
       </div>
       <div class="row">
         <button type="submit" class="primary" id="issueBtn">签发</button>
+        <button type="button" id="trialPreset">填入 30 天试用</button>
         <span class="hint">签发后自动保存到 licenses/ 目录。</span>
       </div>
       <div class="msg" id="issueMsg" aria-live="polite"></div>
@@ -507,6 +509,21 @@ PAGE = """<!doctype html>
       setMsg(document.getElementById("issueMsg"), err.message, "error");
     }
   }
+
+  document.getElementById("trialPreset").onclick = () => {
+    const form = document.getElementById("issueForm");
+    form.elements.edition.value = "trial";
+    form.elements.days.value = 30;
+    form.elements.depts.value = 1;
+    form.elements.docs.value = 5000;
+    form.elements.features.value = "sso,audit,monitoring";
+    form.elements.expires.value = "";
+    setMsg(
+      document.getElementById("issueMsg"),
+      "已填入 30 天试用参数；试用许可最长 90 天。",
+      "ok"
+    );
+  };
 
   document.getElementById("issueForm").addEventListener("submit", async (event) => {
     event.preventDefault();
