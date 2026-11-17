@@ -37,7 +37,7 @@ def isolated(tmp_path, monkeypatch, signing_key):
 
 
 def _payload(**overrides):
-    today = date.today()
+    today = license_module._today()
     payload = {
         "v": 1,
         "license_id": "LIC-TEST-001",
@@ -80,12 +80,12 @@ def test_valid_license(isolated):
     assert state["max_depts"] == 5 and state["max_docs"] == 100000
     assert state["features"] == ["sso", "audit"]
     assert state["days_left"] == 90
-    assert state["expires_at"] == (date.today() + timedelta(days=90)).isoformat()
+    assert state["expires_at"] == (license_module._today() + timedelta(days=90)).isoformat()
 
 
 def test_expiring_soon_warns(isolated):
     path, key = isolated
-    _write(path, key, _payload(expires_at=(date.today() + timedelta(days=5)).isoformat()))
+    _write(path, key, _payload(expires_at=(license_module._today() + timedelta(days=5)).isoformat()))
     state = license_module.status()
     assert state["state"] == "valid"
     assert state["warn"] is True
@@ -94,7 +94,7 @@ def test_expiring_soon_warns(isolated):
 
 def test_grace_period_still_allows_writes(isolated):
     path, key = isolated
-    _write(path, key, _payload(expires_at=(date.today() - timedelta(days=3)).isoformat()))
+    _write(path, key, _payload(expires_at=(license_module._today() - timedelta(days=3)).isoformat()))
     state = license_module.status()
     assert state["state"] == "grace"
     assert state["ok"] is True
@@ -107,8 +107,8 @@ def test_expired_blocks_writes(isolated):
         path,
         key,
         _payload(
-            issued_at=(date.today() - timedelta(days=400)).isoformat(),
-            expires_at=(date.today() - timedelta(days=30)).isoformat(),
+            issued_at=(license_module._today() - timedelta(days=400)).isoformat(),
+            expires_at=(license_module._today() - timedelta(days=30)).isoformat(),
         ),
     )
     state = license_module.status()
@@ -146,7 +146,7 @@ def test_not_before_in_future_is_invalid(isolated):
     _write(
         path,
         key,
-        _payload(not_before=(date.today() + timedelta(days=2)).isoformat()),
+        _payload(not_before=(license_module._today() + timedelta(days=2)).isoformat()),
     )
     state = license_module.status()
     assert state["state"] == "invalid"
@@ -225,8 +225,8 @@ def test_admin_install_writes_file_with_0600(isolated):
         path,
         key,
         _payload(
-            issued_at=(date.today() - timedelta(days=400)).isoformat(),
-            expires_at=(date.today() - timedelta(days=1)).isoformat(),
+            issued_at=(license_module._today() - timedelta(days=400)).isoformat(),
+            expires_at=(license_module._today() - timedelta(days=1)).isoformat(),
         ),
     )
     import main
@@ -264,8 +264,8 @@ def test_renewal_is_allowed_while_expired(isolated):
         path,
         key,
         _payload(
-            issued_at=(date.today() - timedelta(days=400)).isoformat(),
-            expires_at=(date.today() - timedelta(days=30)).isoformat(),
+            issued_at=(license_module._today() - timedelta(days=400)).isoformat(),
+            expires_at=(license_module._today() - timedelta(days=30)).isoformat(),
         ),
     )
     import main
