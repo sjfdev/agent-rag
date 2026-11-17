@@ -28,6 +28,7 @@
     --log-text: #c7d0df;
     --danger-border: #4a2a2e;
     --danger-zone: #3a2529;
+    --danger-tint: #22171a;
     --overlay: rgba(7, 9, 13, .62);
     --overlay-strong: rgba(7, 9, 13, .82);
     --ok-bg: #12261e;
@@ -62,6 +63,7 @@
     --log-text: #2c3745;
     --danger-border: #e3b4b0;
     --danger-zone: #efcac5;
+    --danger-tint: #fbeeed;
     --overlay: rgba(23, 32, 45, .38);
     --overlay-strong: rgba(23, 32, 45, .55);
     --ok-bg: #e7f6ef;
@@ -100,29 +102,48 @@
   /* 顶部保持全宽，控制台区域加左侧固定分区菜单。 */
   .shell {
     max-width: 1180px; margin: 0 auto; padding: 18px 20px 40px;
-    display: grid; grid-template-columns: 190px minmax(0, 1fr); gap: 16px; align-items: start;
+    display: grid; grid-template-columns: 212px minmax(0, 1fr); gap: 16px; align-items: start;
   }
   main { max-width: none; margin: 0; padding: 0; display: grid; gap: 14px; }
   #console[hidden], #sidebar[hidden] { display: none; }
   .sidebar {
     position: sticky; top: 16px; background: var(--panel);
-    border: 1px solid var(--border); border-radius: 10px; padding: 10px;
+    border: 1px solid var(--border); border-radius: 12px; padding: 10px;
   }
   .sidebar h3 {
-    font-size: 12px; color: var(--muted); font-weight: 500;
-    letter-spacing: .5px; margin: 2px 0 8px; padding: 0 8px;
+    display: flex; align-items: center; gap: 6px;
+    font-size: 11px; color: var(--muted); font-weight: 600;
+    letter-spacing: .08em; text-transform: uppercase;
+    margin: 0 0 4px; padding: 4px 10px 9px; border-bottom: 1px solid var(--border);
   }
   .sidebar nav { display: grid; gap: 2px; }
   .navBtn {
-    display: block; width: 100%; text-align: left; background: transparent;
-    border: 1px solid transparent; border-radius: 8px; padding: 7px 10px;
+    position: relative; display: flex; align-items: center; gap: 9px;
+    width: 100%; text-align: left; background: transparent;
+    border: 1px solid transparent; border-radius: 8px; padding: 7px 9px;
     color: var(--muted); cursor: pointer; font: inherit;
+    transition: background .12s ease, color .12s ease, border-color .12s ease;
+  }
+  .navIcon {
+    width: 17px; height: 17px; flex: none; opacity: .75;
+    fill: none; stroke: currentColor; stroke-width: 1.8;
+    stroke-linecap: round; stroke-linejoin: round;
+  }
+  .navLabel {
+    flex: 1; min-width: 0; overflow: hidden;
+    text-overflow: ellipsis; white-space: nowrap;
   }
   .navBtn:hover { background: var(--panel-2); color: var(--text); }
+  .navBtn:hover .navIcon { opacity: 1; }
   .navBtn.active {
-    background: var(--accent-soft); color: var(--text);
-    border-color: var(--border-strong); box-shadow: inset 2px 0 0 var(--accent);
+    background: var(--accent-soft); color: var(--text); font-weight: 500;
+    border-color: var(--border-strong);
   }
+  .navBtn.active::before {
+    content: ""; position: absolute; left: -1px; top: 5px; bottom: 5px;
+    width: 3px; border-radius: 0 3px 3px 0; background: var(--accent);
+  }
+  .navBtn.active .navIcon { color: var(--accent); opacity: 1; }
   .navBtn[hidden] { display: none; }
   /* Chunk preview modal: same pattern as the chat citation preview. */
   /* 分片预览弹窗，与聊天引用预览保持一致的交互。 */
@@ -309,15 +330,39 @@
     width: 46px; height: 30px; padding: 2px; background: var(--panel-2);
     border: 1px solid var(--border-strong); border-radius: 6px; cursor: pointer;
   }
-  /* Grouped menu with a separated danger entry. */
-  /* 分区菜单分组，危险操作单独弱化标记。 */
+  /* Grouped menu: every group gets a colour-coded label and a hairline
+     divider; the danger zone becomes a tinted block of its own. */
+  /* 分区菜单分组：每组带色点标签与细分隔线，危险区独立底色块。 */
   .navGroup { display: grid; gap: 2px; }
-  .navGroupLabel {
-    font-size: 11px; color: var(--muted); padding: 6px 10px 2px;
-    letter-spacing: .5px;
+  .navGroup + .navGroup:not(.navDanger) {
+    margin-top: 7px; padding-top: 7px; border-top: 1px solid var(--border);
   }
+  .navGroup[hidden] { display: none; }
+  .navGroupLabel {
+    display: flex; align-items: center; gap: 6px;
+    font-size: 11px; font-weight: 600; color: var(--muted);
+    letter-spacing: .06em; text-transform: uppercase;
+    padding: 2px 10px 5px;
+  }
+  .navGroupLabel::before {
+    content: ""; width: 5px; height: 5px; flex: none; border-radius: 50%;
+    background: var(--group-tint, var(--border-hover));
+  }
+  .navGroup[data-group="content"] { --group-tint: var(--accent); }
+  .navGroup[data-group="config"] { --group-tint: var(--changed); }
+  .navGroup[data-group="ops"] { --group-tint: var(--ok); }
+  .navGroup[data-group="danger"] { --group-tint: var(--bad); }
+  /* Off-screen sprite that holds the menu glyphs. */
+  /* 菜单图标的离屏雪碧图。 */
+  .navSprite { position: absolute; width: 0; height: 0; overflow: hidden; }
   .navBtn.dangerNav { color: var(--bad); }
-  .navBtn.dangerNav.active { color: var(--bad); box-shadow: inset 2px 0 0 var(--bad); }
+  .navBtn.dangerNav .navIcon { color: var(--bad); opacity: .9; }
+  .navBtn.dangerNav:hover { background: var(--danger-zone); color: var(--bad); }
+  .navBtn.dangerNav.active {
+    color: var(--bad); background: var(--danger-zone);
+    border-color: var(--danger-border);
+  }
+  .navBtn.dangerNav.active::before { background: var(--bad); }
   /* Visible keyboard focus for menu, buttons, selects and links. */
   /* 键盘焦点可见，覆盖菜单、按钮、下拉与链接。 */
   .navBtn:focus-visible, button:focus-visible, select:focus-visible,
@@ -402,7 +447,6 @@
   @media (max-width: 760px) {
     .sidebar nav { gap: 6px; }
     .navGroup { display: flex; flex-wrap: wrap; gap: 2px; }
-    .navGroupLabel { width: 100%; padding: 4px 0 2px; }
     .statusBody { position: static; margin-top: 6px; width: 100%; }
   }
   /* Loading indicator on cards whose data is in flight. */
@@ -451,13 +495,28 @@
   .stateCell { padding: 22px 10px; text-align: center; color: var(--muted); }
   .msg.stateError { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
   /* Menu badges and the separated danger group. */
-  /* 菜单计数徽标与独立的危险区和分隔线。 */
+  /* 菜单计数徽标与独立的危险区。 */
   .navCount {
-    margin-left: 6px; font-size: 10px; padding: 1px 6px;
-    border-radius: 999px; background: var(--panel-2);
+    margin-left: auto; flex: none; min-width: 18px; text-align: center;
+    font-size: 10px; line-height: 16px; font-variant-numeric: tabular-nums;
+    padding: 0 6px; border-radius: 999px; background: var(--panel-2);
     border: 1px solid var(--border-strong); color: var(--muted);
   }
-  .navDanger { margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--border); }
+  #navPending {
+    color: var(--warn); background: var(--warn-bg); border-color: var(--warn-border);
+  }
+  .navBtn.active .navCount {
+    color: var(--accent); background: var(--panel); border-color: var(--border-hover);
+  }
+  .navBtn.dangerNav.active .navCount {
+    color: var(--bad); background: var(--panel); border-color: var(--danger-border);
+  }
+  .navDanger {
+    margin-top: 10px; padding: 4px;
+    background: var(--danger-tint); border: 1px solid var(--danger-border);
+    border-radius: 9px;
+  }
+  .navDanger .navGroupLabel { color: var(--bad); }
   /* Keep the file actions reachable while the table scrolls sideways. */
   /* 横向滚动时固定文件表操作列。 */
   #filesCard table th:last-child,
@@ -484,9 +543,19 @@
     }
     .navGroup { display: flex; flex-wrap: nowrap; gap: 2px; flex: 0 0 auto; }
     .navGroup + .navGroup { border-left: 1px solid var(--border); padding-left: 6px; }
-    .navDanger { margin-top: 0; padding-top: 0; border-top: 0; border-left: 1px solid var(--danger-border); }
-    .navGroupLabel { display: none; }
+    .navDanger {
+      margin-top: 0; padding: 2px 4px;
+      border: 1px solid var(--danger-border);
+    }
+    .navGroupLabel {
+      display: inline-flex; width: auto; align-items: center;
+      padding: 0 8px; margin: 0; border: 0;
+      border-right: 1px solid var(--border); white-space: nowrap;
+    }
     .navBtn { width: auto; white-space: nowrap; }
+    .navBtn.active { box-shadow: inset 0 -2px 0 var(--accent); }
+    .navBtn.active::before { display: none; }
+    .navBtn.dangerNav.active { box-shadow: inset 0 -2px 0 var(--bad); }
     .sidebar nav {
       -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 26px), transparent);
       mask-image: linear-gradient(to right, #000 calc(100% - 26px), transparent);
@@ -496,6 +565,58 @@
 <script src="/ui/theme.js"></script>
 </head>
 <body>
+<svg class="navSprite" aria-hidden="true" focusable="false" width="0" height="0">
+  <symbol id="nav-i-dept" viewBox="0 0 24 24">
+    <path d="M6 22V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v18"/>
+    <path d="M6 12H4a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h2"/>
+    <path d="M18 9h2a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-2"/>
+    <path d="M10 6h4M10 10h4M10 14h4M10 18h4"/>
+  </symbol>
+  <symbol id="nav-i-files" viewBox="0 0 24 24">
+    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/>
+    <path d="M14 2v6h6"/>
+    <path d="M8 13h8M8 17h5"/>
+  </symbol>
+  <symbol id="nav-i-model" viewBox="0 0 24 24">
+    <rect x="5" y="5" width="14" height="14" rx="2"/>
+    <rect x="9.5" y="9.5" width="5" height="5" rx="1"/>
+    <path d="M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3"/>
+  </symbol>
+  <symbol id="nav-i-chunk" viewBox="0 0 24 24">
+    <path d="m12 3 9 4.5-9 4.5-9-4.5L12 3Z"/>
+    <path d="m3 12 9 4.5 9-4.5"/>
+    <path d="m3 16.5 9 4.5 9-4.5"/>
+  </symbol>
+  <symbol id="nav-i-users" viewBox="0 0 24 24">
+    <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/>
+    <circle cx="9" cy="7" r="4"/>
+    <path d="M22 21v-2a4 4 0 0 0-3-3.87"/>
+    <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+  </symbol>
+  <symbol id="nav-i-monitor" viewBox="0 0 24 24">
+    <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
+  </symbol>
+  <symbol id="nav-i-index" viewBox="0 0 24 24">
+    <ellipse cx="12" cy="5" rx="9" ry="3"/>
+    <path d="M3 5v14a9 3 0 0 0 18 0V5"/>
+    <path d="M3 12a9 3 0 0 0 18 0"/>
+  </symbol>
+  <symbol id="nav-i-license" viewBox="0 0 24 24">
+    <circle cx="7.5" cy="15.5" r="5.5"/>
+    <path d="m21 2-9.6 9.6"/>
+    <path d="m15.5 7.5 3 3L22 7l-3-3"/>
+  </symbol>
+  <symbol id="nav-i-audit" viewBox="0 0 24 24">
+    <rect x="8" y="2" width="8" height="4" rx="1"/>
+    <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/>
+    <path d="M9 12h6M9 16h4"/>
+  </symbol>
+  <symbol id="nav-i-rebuild" viewBox="0 0 24 24">
+    <path d="M21 12a9 9 0 1 1-2.64-6.36L21 8"/>
+    <path d="M21 3v5h-5"/>
+  </symbol>
+</svg>
+
 <header>
   <div class="brand"><span class="brandName" data-i18n="admin.brand">知识库管理</span><span data-i18n="admin.brandSub">ingestion console</span></div>
   <div class="meta">
@@ -566,27 +687,59 @@
   <aside class="sidebar" id="sidebar" hidden aria-label="管理台分区" data-i18n-aria-label="admin.navAria">
     <h3 data-i18n="admin.navTitle">分区</h3>
     <nav id="nav" role="tablist" aria-orientation="vertical" aria-label="管理台分区" data-i18n-aria-label="admin.navAria">
-      <div class="navGroup">
+      <div class="navGroup" data-group="content">
         <span class="navGroupLabel" data-i18n="admin.navGroup.content">内容</span>
-        <button class="navBtn" role="tab" id="tab-deptCard" aria-controls="deptCard" data-target="deptCard" data-i18n="admin.nav.dept">部门</button>
-        <button class="navBtn" role="tab" id="tab-filesCard" aria-controls="filesCard" data-target="filesCard"><span data-i18n="admin.nav.files">文件与向量</span><span class="navCount" id="navPending" hidden></span></button>
+        <button class="navBtn" role="tab" id="tab-deptCard" aria-controls="deptCard" data-target="deptCard">
+          <svg class="navIcon" aria-hidden="true" focusable="false"><use href="#nav-i-dept"></use></svg>
+          <span class="navLabel" data-i18n="admin.nav.dept">部门</span>
+        </button>
+        <button class="navBtn" role="tab" id="tab-filesCard" aria-controls="filesCard" data-target="filesCard">
+          <svg class="navIcon" aria-hidden="true" focusable="false"><use href="#nav-i-files"></use></svg>
+          <span class="navLabel" data-i18n="admin.nav.files">文件与向量</span>
+          <span class="navCount" id="navPending" hidden></span>
+        </button>
       </div>
-      <div class="navGroup">
+      <div class="navGroup" data-group="config">
         <span class="navGroupLabel" data-i18n="admin.navGroup.config">配置</span>
-        <button class="navBtn" role="tab" id="tab-modelCard" aria-controls="modelCard" data-target="modelCard" data-i18n="admin.nav.model">模型</button>
-        <button class="navBtn" role="tab" id="tab-chunkCard" aria-controls="chunkCard" data-target="chunkCard" data-i18n="admin.nav.chunk">分片</button>
-        <button class="navBtn" role="tab" id="tab-usersCard" aria-controls="usersCard" data-target="usersCard" hidden><span data-i18n="admin.nav.accounts">账号</span><span class="navCount" id="navUsers" hidden></span></button>
+        <button class="navBtn" role="tab" id="tab-modelCard" aria-controls="modelCard" data-target="modelCard">
+          <svg class="navIcon" aria-hidden="true" focusable="false"><use href="#nav-i-model"></use></svg>
+          <span class="navLabel" data-i18n="admin.nav.model">模型</span>
+        </button>
+        <button class="navBtn" role="tab" id="tab-chunkCard" aria-controls="chunkCard" data-target="chunkCard">
+          <svg class="navIcon" aria-hidden="true" focusable="false"><use href="#nav-i-chunk"></use></svg>
+          <span class="navLabel" data-i18n="admin.nav.chunk">分片</span>
+        </button>
+        <button class="navBtn" role="tab" id="tab-usersCard" aria-controls="usersCard" data-target="usersCard" hidden>
+          <svg class="navIcon" aria-hidden="true" focusable="false"><use href="#nav-i-users"></use></svg>
+          <span class="navLabel" data-i18n="admin.nav.accounts">账号</span>
+          <span class="navCount" id="navUsers" hidden></span>
+        </button>
       </div>
-      <div class="navGroup">
+      <div class="navGroup" data-group="ops">
         <span class="navGroupLabel" data-i18n="admin.navGroup.ops">运维</span>
-        <button class="navBtn" role="tab" id="tab-jobCard" aria-controls="jobCard" data-target="jobCard" data-i18n="admin.nav.monitor">运行监视</button>
-        <button class="navBtn" role="tab" id="tab-indexCard" aria-controls="indexCard" data-target="indexCard" data-i18n="admin.nav.index">索引维护</button>
-        <button class="navBtn" role="tab" id="tab-licenseCard" aria-controls="licenseCard" data-target="licenseCard" data-i18n="admin.nav.license">许可</button>
-        <button class="navBtn" role="tab" id="tab-auditCard" aria-controls="auditCard" data-target="auditCard" data-i18n="admin.nav.audit">操作审计</button>
+        <button class="navBtn" role="tab" id="tab-jobCard" aria-controls="jobCard" data-target="jobCard">
+          <svg class="navIcon" aria-hidden="true" focusable="false"><use href="#nav-i-monitor"></use></svg>
+          <span class="navLabel" data-i18n="admin.nav.monitor">运行监视</span>
+        </button>
+        <button class="navBtn" role="tab" id="tab-indexCard" aria-controls="indexCard" data-target="indexCard">
+          <svg class="navIcon" aria-hidden="true" focusable="false"><use href="#nav-i-index"></use></svg>
+          <span class="navLabel" data-i18n="admin.nav.index">索引维护</span>
+        </button>
+        <button class="navBtn" role="tab" id="tab-licenseCard" aria-controls="licenseCard" data-target="licenseCard">
+          <svg class="navIcon" aria-hidden="true" focusable="false"><use href="#nav-i-license"></use></svg>
+          <span class="navLabel" data-i18n="admin.nav.license">许可</span>
+        </button>
+        <button class="navBtn" role="tab" id="tab-auditCard" aria-controls="auditCard" data-target="auditCard">
+          <svg class="navIcon" aria-hidden="true" focusable="false"><use href="#nav-i-audit"></use></svg>
+          <span class="navLabel" data-i18n="admin.nav.audit">操作审计</span>
+        </button>
       </div>
-      <div class="navGroup navDanger">
+      <div class="navGroup navDanger" data-group="danger">
         <span class="navGroupLabel" data-i18n="admin.navGroup.danger">危险区</span>
-        <button class="navBtn dangerNav" role="tab" id="tab-rebuildCard" aria-controls="rebuildCard" data-target="rebuildCard" data-i18n="admin.nav.rebuild">重建索引</button>
+        <button class="navBtn dangerNav" role="tab" id="tab-rebuildCard" aria-controls="rebuildCard" data-target="rebuildCard">
+          <svg class="navIcon" aria-hidden="true" focusable="false"><use href="#nav-i-rebuild"></use></svg>
+          <span class="navLabel" data-i18n="admin.nav.rebuild">重建索引</span>
+        </button>
       </div>
     </nav>
   </aside>
@@ -1225,6 +1378,12 @@ function syncNavVisibility() {
   navButtons.forEach((btn) => {
     const target = $(btn.dataset.target);
     btn.hidden = !target || target.hidden;
+  });
+  // A group whose entries are all unavailable (e.g. 账号 when local login is
+  // off) must disappear together with its label and divider.
+  // 组内入口全部不可用时，整组（标签与分隔线）一并隐藏。
+  document.querySelectorAll(".navGroup").forEach((group) => {
+    group.hidden = !Array.from(group.querySelectorAll(".navBtn")).some((btn) => !btn.hidden);
   });
   const current = $(activeSection);
   if (!current || current.hidden) showSection(activeSection);

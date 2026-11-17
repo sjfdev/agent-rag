@@ -81,6 +81,7 @@ function themePalette(custom) {
     "--log-text": themeMix(text, bg, 0.25),
     "--danger-border": themeMix(panel, bad, 0.45),
     "--danger-zone": themeMix(panel, bad, 0.28),
+    "--danger-tint": themeMix(panel, bad, 0.12),
     "--overlay": "rgba(0, 0, 0, " + (light ? 0.38 : 0.62) + ")",
     "--overlay-strong": "rgba(0, 0, 0, " + (light ? 0.55 : 0.82) + ")",
     "--ok-bg": themeMix(panel, ok, light ? 0.12 : 0.16),
