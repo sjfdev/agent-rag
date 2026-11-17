@@ -86,6 +86,16 @@
   .meta { display: flex; gap: 14px; align-items: center; color: var(--muted); font-size: 12px; flex-wrap: wrap; }
   .meta b { color: var(--text); font-weight: 500; }
   .meta a { color: var(--accent); text-decoration: none; }
+  /* Always-visible one-click shortcut from the console to the chat UI. */
+  /* 顶栏常驻的「对话」入口，管理台一键进入对话页。 */
+  .chatLink {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 4px 11px; border-radius: 999px;
+    border: 1px solid var(--border-strong); background: var(--panel-2);
+    color: var(--accent); text-decoration: none; font-weight: 500;
+  }
+  .chatLink::after { content: "→"; font-size: 12px; }
+  .chatLink:hover { border-color: var(--accent); background: var(--accent-soft); color: var(--text); }
   /* Header stays full width; the console gets a sticky section menu. */
   /* 顶部保持全宽，控制台区域加左侧固定分区菜单。 */
   .shell {
@@ -489,6 +499,7 @@
 <header>
   <div class="brand"><span class="brandName" data-i18n="admin.brand">知识库管理</span><span data-i18n="admin.brandSub">ingestion console</span></div>
   <div class="meta">
+    <a class="chatLink" href="/ui/" data-i18n="admin.openChat" data-i18n-title="admin.openChatTitle" data-i18n-aria-label="admin.openChatTitle">对话</a>
     <span class="deptBadge deptPicker" id="currentDeptBadge" hidden title="切换当前部门" data-i18n-title="admin.switchDept">
       <span data-i18n="admin.currentDept">当前部门</span>
       <select id="deptHeader" aria-label="当前部门" data-i18n-aria-label="admin.currentDept"></select>
