@@ -30,6 +30,25 @@ def main():
         action="store_true",
         help="do not delete chunks whose source PDF was removed",
     )
+    parser.add_argument(
+        "--prefetch",
+        dest="prefetch",
+        action="store_true",
+        default=None,
+        help="parse/chunk the next document while the current one is embedded",
+    )
+    parser.add_argument(
+        "--no-prefetch",
+        dest="prefetch",
+        action="store_false",
+        help="force sequential parse -> embed -> write (overrides .env)",
+    )
+    parser.add_argument(
+        "--prefetch-depth",
+        type=int,
+        default=None,
+        help="prepared documents kept in memory (1-8)",
+    )
     args = parser.parse_args()
 
     root = settings.DATA_DIR
@@ -56,8 +75,13 @@ def main():
         print("Building a shadow index...")
         kb_engine.begin_rebuild()
 
-    etl = EnterpriseETL(data_dir=root)
+    etl = EnterpriseETL(
+        data_dir=root,
+        prefetch=args.prefetch,
+        prefetch_depth=args.prefetch_depth,
+    )
     print(f"Chunking: {etl.chunk_description()}")
+    print(f"Pipeline: {etl.pipeline_description()}")
     keep = set()
 
     for dept in departments:

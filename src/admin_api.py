@@ -447,6 +447,7 @@ def _run_job(job_id: str, dept: Optional[str], reset: bool) -> None:
             data_dir=settings.DATA_DIR, on_log=lambda m: _job_log(job_id, m)
         )
         _job_log(job_id, f"Chunking: {etl.chunk_description()}")
+        _job_log(job_id, f"Pipeline: {etl.pipeline_description()}")
         root = _data_root()
         departments = [dept] if dept else _list_depts()
         if not departments:

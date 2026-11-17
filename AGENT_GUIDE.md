@@ -930,6 +930,8 @@ VECTOR_STORE_TYPE=milvus python scripts/eval_retrieval.py
 
 | `LOCAL_EMBEDDING_MODEL` | `BAAI/bge-small-zh-v1.5` | 本地 embedding（512 维） |
 | `EMBEDDING_BATCH_SIZE` | `32` | 本地 embedding 入库 batch（32–64 通常更吞吐） |
+| `INGEST_PREFETCH` | `false` | 解析下一份文件时并行嵌入当前文件（PDF 解析与 embedding 重叠，通常快 30–45%） |
+| `INGEST_PREFETCH_DEPTH` | `1` | 预取队列深度（1–8，即内存中最多几份已解析文档） |
 | `EMBEDDING_MODEL` | `text-embedding-3-small` | `EMBEDDING_BACKEND=openai` 时使用 |
 | `HF_ENDPOINT` | `https://hf-mirror.com` | 模型下载镜像（`src/__init__.py` 设定） |
 | `DATA_DIR` | `./data` | 入库根目录（CLI 与管理台共用） |
@@ -1101,7 +1103,7 @@ python scripts/bench_retrieval.py
 8. **混合检索（能力自适应）**：`HYBRID_ENGINE=auto` 默认。Milvus ≥ 2.5 且集合含 BM25 稀疏字段时，用服务端 `hybrid_search` + `RRFRanker`（一次请求完成稠密+稀疏融合）；否则自动回退到 `src/lexical.py` 的进程内 BM25（中英文分词：英文按词、中文按字 + 二元组，RRF 融合）。FAISS 永远走进程内 BM25。`local` 强制进程内，`milvus` 在能力不足时启动即报错（不会静默降级）。进程内 BM25 首次查询需加载该部门全部 chunk，启动后与入库后都会后台预热；`HYBRID_MAX_DOCS` 限制单部门语料。早期 24 条评测 MRR 0.88 → 0.89，精确标识符（如 `DEMO-GUEST`）类查询收益最明显。
 
     从 2.4 升级到 2.5 后，旧集合没有稀疏字段：要么 `python run_ingestion.py --reset` 重建（推荐），要么先设 `HYBRID_ENGINE=local` 继续跑。可用 `GET /info` 的 `hybrid.engine` 确认当前实际走哪条路径；2.5 上运行 `python scripts/check_hybrid_milvus.py` 做端到端验证（使用临时集合，完成后删除）。
-9. **评测闭环**：`eval/cases.jsonl` + `scripts/eval_retrieval.py`。当前 84 条：原有 Tech/Finance/HR/Demo 18 个命中 + 6 个跨部门泄漏，另加 60 条「公共」编程 PDF 用例（Java/Python/SQL/Docker/Git 等）。除 `expect_sources` 外，新的 `expect_contains` 会检查命中 chunk 是否真的包含关键词，避免“文件名对了但片段错了”仍算通过。旧索引（800 字分片）基线：`hit@6=77/78（99%）`、`MRR=0.91`、`content@6=54/60（90%）`、`content-MRR=0.80`、p50≈30ms、p95≈57ms；重切分片、换重排模型或改混合策略后都跑同一套用例对比。
+9. **评测闭环**：`eval/cases.jsonl` + `scripts/eval_retrieval.py`。当前 84 条：原有 Tech/Finance/HR/Demo 18 个命中 + 6 个跨部门泄漏，另加 60 条「公共」编程 PDF 用例（Java/Python/SQL/Docker/Git 等）。除 `expect_sources` 外，新的 `expect_contains` 会检查命中 chunk 是否真的包含关键词，避免“文件名对了但片段错了”仍算通过。旧索引（800 字分片）基线：`hit@6=77/78（99%）`、`MRR=0.91`、`content@6=54/60（90%）`、`content-MRR=0.80`、p50≈30ms、p95≈57ms；450-token 重切后（9766 chunks）：`hit@6=78/78（100%）`、`MRR=0.92`、`content@6=54/60（90%）`、`content-MRR=0.82`、p50≈33ms、p95≈114ms。重切分片、换重排模型或改混合策略后都跑同一套用例对比。
 
 ### 8.4 服务层
 
@@ -1114,10 +1116,11 @@ python scripts/bench_retrieval.py
 
 ### 8.5 入库层
 
-1. `run_ingestion.py` 按部门循环、逐个 `add_documents`；文档多时可改为批量/并发 embedding（`encode_kwargs={"batch_size": 64}`）。
-2. 大文件可先做 OCR/表格抽取，避免 PDF 解析丢内容导致检索命中率低。
-3. 增量入库已按 `doc_hash` 跳过未变文件、按 `doc_id` 替换与清理；如需彻底清空用 `--reset`。
-4. 新增格式只需在 `src/loaders.py` 实现 `_load_xxx` 并注册扩展名；解析器应返回带 `kind` 与定位元数据的 `Document`。
+1. **预取流水线**：`INGEST_PREFETCH=true`（深度 `INGEST_PREFETCH_DEPTH`，默认 1）时，后台线程解析/切分下一份变更文档，主线程同时 embedding + 写入。实测 `公共/` 的 PDF 解析与 embedding 各占约一半（ionic.pdf 解析 20.2s / 嵌入 23.7s），所以入库总耗时实测可降 20–25%（三份大 PDF：110.9s → 89.4s）；预取期间会把 embedding 线程数限制为 `cpu_count - 2`，给解析线程留出 CPU，否则两边抢核反而更慢。所有向量库读写仍在主线程，`doc_hash` 跳过、`--reset` 影子索引与统计结果完全不变。CLI 可用 `--prefetch` / `--no-prefetch` / `--prefetch-depth N` 覆盖。
+2. `run_ingestion.py` 按部门循环、逐个 `add_documents`；`EMBEDDING_BATCH_SIZE`（默认 32）控制本地 embedding batch，32–64 通常更吞吐。
+3. 大文件可先做 OCR/表格抽取，避免 PDF 解析丢内容导致检索命中率低。
+4. 增量入库已按 `doc_hash` 跳过未变文件、按 `doc_id` 替换与清理；如需彻底清空用 `--reset`。
+5. 新增格式只需在 `src/loaders.py` 实现 `_load_xxx` 并注册扩展名；解析器应返回带 `kind` 与定位元数据的 `Document`。
 
 ---
 

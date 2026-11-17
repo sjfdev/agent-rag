@@ -340,6 +340,30 @@ three agree before you push a tag.
   （默认 32，最大 512）控制本地 sentence-transformers 入库 batch；token 计数增加
   缓存，避免递归切分重复 encode。这些改动不改变向量与分片边界。
 
+- **Prefetch ingestion pipeline**: `INGEST_PREFETCH=true` parses and chunks the
+  next changed document on a worker thread while the main thread embeds and
+  writes the current one, so PDF text extraction and embedding overlap instead
+  of running one after the other. PDFs are roughly half parse / half embed
+  (e.g. `ionic.pdf`: 20.2s parse vs 23.7s embed), so ingestion wall time drops
+  by roughly 20–25% (measured 110.9s → 89.4s on three large PDFs). Embedding
+  threads are capped to `cpu_count - 2` while the worker parses, otherwise both
+  phases fight for every core and the overlap becomes a net loss.
+  `INGEST_PREFETCH_DEPTH` (1–8, default 1) bounds how many
+  prepared documents are held in memory. All vector-store access stays on the
+  main thread: skip detection, stats/log lines, crash-safe replacement and the
+  shadow rebuild are unchanged, and turning the flag off restores the exact
+  previous path. CLI overrides: `--prefetch` / `--no-prefetch` /
+  `--prefetch-depth N`.
+  <br>**入库预取流水线（中文）**：`INGEST_PREFETCH=true` 时后台线程解析/切分
+  下一份变更文档，主线程同时 embedding 并写入，让 PDF 解析与嵌入重叠执行。PDF
+  通常解析与嵌入各占一半（如 `ionic.pdf` 解析 20.2s、嵌入 23.7s），因此入库总
+  耗时约降 20–25%（三份大 PDF 实测 110.9s → 89.4s）；同时把 embedding 线程数
+  限制为 `cpu_count - 2`，给解析线程留出 CPU，否则两阶段互相抢核反而更慢。
+  `INGEST_PREFETCH_DEPTH`（1–8，默认 1）限制内存中缓存几份已
+  解析文档。所有向量库访问仍在主线程，增量跳过、统计/日志、崩溃安全替换与影子
+  重建行为不变；关闭开关即回到原路径。CLI 可用 `--prefetch` / `--no-prefetch` /
+  `--prefetch-depth N` 覆盖。
+
 ### Changed
 
 - **Faster image rebuilds**: the Dockerfile now bakes the embedding model into
