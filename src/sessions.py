@@ -55,10 +55,21 @@ CREATE TABLE IF NOT EXISTS messages (
     created_at TEXT NOT NULL,
     PRIMARY KEY (session_id, seq)
 );
+CREATE TABLE IF NOT EXISTS feedback (
+    session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    seq INTEGER NOT NULL,
+    user_id TEXT NOT NULL,
+    rating INTEGER NOT NULL,
+    comment TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (session_id, seq, user_id)
+);
 CREATE INDEX IF NOT EXISTS idx_sessions_user
     ON sessions(user_id, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_messages_session
     ON messages(session_id, seq);
+CREATE INDEX IF NOT EXISTS idx_feedback_session
+    ON feedback(session_id, seq);
 """
 
 _initialized: set = set()
@@ -76,6 +87,12 @@ def _now() -> str:
 def _resolve(value: str) -> Path:
     path = Path(value).expanduser()
     return path if path.is_absolute() else (Path.cwd() / path).resolve()
+
+
+def _like_pattern(value: str) -> str:
+    """Escape LIKE wildcards so a search for `%` matches a literal percent."""
+    escaped = value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"%{escaped}%"
 
 
 class SessionStore:
@@ -153,16 +170,62 @@ class SessionStore:
             ).fetchone()
         return self._decode_session(row) if row else None
 
-    def list_sessions(self, user_id: str, limit: int = 50) -> List[Dict[str, Any]]:
+    def list_sessions(
+        self, user_id: str, limit: int = 50, offset: int = 0
+    ) -> List[Dict[str, Any]]:
         with self._connection() as conn:
             rows = conn.execute(
                 "SELECT s.*, COALESCE((SELECT MAX(m.seq) FROM messages m "
                 "WHERE m.session_id = s.id), 0) AS message_count "
                 "FROM sessions s WHERE s.user_id = ? "
-                "ORDER BY s.updated_at DESC LIMIT ?",
-                (user_id, max(int(limit), 1)),
+                "ORDER BY s.updated_at DESC LIMIT ? OFFSET ?",
+                (user_id, max(int(limit), 1), max(int(offset), 0)),
             ).fetchall()
         return [self._decode_session(row) for row in rows]
+
+    def search_sessions(
+        self,
+        user_id: str,
+        query: str,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> List[Dict[str, Any]]:
+        """Sessions whose title, summary or any message matches `query`."""
+        pattern = _like_pattern((query or "").strip())
+        with self._connection() as conn:
+            rows = conn.execute(
+                "SELECT s.*, COALESCE((SELECT MAX(m.seq) FROM messages m "
+                "WHERE m.session_id = s.id), 0) AS message_count "
+                "FROM sessions s WHERE s.user_id = ? AND ("
+                "s.id LIKE ? ESCAPE '\\' OR s.title LIKE ? ESCAPE '\\' "
+                "OR s.summary LIKE ? ESCAPE '\\' "
+                "OR EXISTS (SELECT 1 FROM messages m WHERE m.session_id = s.id "
+                "AND m.content LIKE ? ESCAPE '\\')) "
+                "ORDER BY s.updated_at DESC LIMIT ? OFFSET ?",
+                (
+                    user_id,
+                    pattern,
+                    pattern,
+                    pattern,
+                    pattern,
+                    max(int(limit), 1),
+                    max(int(offset), 0),
+                ),
+            ).fetchall()
+        return [self._decode_session(row) for row in rows]
+
+    def rename_session(self, session_id: str, user_id: str, title: str) -> bool:
+        cleaned = " ".join((title or "").split())[:120]
+        if not cleaned:
+            return False
+        with self._connection() as conn:
+            cursor = conn.execute(
+                "UPDATE sessions SET title = ?, updated_at = ? "
+                "WHERE id = ? AND user_id = ?",
+                (cleaned, _now(), session_id, user_id),
+            )
+            conn.commit()
+        return cursor.rowcount > 0
 
     def delete_session(self, session_id: str, user_id: str) -> bool:
         with self._connection() as conn:
@@ -183,8 +246,14 @@ class SessionStore:
         answer: str,
         sources: Optional[List[Dict[str, Any]]] = None,
         degraded: bool = False,
-    ) -> bool:
-        """Append a user/assistant pair; returns False for a foreign session."""
+        return_seq: bool = False,
+    ) -> Any:
+        """Append a user/assistant pair.
+
+        Returns False for a foreign session. When `return_seq` is true it
+        returns the assistant message sequence instead (or None on failure), so
+        the caller can attach feedback to that turn.
+        """
         now = _now()
         payload = json.dumps(sources or [], ensure_ascii=False)
         with self._connection() as conn:
@@ -193,7 +262,7 @@ class SessionStore:
                 (session_id, user_id),
             ).fetchone()
             if session is None:
-                return False
+                return None if return_seq else False
             next_seq = conn.execute(
                 "SELECT COALESCE(MAX(seq), 0) + 1 FROM messages WHERE session_id = ?",
                 (session_id,),
@@ -214,7 +283,7 @@ class SessionStore:
                 (title, now, session_id),
             )
             conn.commit()
-        return True
+        return next_seq + 1 if return_seq else True
 
     def get_messages(
         self, session_id: str, user_id: str, limit: Optional[int] = None
@@ -225,20 +294,73 @@ class SessionStore:
                 (session_id, user_id),
             ).fetchone():
                 return []
-            sql = (
-                "SELECT seq, role, content, sources, degraded, created_at "
-                "FROM messages WHERE session_id = ? ORDER BY seq"
+            columns = (
+                "m.seq, m.role, m.content, m.sources, m.degraded, m.created_at, "
+                "f.rating AS feedback_rating, f.comment AS feedback_comment"
             )
-            params: Tuple[Any, ...] = (session_id,)
+            join = (
+                "FROM messages m LEFT JOIN feedback f ON f.session_id = m.session_id "
+                "AND f.seq = m.seq AND f.user_id = ?"
+            )
+            sql = f"SELECT {columns} {join} WHERE m.session_id = ? ORDER BY m.seq"
+            params: Tuple[Any, ...] = (user_id, session_id)
             if limit:
                 sql = (
-                    "SELECT * FROM (SELECT seq, role, content, sources, degraded, "
-                    "created_at FROM messages WHERE session_id = ? "
-                    "ORDER BY seq DESC LIMIT ?) ORDER BY seq"
+                    f"SELECT * FROM (SELECT {columns} {join} "
+                    "WHERE m.session_id = ? ORDER BY m.seq DESC LIMIT ?) "
+                    "ORDER BY seq"
                 )
-                params = (session_id, max(int(limit), 1))
+                params = (user_id, session_id, max(int(limit), 1))
             rows = conn.execute(sql, params).fetchall()
         return [self._decode_row(row) for row in rows]
+
+    # -- feedback ---------------------------------------------------------
+
+    def set_feedback(
+        self,
+        session_id: str,
+        user_id: str,
+        seq: int,
+        rating: int,
+        comment: str = "",
+    ) -> bool:
+        """Store one rating per (session, message, user); returns False if invalid."""
+        if rating not in (1, -1):
+            return False
+        with self._connection() as conn:
+            owned = conn.execute(
+                "SELECT 1 FROM sessions WHERE id = ? AND user_id = ?",
+                (session_id, user_id),
+            ).fetchone()
+            if owned is None:
+                return False
+            message = conn.execute(
+                "SELECT role FROM messages WHERE session_id = ? AND seq = ?",
+                (session_id, int(seq)),
+            ).fetchone()
+            if message is None or message["role"] != "assistant":
+                return False
+            conn.execute(
+                "INSERT INTO feedback (session_id, seq, user_id, rating, comment, "
+                "created_at) VALUES (?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(session_id, seq, user_id) DO UPDATE SET "
+                "rating = excluded.rating, comment = excluded.comment, "
+                "created_at = excluded.created_at",
+                (session_id, int(seq), user_id, int(rating), comment[:400], _now()),
+            )
+            conn.commit()
+        return True
+
+    def get_feedback(
+        self, session_id: str, user_id: str
+    ) -> List[Dict[str, Any]]:
+        with self._connection() as conn:
+            rows = conn.execute(
+                "SELECT seq, rating, comment, created_at FROM feedback "
+                "WHERE session_id = ? AND user_id = ? ORDER BY seq",
+                (session_id, user_id),
+            ).fetchall()
+        return [dict(row) for row in rows]
 
     def context(
         self, session_id: str, user_id: str
@@ -281,6 +403,11 @@ class SessionStore:
         except (TypeError, json.JSONDecodeError):
             item["sources"] = []
         item["degraded"] = bool(item.get("degraded"))
+        rating = item.pop("feedback_rating", None)
+        comment = item.pop("feedback_comment", "") or ""
+        item["feedback"] = (
+            {"rating": int(rating), "comment": comment} if rating is not None else None
+        )
         return item
 
     # -- summary ----------------------------------------------------------

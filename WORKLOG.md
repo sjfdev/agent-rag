@@ -1366,11 +1366,33 @@ and rejected with 409 while ingestion runs. The engine gained
 - `scripts/doctor.py`：全部 OK（磁盘 24GB 可用、备份 2 天、2 个本地账号、26 chunks）
 - `scripts/check_release.py --no-tests`：4 项通过，HEAD 尚未打 tag（`v1.1.0-24-ge906271`）
 
+### 同日补齐（1–5）
+
+- 预设问题按界面语言发送（`data-q-zh`，中文界面不再发英文问题）
+- 删除会话失败改为侧栏状态并保留刷新重试，不再往对话里插错误气泡
+- 401 回登录框前恢复草稿；429/413/5xx 恢复草稿并按需提供「重试」（429/5xx 可直接重发）
+- Markdown 导出补充时间戳、降级说明与编号引用（含部门/位置）
+- 长会话只渲染最近 60 条，提供「显示更早」按页展开；历史仍完整保存在 `history`
+- `GET /sessions` 增加 `limit`/`offset`（默认 0，最大 limit 100），侧栏按 50 条分页并提供「加载更多」；搜索改走服务端 `q`（标题/摘要/消息正文）
+- 验证：`pytest -q` **645 passed**（新增 offset 与前端静态守卫）；应用已重建并启动，`/health` 200、`/openapi.json` 可见 `offset`
+
+### 同日补齐（6–15）
+
+- 无障碍：动态头像 `aria-hidden`，复制/重生成/重试/赞踩/分享按钮补 `aria-label`，生成中 Esc 可停止（弹窗/抽屉打开时不抢 Esc）
+- 移动端：「回到底部」改用 `--compose-offset` 跟随真实 footer 高度（软键盘/换行不再遮挡），窄屏状态弹层改为左右 12px 固定宽度并限高滚动
+- 会话：`PATCH /sessions/{id}` 重命名（侧栏 ✎ 入口 + 主题弹窗），`GET /sessions?q=` 按标题/摘要/正文搜索（服务端分页，输入防抖）
+- 反馈：`feedback` 表按（会话, 消息 seq, 用户）upsert，`POST/GET /sessions/{id}/feedback`；回答工具条提供赞/踩并回显已选状态
+- 引用：响应新增 `citations`（1-based 编号映射），前端把正文 `[n]` 变成可点击锚点；`?session=` 深链分享（同一用户身份可打开）
+- 原文件：`GET /sources/file` 在部门 + ACL 校验后返回 DATA_DIR 内的原始文件（inline/attachment），预览弹窗新增「打开原文件」「下载原文件」
+- 产品化：`/ui` 与 `/admin` 账户菜单新增「切换账号」；登录页提示忘记密码联系管理员；「调试信息」展开改写 query、召回候选与重排结果；流式回答按 120ms 节流增量渲染 Markdown
+- 验证：`pytest -q` **695 passed**（含并行落地的许可/交付测试），`ruff check src tests main.py run_ingestion.py` 通过
+
 ### 已知限制 / 未做
 
-- 会话重命名缺少后端 `PATCH` 接口；回答正文内联引用锚点需要后端返回 span，未做
-- 赞踩反馈、分享链接、直接打开原文件均无对应接口；预览只能复制文本
-- 耗时信息只对本次页面新生成的回答生效，重新打开的历史消息不带 timings
+- 历史消息只保存正文/引用，重新打开会话不显示 timings 与检索明细（仅本次生成可见）；检索明细会返回候选与重排后的元数据，不含 chunk 全文
+- 赞踩已落库但暂无管理台导出/标注页面，评估脚本可直接读 `logs/sessions.db` 的 `feedback` 表
+- 分享链接指向 `/ui/?session=<id>`，仍受会话所有者校验；跨账号分享需要单独的快照/公开链接设计
+- 原文件下载要求文件仍在 `DATA_DIR` 且至少有一个可检索 chunk，纯清理后的孤儿文件不会通过引用入口暴露
 
 ### English summary
 

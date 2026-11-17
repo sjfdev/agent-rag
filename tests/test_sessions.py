@@ -170,6 +170,8 @@ def test_run_persists_turns_and_returns_session_id(store, monkeypatch):
     )
     assert first.session_id == session_id
     assert first.response == "stored answer"
+    assert first.citations == [{"index": 1, "source": "Tech/a.md"}]
+    assert first.message_seq == 2
 
     second = chat_service.run(
         ChatRequest(user_id="u1", user_dept="Tech", message="q2", session_id=session_id),
@@ -262,3 +264,82 @@ def test_summary_failure_is_not_retried_immediately(store, monkeypatch):
     store.maybe_summarize(session_id, "u1")
     store.maybe_summarize(session_id, "u1")
     assert len(calls) == 1
+
+
+def test_rename_and_search_sessions(store):
+    sid = store.create_session("u1", "Tech")["session_id"]
+    store.append_turn(sid, "u1", "annual leave policy", "You get 20 days")
+    assert store.rename_session(sid, "u1", "  My   leave  ") is True
+    assert store.get_session(sid, "u1")["title"] == "My leave"
+    assert store.rename_session(sid, "u2", "nope") is False
+
+    assert [item["session_id"] for item in store.search_sessions("u1", "leave")] == [sid]
+    assert [item["session_id"] for item in store.search_sessions("u1", "20 days")] == [sid]
+    assert store.search_sessions("u1", "missing") == []
+    assert store.search_sessions("u2", "leave") == []
+    # LIKE wildcards are escaped, not treated as a match-all pattern.
+    assert store.search_sessions("u1", "%") == []
+
+
+def test_feedback_is_per_user_and_message(store):
+    sid = store.create_session("u1", "Tech")["session_id"]
+    store.append_turn(sid, "u1", "q", "a")
+    assert store.set_feedback(sid, "u1", 2, 1) is True
+    assert store.set_feedback(sid, "u1", 2, -1) is True  # upsert
+    saved = store.get_feedback(sid, "u1")
+    assert [(item["seq"], item["rating"]) for item in saved] == [(2, -1)]
+    assistant = store.get_messages(sid, "u1")[1]
+    assert assistant["feedback"]["rating"] == -1
+    # Only assistant messages can be rated, and only by their owner.
+    assert store.set_feedback(sid, "u1", 1, 1) is False
+    assert store.set_feedback(sid, "u2", 2, 1) is False
+    assert store.set_feedback(sid, "u1", 2, 0) is False
+
+
+def test_sessions_api_rename_search_and_feedback(store):
+    from fastapi.testclient import TestClient
+
+    import main
+
+    with TestClient(main.app) as client:
+        session_id = client.post(
+            "/sessions", json={"user_id": "u1", "dept": "Tech"}
+        ).json()["session_id"]
+        store.append_turn(session_id, "u1", "vpn access", "Use the portal")
+
+        renamed = client.patch(
+            f"/sessions/{session_id}",
+            params={"user_id": "u1"},
+            json={"title": "VPN"},
+        )
+        assert renamed.status_code == 200
+        assert renamed.json()["title"] == "VPN"
+
+        found = client.get("/sessions", params={"user_id": "u1", "q": "portal"})
+        assert found.status_code == 200
+        assert [item["session_id"] for item in found.json()["sessions"]] == [session_id]
+
+        feedback = client.post(
+            f"/sessions/{session_id}/feedback",
+            params={"user_id": "u1"},
+            json={"seq": 2, "rating": 1},
+        )
+        assert feedback.status_code == 200
+        detail = client.get(f"/sessions/{session_id}", params={"user_id": "u1"}).json()
+        assert detail["messages"][1]["feedback"]["rating"] == 1
+
+        foreign = client.patch(
+            f"/sessions/{session_id}",
+            params={"user_id": "u2"},
+            json={"title": "stolen"},
+        )
+        assert foreign.status_code == 404
+
+
+def test_list_sessions_supports_offset(store):
+    ids = [store.create_session("u1", "Tech")["session_id"] for _ in range(3)]
+    first = store.list_sessions("u1", limit=2, offset=0)
+    second = store.list_sessions("u1", limit=2, offset=2)
+    assert len(first) == 2
+    assert len(second) == 1
+    assert {item["session_id"] for item in first + second} == set(ids)

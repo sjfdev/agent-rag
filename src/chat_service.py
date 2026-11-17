@@ -331,6 +331,7 @@ def timings_from(final_state: Dict[str, Any], started: float) -> Dict[str, Any]:
     timings = {
         k: (int(v) if k.endswith("_calls") else round(float(v), 1))
         for k, v in (final_state.get("timings") or {}).items()
+        if not k.startswith("_")
     }
     timings.setdefault("rerank_ms", 0.0)
     timings["total_ms"] = round((time.perf_counter() - started) * 1000, 1)
@@ -342,6 +343,20 @@ def timings_from(final_state: Dict[str, Any], started: float) -> Dict[str, Any]:
         1,
     )
     return timings
+
+
+def citations_from(sources: Any) -> List[Dict[str, Any]]:
+    """Number the cited sources exactly as the answer renders them."""
+    items = []
+    for index, source in enumerate(sources or [], start=1):
+        if isinstance(source, dict):
+            items.append({"index": index, **source})
+    return items
+
+
+def _retrieval_debug(final_state: Dict[str, Any]) -> Dict[str, Any]:
+    value = final_state.get("retrieval_debug")
+    return value if isinstance(value, dict) else {}
 
 
 def cached_timings(started: float) -> Dict[str, Any]:
@@ -451,23 +466,28 @@ def _persist_turn(
     answer: str,
     sources: Optional[List[Dict[str, Any]]],
     degraded: bool,
-) -> None:
-    """Store a finished turn; a session write must never fail the answer."""
+) -> Optional[int]:
+    """Store a finished turn; a session write must never fail the answer.
+
+    Returns the assistant message sequence so feedback can target it.
+    """
     if not prepared.session_id:
-        return
+        return None
     try:
-        session_store.append_turn(
+        return session_store.append_turn(
             prepared.session_id,
             prepared.user_id,
             request.message,
             answer,
             sources or [],
             degraded,
+            return_seq=True,
         )
     except Exception:
         logger.warning(
             "failed to persist session turn id=%s", prepared.session_id, exc_info=True
         )
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -489,15 +509,17 @@ def run(request: ChatRequest, headers: Any, endpoint: str = "chat") -> ChatRespo
             elapsed_seconds=time.perf_counter() - started,
             timings=timings,
         )
-        _persist_turn(
+        message_seq = _persist_turn(
             prepared, request, cached.get("response", ""), cached.get("sources"), False
         )
         return ChatResponse(
             response=cached.get("response", ""),
             sources=cached.get("sources") or [],
+            citations=citations_from(cached.get("sources")),
             timings=timings,
             request_id=prepared.request_id,
             session_id=prepared.session_id,
+            message_seq=message_seq or 0,
         )
 
     try:
@@ -523,7 +545,7 @@ def run(request: ChatRequest, headers: Any, endpoint: str = "chat") -> ChatRespo
             force_bypass=prepared.has_history,
         )
     answer = final_state["messages"][-1].content
-    _persist_turn(
+    message_seq = _persist_turn(
         prepared, request, answer, final_state.get("sources"), degraded
     )
     logger.info(
@@ -543,9 +565,12 @@ def run(request: ChatRequest, headers: Any, endpoint: str = "chat") -> ChatRespo
     return ChatResponse(
         response=answer,
         sources=final_state.get("sources") or [],
+        citations=citations_from(final_state.get("sources")),
+        retrieval=_retrieval_debug(final_state),
         timings=timings,
         request_id=prepared.request_id,
         session_id=prepared.session_id,
+        message_seq=message_seq or 0,
         degraded=degraded,
         degraded_reason=(final_state.get("degraded_reason") or "") if degraded else "",
     )
@@ -681,7 +706,7 @@ async def _produce(
             elapsed_seconds=time.perf_counter() - started,
             timings=timings,
         )
-        _persist_turn(
+        message_seq = _persist_turn(
             prepared, request, cached.get("response", ""), cached.get("sources"), False
         )
         await queue.put(sse({"type": "token", "content": cached.get("response", "")}))
@@ -690,8 +715,10 @@ async def _produce(
                 {
                     "type": "done",
                     "sources": cached.get("sources") or [],
+                    "citations": citations_from(cached.get("sources")),
                     "timings": timings,
                     "session_id": prepared.session_id,
+                    "message_seq": message_seq or 0,
                 }
             )
         )
@@ -736,7 +763,7 @@ async def _produce(
                 prepared.scope,
                 force_bypass=prepared.has_history,
             )
-        _persist_turn(
+        message_seq = _persist_turn(
             prepared,
             request,
             final_state["messages"][-1].content,
@@ -760,8 +787,11 @@ async def _produce(
         done: Dict[str, Any] = {
             "type": "done",
             "sources": final_state.get("sources") or [],
+            "citations": citations_from(final_state.get("sources")),
+            "retrieval": _retrieval_debug(final_state),
             "timings": timings,
             "session_id": prepared.session_id,
+            "message_seq": message_seq or 0,
         }
         if degraded:
             done["degraded"] = True

@@ -198,7 +198,10 @@
     outline: 2px solid var(--accent); outline-offset: 2px;
   }
   .scrollBottom {
-    position: absolute; right: 18px; bottom: 190px; z-index: 20;
+    /* --compose-offset tracks the real footer height (mobile keyboard + wrapped
+       controls), so the button never sits under the input area. */
+    position: absolute; right: 18px;
+    bottom: calc(var(--compose-offset, 190px) + 12px); z-index: 20;
     box-shadow: 0 8px 24px rgba(0, 0, 0, .35);
   }
   .sessionClose { display: none; }
@@ -258,7 +261,14 @@
     color: var(--muted); font-size: 15px; line-height: 1; border-radius: 7px;
   }
   .sessionDel:hover { color: var(--bad); background: var(--panel-2); }
+  .sessionRename {
+    flex: 0 0 26px; background: transparent; border: 0; cursor: pointer;
+    color: var(--muted); font-size: 13px; line-height: 1; border-radius: 7px;
+  }
+  .sessionRename:hover { color: var(--accent); background: var(--panel-2); }
   .sessionEmpty { padding: 16px 14px; font-size: 12px; color: var(--muted); }
+  .sessionMore { margin: 8px 14px 12px; padding: 4px 9px; font-size: 12px; }
+  .loadEarlier { margin: 0 0 12px; padding: 6px 10px; font-size: 12px; }
   .sessionMask {
     position: fixed; inset: 0; z-index: 39; background: var(--overlay);
   }
@@ -321,6 +331,7 @@
   .chatStatusBody {
     position: absolute; right: 0; top: calc(100% + 6px); z-index: 40;
     display: grid; gap: 8px; min-width: 220px; padding: 10px;
+    max-width: calc(100vw - 24px);
     background: var(--panel); border: 1px solid var(--border-strong);
     border-radius: 10px; box-shadow: 0 12px 32px rgba(0, 0, 0, .3);
   }
@@ -336,10 +347,32 @@
   .msgActions button {
     padding: 3px 8px; font-size: 11px; border-radius: 7px;
   }
+  .feedbackGroup { display: inline-flex; gap: 6px; }
   .srchitNum {
     display: inline-block; min-width: 18px; text-align: center;
     margin-right: 6px; font-size: 11px; color: var(--accent);
   }
+  .bubble.md a.cite {
+    display: inline-block; margin: 0 1px; padding: 0 3px;
+    border-radius: 4px; background: var(--accent-soft);
+    font-size: 11px; line-height: 1.4; text-decoration: none;
+    vertical-align: super;
+  }
+  .bubble.md a.cite:hover, .bubble.md a.cite:focus-visible {
+    background: var(--accent); color: var(--accent-fg);
+  }
+  .msgActions button[aria-pressed="true"] {
+    color: var(--accent); border-color: var(--accent);
+  }
+  .retrievalDebug { margin-top: 8px; font-size: 11px; color: var(--muted); }
+  .retrievalDebug summary { cursor: pointer; color: var(--accent); }
+  .retrievalDebug dl { margin: 6px 0 0; display: grid; gap: 4px; }
+  .retrievalDebug dt { color: var(--muted); }
+  .retrievalDebug dd { margin: 0; color: var(--text); word-break: break-word; }
+  .retrievalDebug ol { margin: 4px 0 0; padding-left: 18px; }
+  .retrievalDebug li { margin: 2px 0; word-break: break-word; }
+  .renameInput { width: 100%; margin-bottom: 14px; }
+  .gateHelp { margin: -2px 0 2px; font-size: 12px; color: var(--muted); }
   .sessionSearch { padding: 8px 10px 0; }
   .sessionSearch input { width: 100%; }
   .sessionStatus { padding: 6px 14px 0; font-size: 11px; color: var(--muted); }
@@ -391,7 +424,11 @@
     .presets button { flex: 0 0 auto; }
     .hint { line-height: 1.5; }
     .sessionClose { display: inline-block; }
-    .scrollBottom { bottom: 220px; right: 12px; }
+    .scrollBottom { right: 12px; }
+    .chatStatusBody {
+      position: fixed; left: 12px; right: 12px; top: 64px;
+      min-width: 0; max-height: 70vh; overflow-y: auto;
+    }
   }
   .bubble.streaming::after { content: "▍"; margin-left: 2px; animation: blink 1s steps(1) infinite; }
   @keyframes blink { 50% { opacity: 0; } }
@@ -439,6 +476,8 @@
     <div class="sessionStatus" id="sessionStatus" hidden></div>
     <button class="ghost sessionRetry" id="sessionRetry" type="button" hidden data-i18n="common.retry">重试</button>
     <div class="sessionList" id="sessionList"></div>
+    <button class="ghost sessionMore" id="sessionMore" type="button" hidden
+            data-i18n="sessions.loadMore">加载更多</button>
     <div class="sessionEmpty" id="sessionEmpty" data-i18n="sessions.empty" hidden></div>
   </aside>
   <div class="sessionMask" id="sessionMask" hidden></div>
@@ -465,6 +504,7 @@
     <button class="ghost" id="newchat" title="在新标签页打开一个全新会话" data-i18n-title="chat.newChatTitle" data-i18n="chat.newChat">新对话（新窗口）</button>
     <button class="ghost" id="reset" data-i18n="chat.clear">清空当前</button>
     <button class="ghost" id="exportChat" hidden data-i18n="chat.export">导出</button>
+    <button class="ghost" id="switchAccount" hidden data-i18n="auth.switch">切换账号</button>
     <button class="ghost" id="logout" hidden data-i18n="auth.logout">退出登录</button>
   </div>
 
@@ -476,13 +516,13 @@
   </div>
 
   <div class="presets" id="presets">
-    <button data-q="What are the code review requirements?" data-i18n="chat.preset.codeReview">代码评审要求</button>
-    <button data-q="How many days of annual leave do I get and when do they expire?" data-i18n="chat.preset.annualLeave">年假与过期</button>
-    <button data-q="What is the total 2026 operating budget?" data-i18n="chat.preset.budget">2026 预算</button>
-    <button data-q="My laptop is broken and I need a replacement." data-i18n="chat.preset.ticket">报修/工单</button>
-    <button data-q="What are the salary bands in the 2026 budget?" data-i18n="chat.preset.salary">越权测试（薪资）</button>
-    <button data-q="How do I request VPN access?" data-dept="Demo" data-i18n="chat.preset.demoVpn">Demo VPN（多格式）</button>
-    <button data-q="What is the test coverage metric?" data-dept="Demo" data-i18n="chat.preset.demoMetric">Demo 指标（Excel）</button>
+    <button data-q="What are the code review requirements?" data-q-zh="代码评审有哪些要求？" data-i18n="chat.preset.codeReview">代码评审要求</button>
+    <button data-q="How many days of annual leave do I get and when do they expire?" data-q-zh="我有多少天年假？什么时候过期？" data-i18n="chat.preset.annualLeave">年假与过期</button>
+    <button data-q="What is the total 2026 operating budget?" data-q-zh="2026 年运营预算总额是多少？" data-i18n="chat.preset.budget">2026 预算</button>
+    <button data-q="My laptop is broken and I need a replacement." data-q-zh="我的笔记本电脑坏了，需要更换。" data-i18n="chat.preset.ticket">报修/工单</button>
+    <button data-q="What are the salary bands in the 2026 budget?" data-q-zh="2026 年预算里的薪资带宽是多少？" data-i18n="chat.preset.salary">越权测试（薪资）</button>
+    <button data-q="How do I request VPN access?" data-q-zh="如何申请 VPN 访问权限？" data-dept="Demo" data-i18n="chat.preset.demoVpn">Demo VPN（多格式）</button>
+    <button data-q="What is the test coverage metric?" data-q-zh="测试覆盖率指标是什么？" data-dept="Demo" data-i18n="chat.preset.demoMetric">Demo 指标（Excel）</button>
   </div>
   <div class="hint"><span data-i18n="chat.hint">回答会附带引用，点击可查看原文。</span>
     <label class="debugToggle"><input id="debugToggle" type="checkbox"> <span data-i18n="chat.debug">调试信息</span></label>
@@ -507,12 +547,25 @@
   </div>
 </div>
 
+<div class="confirm" id="renameModal" hidden role="dialog" aria-modal="true" aria-labelledby="renameTitle">
+  <form class="confirmCard" id="renameForm">
+    <h2 id="renameTitle" data-i18n="sessions.renameTitle">重命名会话</h2>
+    <input class="renameInput" id="renameInput" type="text" maxlength="120"
+           placeholder="会话名称" data-i18n-placeholder="sessions.renameTitle">
+    <div class="confirmActions">
+      <button type="button" class="ghost" id="renameCancel" data-i18n="common.cancel">取消</button>
+      <button type="submit" class="primary" id="renameOk" data-i18n="common.confirm">确认</button>
+    </div>
+  </form>
+</div>
+
 <div class="gate" id="gate" hidden>
   <form class="gateCard" id="loginForm">
     <h2 data-i18n="auth.title">登录知识库</h2>
     <p id="gateHint" data-i18n="auth.hint">
       使用账号密码登录；部门与权限由账号决定，无需手工填写。
     </p>
+    <p class="gateHelp" id="gateHelp" data-i18n="auth.forgot">忘记密码？请联系管理员重置。</p>
     <input id="username" type="text" placeholder="用户名" data-i18n-placeholder="auth.username" autocomplete="username">
     <input id="password" type="password" placeholder="密码" data-i18n-placeholder="auth.password" autocomplete="current-password">
     <details id="tokenFallback">
@@ -528,6 +581,10 @@
   <div class="previewCard">
     <div class="previewHead">
       <h3 id="previewTitle" data-i18n="chat.preview.title">原文预览</h3>
+      <a class="ghost" id="previewOpen" href="#" target="_blank" rel="noopener noreferrer"
+         hidden data-i18n="chat.preview.openFile">打开原文件</a>
+      <a class="ghost" id="previewDownload" href="#" download hidden
+         data-i18n="chat.preview.download">下载原文件</a>
       <button class="ghost" id="previewCopy" type="button" data-i18n="chat.copy">复制</button>
       <button class="ghost previewClose" id="previewClose" type="button"
               data-i18n="chat.preview.close" data-i18n-aria-label="chat.preview.close"
@@ -573,9 +630,16 @@ const charCount = document.getElementById("charCount");
 const sessionSearch = document.getElementById("sessionSearch");
 const sessionStatus = document.getElementById("sessionStatus");
 const sessionRetry = document.getElementById("sessionRetry");
+const sessionMore = document.getElementById("sessionMore");
 const previewCopyBtn = document.getElementById("previewCopy");
+const previewOpenLink = document.getElementById("previewOpen");
+const previewDownloadLink = document.getElementById("previewDownload");
 const confirmModal = document.getElementById("confirm");
+const renameModal = document.getElementById("renameModal");
+const renameInput = document.getElementById("renameInput");
 const chatThemeSelect = document.getElementById("chatTheme");
+const switchAccountBtn = document.getElementById("switchAccount");
+const footerEl = document.querySelector("footer");
 const t = window.i18n.t;
 
 let identity = null;
@@ -595,7 +659,19 @@ let abortController = null;
 let sessionsEnabled = false;
 let sessionId = "";
 let sessionsCache = [];
+let sessionsHasMore = false;
+let sessionsLoading = false;
+let sessionsPending = false;
+const SESSIONS_PAGE = 50;
 let stickToBottom = true;
+let suppressScroll = false;
+let sessionMessages = [];
+let sessionWindow = 60;
+const SESSION_PAGE = 60;
+let renameTarget = "";
+let previewSource = null;
+let sessionSearchTimer = null;
+const SHARED_SESSION = new URLSearchParams(location.search).get("session") || "";
 
 // Keep the transcript pinned to the newest message unless the user scrolled
 // up to read an earlier answer; then show a "back to bottom" affordance.
@@ -621,6 +697,22 @@ chat.addEventListener("scroll", () => {
   updateScrollButton();
 });
 scrollBottomBtn.onclick = () => scrollChat(true);
+
+// Keep the floating "back to bottom" button above the composer even when the
+// footer grows (wrapped controls, soft keyboard, safe-area padding).
+function syncComposeOffset() {
+  if (!footerEl) return;
+  const height = Math.round(footerEl.getBoundingClientRect().height) || 190;
+  document.documentElement.style.setProperty("--compose-offset", height + "px");
+}
+syncComposeOffset();
+window.addEventListener("resize", syncComposeOffset);
+if (window.visualViewport) {
+  window.visualViewport.addEventListener("resize", syncComposeOffset);
+}
+if (window.ResizeObserver && footerEl) {
+  new ResizeObserver(syncComposeOffset).observe(footerEl);
+}
 
 function updatePresets() {
   if (!presetsBox) return;
@@ -732,6 +824,9 @@ function showGate(message) {
   if (!gate) return;
   gate.hidden = false;
   if (whoami) whoami.hidden = true;
+  const logout = document.getElementById("logout");
+  if (logout) logout.hidden = true;
+  if (switchAccountBtn) switchAccountBtn.hidden = true;
   if (message) document.getElementById("gateErr").textContent = message;
 }
 
@@ -880,19 +975,16 @@ function addDegradedNote(bubble) {
 
 function renderSessions() {
   if (!sessionListEl) return;
-  const query = (sessionSearch && sessionSearch.value || "").trim().toLowerCase();
-  const items = sessionsCache.filter((item) => {
-    if (!query) return true;
-    return (item.title || "").toLowerCase().includes(query) ||
-      (item.session_id || "").toLowerCase().includes(query);
-  });
+  const query = (sessionSearch && sessionSearch.value || "").trim();
+  // Server-side search matches message content too, so the returned page is
+  // authoritative; filtering it again by title would hide content matches.
+  const items = sessionsCache;
   sessionListEl.textContent = "";
   if (sessionEmpty) {
     sessionEmpty.hidden = items.length > 0;
-    sessionEmpty.textContent = sessionsCache.length && !items.length
-      ? t("sessions.noMatch")
-      : t("sessions.empty");
+    sessionEmpty.textContent = query ? t("sessions.noMatch") : t("sessions.empty");
   }
+  if (sessionMore) sessionMore.hidden = !sessionsHasMore;
   const lang = window.i18n.currentLanguage();
   for (const item of items) {
     const row = document.createElement("div");
@@ -913,37 +1005,69 @@ function renderSessions() {
     open.title = item.title || t("sessions.untitled");
     open.onclick = () => openSession(item.session_id);
 
+    const rename = document.createElement("button");
+    rename.type = "button";
+    rename.className = "sessionRename";
+    rename.textContent = "✎";
+    rename.title = t("sessions.rename");
+    rename.setAttribute("aria-label", t("sessions.rename") + ": " + (item.title || t("sessions.untitled")));
+    rename.onclick = (event) => {
+      event.stopPropagation();
+      openRename(item);
+    };
+
     const del = document.createElement("button");
     del.type = "button";
     del.className = "sessionDel";
     del.textContent = "×";
     del.title = t("sessions.delete");
-    del.setAttribute("aria-label", t("sessions.delete"));
+    del.setAttribute("aria-label", t("sessions.delete") + ": " + (item.title || t("sessions.untitled")));
     del.onclick = (event) => {
       event.stopPropagation();
       deleteServerSession(item.session_id);
     };
 
-    row.append(open, del);
+    row.append(open, rename, del);
     sessionListEl.appendChild(row);
   }
 }
 
-async function refreshSessions() {
+async function refreshSessions(reset) {
   if (!sessionsEnabled) return;
-  if (sessionStatus && !sessionsCache.length) {
+  const fromStart = reset !== false;
+  if (sessionsLoading) {
+    // A newer search arrived while the previous request was in flight; run it
+    // once the current load finishes so results match the visible query.
+    if (fromStart) sessionsPending = true;
+    return;
+  }
+  sessionsLoading = true;
+  if (sessionStatus && (!sessionsCache.length || !fromStart)) {
     sessionStatus.hidden = false;
     sessionStatus.classList.remove("error");
     sessionStatus.textContent = t("sessions.loading");
     if (sessionRetry) sessionRetry.hidden = true;
   }
   try {
-    const res = await fetch("/sessions?" + ChatSessions.sessionQuery(currentUserId()), {
-      headers: authHeaders(),
-    });
+    const offset = fromStart ? 0 : sessionsCache.length;
+    const query = (sessionSearch && sessionSearch.value || "").trim();
+    const res = await fetch(
+      "/sessions?" + ChatSessions.sessionQuery(currentUserId(), query) +
+        "&limit=" + SESSIONS_PAGE + "&offset=" + offset,
+      { headers: authHeaders() }
+    );
     if (!res.ok) throw new Error(String(res.status));
     const data = await res.json();
-    sessionsCache = Array.isArray(data.sessions) ? data.sessions : [];
+    const page = Array.isArray(data.sessions) ? data.sessions : [];
+    if (fromStart) {
+      sessionsCache = page;
+    } else {
+      const known = new Set(sessionsCache.map((item) => item.session_id));
+      sessionsCache = sessionsCache.concat(
+        page.filter((item) => !known.has(item.session_id))
+      );
+    }
+    sessionsHasMore = page.length === SESSIONS_PAGE;
     if (sessionStatus) sessionStatus.hidden = true;
     if (sessionRetry) sessionRetry.hidden = true;
     renderSessions();
@@ -955,6 +1079,12 @@ async function refreshSessions() {
       sessionStatus.textContent = t("sessions.loadFailed");
     }
     if (sessionRetry) sessionRetry.hidden = false;
+  } finally {
+    sessionsLoading = false;
+    if (sessionsPending) {
+      sessionsPending = false;
+      refreshSessions(true);
+    }
   }
 }
 
@@ -977,6 +1107,52 @@ async function createServerSession() {
   } catch (error) {
     return "";
   }
+}
+
+function renderStoredMessage(message) {
+  if (message.role === "user") {
+    addMsg("user", message.content || "");
+    return;
+  }
+  const bubble = addMsg("bot", "");
+  if (message.content) setMarkdown(bubble, message.content);
+  if (message.degraded) addDegradedNote(bubble);
+  attachSources(bubble, message.sources);
+  attachCitations(bubble, message.sources);
+  const feedback = message.feedback || {};
+  addActions(bubble, message.content || "", {
+    sources: message.sources,
+    messageSeq: message.seq,
+    rating: feedback.rating,
+  });
+}
+
+// Long sessions render the newest window first; "show earlier" keeps the
+// transcript light without hiding history from the server.
+// 长会话只先渲染最近一页；「显示更早」按页展开，历史仍由服务端保存。
+function renderSessionMessages(toBottom) {
+  chat.textContent = "";
+  const start = Math.max(0, sessionMessages.length - sessionWindow);
+  suppressScroll = true;
+  if (start > 0) {
+    const earlier = document.createElement("button");
+    earlier.className = "ghost loadEarlier";
+    earlier.type = "button";
+    earlier.dataset.i18n = "chat.loadEarlier";
+    earlier.dataset.i18nVars = JSON.stringify({ count: start });
+    earlier.textContent = t("chat.loadEarlier", { count: start });
+    earlier.onclick = () => {
+      sessionWindow += SESSION_PAGE;
+      renderSessionMessages(false);
+    };
+    chat.appendChild(earlier);
+  }
+  for (let index = start; index < sessionMessages.length; index++) {
+    renderStoredMessage(sessionMessages[index]);
+  }
+  suppressScroll = false;
+  if (toBottom) scrollChat(true);
+  else chat.scrollTop = 0;
 }
 
 async function openSession(id, options) {
@@ -1008,21 +1184,17 @@ async function openSession(id, options) {
       }
       deptSel.value = data.dept;
     }
-    history = [];
-    chat.textContent = "";
     const messages = Array.isArray(data.messages) ? data.messages : [];
-    for (const message of messages) {
-      history.push({ role: message.role, content: message.content || "" });
-      if (message.role === "user") {
-        addMsg("user", message.content || "");
-        continue;
-      }
-      const bubble = addMsg("bot", "");
-      if (message.content) setMarkdown(bubble, message.content);
-      if (message.degraded) addDegradedNote(bubble);
-      attachSources(bubble, message.sources);
-      addActions(bubble, message.content || "");
-    }
+    sessionMessages = messages;
+    sessionWindow = SESSION_PAGE;
+    history = messages.map((message) => ({
+      role: message.role,
+      content: message.content || "",
+      sources: message.sources || [],
+      degraded: Boolean(message.degraded),
+      ts: message.created_at,
+    }));
+    renderSessionMessages(true);
     if (!messages.length) addMsg("bot", "", null, false, "chat.greeting");
     renderSessions();
     closeSidebar();
@@ -1057,6 +1229,70 @@ confirmModal.addEventListener("click", (event) => {
   if (event.target === confirmModal) settleConfirm(false);
 });
 
+function showSessionStatus(message) {
+  if (!sessionStatus) return;
+  sessionStatus.hidden = false;
+  sessionStatus.classList.add("error");
+  sessionStatus.textContent = message;
+  if (sessionRetry) sessionRetry.hidden = false;
+}
+
+function openRename(item) {
+  if (!renameModal || !renameInput) return;
+  renameTarget = item.session_id;
+  renameInput.value = item.title || "";
+  renameModal.hidden = false;
+  renameInput.focus();
+  renameInput.select();
+}
+
+function closeRename() {
+  if (renameModal) renameModal.hidden = true;
+  renameTarget = "";
+}
+
+async function submitRename() {
+  const title = (renameInput && renameInput.value || "").trim();
+  if (!renameTarget || !title) {
+    closeRename();
+    return;
+  }
+  const target = renameTarget;
+  closeRename();
+  try {
+    const res = await fetch(
+      "/sessions/" + encodeURIComponent(target) + "?" + ChatSessions.sessionQuery(currentUserId()),
+      {
+        method: "PATCH",
+        headers: authHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify({ title }),
+      }
+    );
+    if (!res.ok) {
+      showSessionStatus(t("sessions.renameFailed"));
+      return;
+    }
+    const data = await res.json();
+    const nextTitle = (data && data.title) || title;
+    sessionsCache = sessionsCache.map((item) =>
+      item.session_id === target ? Object.assign({}, item, { title: nextTitle }) : item
+    );
+    if (sessionStatus) sessionStatus.hidden = true;
+    renderSessions();
+  } catch (error) {
+    showSessionStatus(t("sessions.renameFailed"));
+  }
+}
+
+document.getElementById("renameForm").onsubmit = (event) => {
+  event.preventDefault();
+  submitRename();
+};
+document.getElementById("renameCancel").onclick = closeRename;
+renameModal.addEventListener("click", (event) => {
+  if (event.target === renameModal) closeRename();
+});
+
 async function deleteServerSession(id) {
   if (!sessionsEnabled || busy) return;
   if (!(await askConfirm(t("sessions.deleteConfirm")))) return;
@@ -1066,14 +1302,15 @@ async function deleteServerSession(id) {
       { method: "DELETE", headers: authHeaders() }
     );
     if (!res.ok) {
-      addMsg("bot", "", null, true, "sessions.deleteFailed");
+      showSessionStatus(t("sessions.deleteFailed"));
       return;
     }
     sessionsCache = sessionsCache.filter((item) => item.session_id !== id);
     if (sessionId === id) startNewSession("sessions.deleted");
-    renderSessions();
+    if (sessionStatus) sessionStatus.hidden = true;
+    await refreshSessions();
   } catch (error) {
-    addMsg("bot", "", null, true, "sessions.deleteFailed");
+    showSessionStatus(t("sessions.deleteFailed"));
   }
 }
 
@@ -1102,9 +1339,13 @@ function attachSources(bubble, sources) {
     const item = document.createElement("li");
     item.className = "srchit";
     item.tabIndex = 0;
+    item.dataset.cite = String(index + 1);
     item.title = t("chat.preview.hint");
     item.setAttribute("role", "button");
-    item.setAttribute("aria-label", t("chat.preview.hint"));
+    item.setAttribute("aria-label", t("chat.citation", {
+      n: index + 1,
+      source: src.source || t("chat.unknownSource"),
+    }));
     item.onclick = () => openSourcePreview(src);
     item.onkeydown = (event) => {
       if (event.key === "Enter" || event.key === " ") {
@@ -1150,6 +1391,61 @@ function attachSources(bubble, sources) {
   bubble.appendChild(box);
 }
 
+// Turn `[n]` in the rendered answer into a link to the matching citation.
+// Text nodes inside code/links/the source list are left untouched.
+const CITATION_RE = /\[(\d{1,3})\]/g;
+
+function attachCitations(bubble, sources) {
+  if (!Array.isArray(sources) || !sources.length) return;
+  const walker = document.createTreeWalker(bubble, NodeFilter.SHOW_TEXT, {
+    acceptNode(node) {
+      const parent = node.parentElement;
+      if (!parent || parent.closest("pre, code, a, .sources, .msgActions, .meta, .retrievalDebug")) {
+        return NodeFilter.FILTER_REJECT;
+      }
+      return NodeFilter.FILTER_ACCEPT;
+    },
+  });
+  const nodes = [];
+  while (walker.nextNode()) nodes.push(walker.currentNode);
+  for (const node of nodes) {
+    const text = node.nodeValue || "";
+    CITATION_RE.lastIndex = 0;
+    let match;
+    let last = 0;
+    let changed = false;
+    const frag = document.createDocumentFragment();
+    while ((match = CITATION_RE.exec(text)) !== null) {
+      const number = Number(match[1]);
+      if (!Number.isInteger(number) || number < 1 || number > sources.length) continue;
+      changed = true;
+      if (match.index > last) {
+        frag.appendChild(document.createTextNode(text.slice(last, match.index)));
+      }
+      const link = document.createElement("a");
+      link.className = "cite";
+      link.href = "#";
+      link.dataset.cite = String(number);
+      link.textContent = match[0];
+      link.setAttribute("aria-label", t("chat.citation", {
+        n: number,
+        source: sources[number - 1].source || t("chat.unknownSource"),
+      }));
+      link.onclick = (event) => {
+        event.preventDefault();
+        const source = sources[number - 1];
+        if (source) openSourcePreview(source);
+      };
+      frag.appendChild(link);
+      last = match.index + match[0].length;
+    }
+    if (!changed) continue;
+    if (last < text.length) frag.appendChild(document.createTextNode(text.slice(last)));
+    if (node.parentNode) node.parentNode.replaceChild(frag, node);
+  }
+  CITATION_RE.lastIndex = 0;
+}
+
 function previewMeta(src) {
   const parts = [];
   if (src.dept) parts.push(t("chat.sourceDept", { dept: src.dept }));
@@ -1166,8 +1462,86 @@ function closeSourcePreview() {
   if (modal && !modal.hidden) {
     modal.hidden = true;
     document.getElementById("previewBody").textContent = "";
+    previewSource = null;
+    if (previewOpenLink) previewOpenLink.hidden = true;
+    if (previewDownloadLink) previewDownloadLink.hidden = true;
     if (previewReturnFocus && previewReturnFocus.focus) previewReturnFocus.focus();
     previewReturnFocus = null;
+  }
+}
+
+function updatePreviewFileLinks(src) {
+  if (!previewOpenLink || !previewDownloadLink) return;
+  if (!src || !src.source) {
+    previewOpenLink.hidden = true;
+    previewDownloadLink.hidden = true;
+    return;
+  }
+  const base = {
+    source: src.source,
+    page: src.page,
+    slide: src.slide,
+    sheet: src.sheet,
+    userId: currentUserId(),
+    dept: deptSel.value,
+  };
+  previewOpenLink.href = "#";
+  previewDownloadLink.href = "#";
+  previewOpenLink.hidden = false;
+  previewDownloadLink.hidden = false;
+}
+
+// The links cannot use plain navigation: in jwt mode the browser would not
+// send the bearer header, and CHAT_API_KEY would be missing too. Fetch with
+// auth headers, then turn the response into a blob URL.
+async function openPreviewFile(download) {
+  if (!previewSource || !previewSource.source) return;
+  const base = {
+    source: previewSource.source,
+    page: previewSource.page,
+    slide: previewSource.slide,
+    sheet: previewSource.sheet,
+    userId: currentUserId(),
+    dept: deptSel.value,
+  };
+  const popup = download ? null : window.open("", "_blank");
+  if (popup) popup.opener = null;
+  try {
+    const res = await fetch(ChatSources.filePath(base), { headers: authHeaders() });
+    if (res.status === 401) {
+      if (popup) popup.close();
+      clearCredential();
+      closeSourcePreview();
+      showGate(t("auth.expired"));
+      return;
+    }
+    if (!res.ok) {
+      throw new Error(res.status === 404 ? t("chat.preview.missing") : String(res.status));
+    }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    if (download) {
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = previewSource.source.split("/").pop() || "source";
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+    } else if (popup) {
+      popup.location.href = url;
+    } else {
+      const link = document.createElement("a");
+      link.href = url;
+      link.target = "_blank";
+      link.rel = "noopener";
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+    }
+    setTimeout(() => URL.revokeObjectURL(url), 300000);
+  } catch (error) {
+    if (popup) popup.close();
+    srStatus.textContent = t("chat.preview.fileFailed");
   }
 }
 
@@ -1180,8 +1554,10 @@ async function openSourcePreview(src) {
   const meta = document.getElementById("previewMeta");
   const body = document.getElementById("previewBody");
   previewReturnFocus = document.activeElement;
+  previewSource = src;
   modal.hidden = false;
   previewCopyBtn.disabled = true;
+  updatePreviewFileLinks(src);
   document.getElementById("previewClose").focus();
   body.classList.remove("error");
   title.textContent = src.source || t("chat.unknownSource");
@@ -1202,9 +1578,8 @@ async function openSourcePreview(src) {
     );
     if (res.status === 401) {
       clearCredential();
+      closeSourcePreview();
       showGate(t("auth.expired"));
-      body.textContent = t("chat.preview.failed", { error: res.status });
-      body.classList.add("error");
       return;
     }
     if (!res.ok) {
@@ -1245,6 +1620,14 @@ previewCopyBtn.onclick = async () => {
 };
 
 document.getElementById("previewClose").onclick = closeSourcePreview;
+previewOpenLink.onclick = (event) => {
+  event.preventDefault();
+  openPreviewFile(false);
+};
+previewDownloadLink.onclick = (event) => {
+  event.preventDefault();
+  openPreviewFile(true);
+};
 document.getElementById("preview").onclick = (event) => {
   if (event.target.id === "preview") closeSourcePreview();
 };
@@ -1268,6 +1651,29 @@ document.addEventListener("keydown", (event) => {
     } else if (!event.shiftKey && document.activeElement === last) {
       event.preventDefault();
       first.focus();
+    }
+    return;
+  }
+  if (renameModal && !renameModal.hidden) {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      closeRename();
+      return;
+    }
+    if (event.key !== "Tab") return;
+    const fields = [
+      renameInput,
+      document.getElementById("renameCancel"),
+      document.getElementById("renameOk"),
+    ].filter(Boolean);
+    const firstField = fields[0];
+    const lastField = fields[fields.length - 1];
+    if (event.shiftKey && document.activeElement === firstField) {
+      event.preventDefault();
+      lastField.focus();
+    } else if (!event.shiftKey && document.activeElement === lastField) {
+      event.preventDefault();
+      firstField.focus();
     }
     return;
   }
@@ -1312,6 +1718,61 @@ function regenerateAnswer(bubble, question) {
   send({ text: question, retry: true });
 }
 
+async function copyText(value) {
+  try {
+    await navigator.clipboard.writeText(value);
+    return true;
+  } catch (error) {
+    // Clipboard API needs a secure context; fall back for plain-http LAN use.
+    try {
+      const area = document.createElement("textarea");
+      area.value = value;
+      area.setAttribute("readonly", "");
+      area.style.position = "fixed";
+      area.style.opacity = "0";
+      document.body.appendChild(area);
+      area.select();
+      const ok = document.execCommand("copy");
+      area.remove();
+      return ok;
+    } catch (fallbackError) {
+      return false;
+    }
+  }
+}
+
+function shareSession() {
+  if (!sessionId) return;
+  const url = new URL(location.href);
+  url.search = "";
+  url.hash = "";
+  url.searchParams.set("session", sessionId);
+  copyText(url.toString()).then((ok) => {
+    srStatus.textContent = t(ok ? "chat.shared" : "chat.shareFailed");
+  });
+}
+
+async function submitFeedback(seq, rating, up, down) {
+  if (!sessionId || !seq) return;
+  try {
+    const res = await fetch(
+      "/sessions/" + encodeURIComponent(sessionId) + "/feedback?" +
+        ChatSessions.sessionQuery(currentUserId()),
+      {
+        method: "POST",
+        headers: authHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify({ seq, rating }),
+      }
+    );
+    if (!res.ok) throw new Error(String(res.status));
+    up.setAttribute("aria-pressed", rating === 1 ? "true" : "false");
+    down.setAttribute("aria-pressed", rating === -1 ? "true" : "false");
+    srStatus.textContent = t("chat.feedback.saved");
+  } catch (error) {
+    srStatus.textContent = t("chat.feedback.failed");
+  }
+}
+
 function addActions(bubble, text, options) {
   const opts = options || {};
   let bar = bubble.querySelector(".msgActions");
@@ -1324,18 +1785,21 @@ function addActions(bubble, text, options) {
   copy.className = "ghost";
   copy.dataset.i18n = "chat.copy";
   copy.textContent = t("chat.copy");
+  copy.setAttribute("aria-label", t("chat.copy"));
   copy.onclick = async () => {
-    try {
-      await navigator.clipboard.writeText(text);
+    if (await copyText(text)) {
       copy.dataset.i18n = "chat.copied";
       copy.textContent = t("chat.copied");
+      copy.setAttribute("aria-label", t("chat.copied"));
       setTimeout(() => {
         copy.dataset.i18n = "chat.copy";
         copy.textContent = t("chat.copy");
+        copy.setAttribute("aria-label", t("chat.copy"));
       }, 1200);
-    } catch (e) {
+    } else {
       copy.dataset.i18n = "chat.copyFailed";
       copy.textContent = t("chat.copyFailed");
+      copy.setAttribute("aria-label", t("chat.copyFailed"));
     }
   };
   bar.appendChild(copy);
@@ -1346,8 +1810,41 @@ function addActions(bubble, text, options) {
     again.dataset.action = "regenerate";
     again.dataset.i18n = "chat.regenerate";
     again.textContent = t("chat.regenerate");
+    again.setAttribute("aria-label", t("chat.regenerate"));
     again.onclick = () => regenerateAnswer(bubble, opts.question);
     bar.appendChild(again);
+  }
+  if (opts.messageSeq) {
+    const group = document.createElement("span");
+    group.className = "feedbackGroup";
+    group.setAttribute("role", "group");
+    group.setAttribute("aria-label", t("chat.feedback.group"));
+    const make = (rating, key) => {
+      const button = document.createElement("button");
+      button.className = "ghost";
+      button.type = "button";
+      button.dataset.rating = String(rating);
+      button.dataset.i18n = key;
+      button.textContent = t(key);
+      button.setAttribute("aria-label", t(key));
+      button.setAttribute("aria-pressed", opts.rating === rating ? "true" : "false");
+      return button;
+    };
+    const up = make(1, "chat.feedback.up");
+    const down = make(-1, "chat.feedback.down");
+    up.onclick = () => submitFeedback(opts.messageSeq, 1, up, down);
+    down.onclick = () => submitFeedback(opts.messageSeq, -1, up, down);
+    group.append(up, down);
+    bar.appendChild(group);
+  }
+  if (sessionsEnabled && sessionId) {
+    const share = document.createElement("button");
+    share.className = "ghost";
+    share.dataset.i18n = "chat.share";
+    share.textContent = t("chat.share");
+    share.setAttribute("aria-label", t("chat.share"));
+    share.onclick = shareSession;
+    bar.appendChild(share);
   }
 }
 
@@ -1356,7 +1853,26 @@ function exportChat() {
   const lines = ["# " + t("page.chatTitle"), ""];
   for (const message of history) {
     const who = message.role === "user" ? t("chat.user") : t("common.model");
-    lines.push("## " + who, "", message.content || "", "");
+    let heading = "## " + who;
+    if (message.ts) {
+      const when = new Date(message.ts);
+      if (!Number.isNaN(when.getTime())) heading += " · " + when.toLocaleString();
+    }
+    lines.push(heading, "", message.content || "");
+    if (message.role === "assistant") {
+      if (message.degraded) lines.push("", "> " + t("chat.degradedNote"));
+      if (Array.isArray(message.sources) && message.sources.length) {
+        lines.push("", "> " + t("chat.exportSources"));
+        message.sources.forEach((src, index) => {
+          const meta = previewMeta(src);
+          lines.push(
+            `> [${index + 1}] ${src.source || t("chat.unknownSource")}` +
+              (meta ? " — " + meta : "")
+          );
+        });
+      }
+    }
+    lines.push("");
   }
   const blob = new Blob([lines.join("\n")], { type: "text/markdown;charset=utf-8" });
   const link = document.createElement("a");
@@ -1375,6 +1891,7 @@ function addRetry(bubble, text) {
   retry.style.marginLeft = "10px";
   retry.dataset.i18n = "chat.retry";
   retry.textContent = t("chat.retry");
+  retry.setAttribute("aria-label", t("chat.retry"));
   retry.onclick = () => {
     const wrap = bubble.closest(".msg");
     if (wrap) wrap.remove();
@@ -1397,44 +1914,117 @@ function attachTimings(bubble, timings) {
   renderTimings(bubble);
 }
 
+function attachRetrieval(bubble, retrieval) {
+  if (!retrieval || !Object.keys(retrieval).length) return;
+  bubble._retrieval = retrieval;
+  renderTimings(bubble);
+}
+
+function debugSourceLabel(item) {
+  if (!item) return t("chat.unknownSource");
+  let label = item.source || t("chat.unknownSource");
+  if (item.page !== undefined) label += " p." + item.page;
+  else if (item.slide !== undefined) label += " slide " + item.slide;
+  else if (item.sheet) label += " · " + item.sheet;
+  if (typeof item.score === "number") label += " · " + item.score.toFixed(3);
+  return label;
+}
+
+function renderRetrievalDebug(retrieval) {
+  const details = document.createElement("details");
+  details.className = "retrievalDebug";
+  const summary = document.createElement("summary");
+  summary.dataset.i18n = "chat.debugRetrieval";
+  summary.textContent = t("chat.debugRetrieval");
+  details.appendChild(summary);
+
+  const list = document.createElement("dl");
+  const row = (label, value) => {
+    const dt = document.createElement("dt");
+    dt.textContent = label;
+    const dd = document.createElement("dd");
+    dd.textContent = value;
+    list.append(dt, dd);
+  };
+  if (retrieval.query) row(t("chat.debug.query"), retrieval.query);
+  if (Array.isArray(retrieval.depts) && retrieval.depts.length) {
+    row(t("chat.debug.depts"), retrieval.depts.join(", "));
+  }
+  const engine = retrieval.engine || "vector";
+  const flags = [engine];
+  if (retrieval.hybrid) flags.push("hybrid");
+  if (retrieval.rerank) flags.push("rerank");
+  row(t("chat.debug.engine"), flags.join(" · "));
+  details.appendChild(list);
+
+  const addList = (label, items) => {
+    if (!Array.isArray(items) || !items.length) return;
+    const heading = document.createElement("div");
+    heading.textContent = label;
+    const ordered = document.createElement("ol");
+    for (const item of items.slice(0, 12)) {
+      const li = document.createElement("li");
+      li.textContent = debugSourceLabel(item);
+      ordered.appendChild(li);
+    }
+    details.append(heading, ordered);
+  };
+  const hasRecall = Array.isArray(retrieval.candidates) && retrieval.candidates.length;
+  if (hasRecall) {
+    addList(t("chat.debug.candidates"), retrieval.candidates);
+    addList(t("chat.debug.reranked"), retrieval.reranked);
+  } else {
+    addList(t("chat.debug.candidates"), retrieval.sources);
+  }
+  return details;
+}
+
 function renderTimings(bubble) {
   const old = bubble.querySelector(".meta.timings");
   if (old) old.remove();
+  const oldDebug = bubble.querySelector(".retrievalDebug");
+  if (oldDebug) oldDebug.remove();
   const timings = bubble._timings;
-  if (!timings || !debugTimings) return;
-  const meta = document.createElement("div");
-  meta.className = "meta timings";
-  const order = [
-    ["total_ms", "chat.timing.total"],
-    ["retrieval_ms", "chat.timing.retrieval"],
-    ["rerank_ms", "chat.timing.rerank"],
-    ["llm_ms", "chat.timing.llm"],
-    ["overhead_ms", "chat.timing.overhead"],
-  ];
-  const addChip = (key, vars, extraClass) => {
-    const chip = document.createElement("span");
-    chip.className = "chip" + (extraClass ? " " + extraClass : "");
-    chip.dataset.i18n = key;
-    if (vars) chip.dataset.i18nVars = JSON.stringify(vars);
-    chip.textContent = t(key, vars);
-    meta.appendChild(chip);
-  };
-  for (const [key, label] of order) {
-    if (timings[key] !== undefined && !(key === "rerank_ms" && !timings[key])) {
-      addChip(label, { value: timings[key] }, key === "total_ms" ? "total" : "");
-    }
-  }
-  if (timings.llm_calls !== undefined) {
-    addChip("chat.llmCalls", { count: timings.llm_calls });
-  }
-  if (timings.retrieval_calls !== undefined) {
-    addChip("chat.retrievalCalls", { count: timings.retrieval_calls });
-  }
-  if (timings.cached) addChip("chat.cached", null, "total");
-  if (timings.degraded) addChip("chat.degraded", null, "total");
+  if (!debugTimings) return;
   const actions = bubble.querySelector(".msgActions");
-  if (actions) bubble.insertBefore(meta, actions);
-  else bubble.appendChild(meta);
+  const insert = (node) => {
+    if (actions) bubble.insertBefore(node, actions);
+    else bubble.appendChild(node);
+  };
+  if (timings) {
+    const meta = document.createElement("div");
+    meta.className = "meta timings";
+    const order = [
+      ["total_ms", "chat.timing.total"],
+      ["retrieval_ms", "chat.timing.retrieval"],
+      ["rerank_ms", "chat.timing.rerank"],
+      ["llm_ms", "chat.timing.llm"],
+      ["overhead_ms", "chat.timing.overhead"],
+    ];
+    const addChip = (key, vars, extraClass) => {
+      const chip = document.createElement("span");
+      chip.className = "chip" + (extraClass ? " " + extraClass : "");
+      chip.dataset.i18n = key;
+      if (vars) chip.dataset.i18nVars = JSON.stringify(vars);
+      chip.textContent = t(key, vars);
+      meta.appendChild(chip);
+    };
+    for (const [key, label] of order) {
+      if (timings[key] !== undefined && !(key === "rerank_ms" && !timings[key])) {
+        addChip(label, { value: timings[key] }, key === "total_ms" ? "total" : "");
+      }
+    }
+    if (timings.llm_calls !== undefined) {
+      addChip("chat.llmCalls", { count: timings.llm_calls });
+    }
+    if (timings.retrieval_calls !== undefined) {
+      addChip("chat.retrievalCalls", { count: timings.retrieval_calls });
+    }
+    if (timings.cached) addChip("chat.cached", null, "total");
+    if (timings.degraded) addChip("chat.degraded", null, "total");
+    insert(meta);
+  }
+  if (bubble._retrieval) insert(renderRetrievalDebug(bubble._retrieval));
 }
 
 if (debugToggle) {
@@ -1453,6 +2043,7 @@ function addMsg(role, text, timings, isError, i18nKey, i18nVars) {
 
   const avatar = document.createElement("div");
   avatar.className = "avatar";
+  avatar.setAttribute("aria-hidden", "true");
   avatar.textContent = role === "user" ? "U" : "AI";
 
   const bubble = document.createElement("div");
@@ -1472,7 +2063,7 @@ function addMsg(role, text, timings, isError, i18nKey, i18nVars) {
   wrap.appendChild(avatar);
   wrap.appendChild(bubble);
   chat.appendChild(wrap);
-  scrollChat(role === "user");
+  if (!suppressScroll) scrollChat(role === "user");
   return bubble;
 }
 
@@ -1503,6 +2094,8 @@ async function send(options) {
   let answer = "";
   let timings = null;
   let sources = [];
+  let retrieval = {};
+  let messageSeq = 0;
   let degraded = false;
 
   abortController = new AbortController();
@@ -1535,6 +2128,7 @@ async function send(options) {
       if (resp.status === 401) {
         // The token expired or the account was disabled: back to the gate.
         clearCredential();
+        restoreDraft(text);
         showGate(t("auth.expired"));
       }
       const code = typeof detail === "object" && detail ? detail.error : null;
@@ -1550,14 +2144,19 @@ async function send(options) {
         bubble.textContent = t("chat.error.tooManyMessages");
       } else if (resp.status === 429) {
         bubble.textContent = t("chat.error.rateLimited");
+        addRetry(bubble, text);
       } else if (resp.status === 413) {
         bubble.textContent = t("chat.error.payloadTooLarge");
+        addRetry(bubble, text);
       } else {
         bubble.textContent = t("chat.error.requestFailed", {
           detail: typeof detail === "object" ? JSON.stringify(detail) : detail,
         });
+        if (resp.status >= 500) addRetry(bubble, text);
       }
-      if (resp.status === 429 || resp.status >= 500) restoreDraft(text);
+      if (resp.status === 413 || resp.status === 429 || resp.status >= 500) {
+        restoreDraft(text);
+      }
       srStatus.textContent = bubble.textContent;
       return;
     }
@@ -1566,6 +2165,14 @@ async function send(options) {
     const decoder = new TextDecoder();
     let buffer = "";
     let firstToken = true;
+    let lastPaint = 0;
+    const paintStream = (force) => {
+      const now = performance.now();
+      if (!force && now - lastPaint < 120) return;
+      lastPaint = now;
+      setMarkdown(bubble, answer);
+      scrollChat();
+    };
 
     while (true) {
       const { value, done } = await reader.read();
@@ -1587,12 +2194,13 @@ async function send(options) {
             bubble.textContent = "";
           }
           answer += ev.content;
-          bubble.textContent = answer;
-          scrollChat();
+          paintStream(false);
         } else if (ev.type === "done") {
           timings = ev.timings;
           if (ev.sources) sources = ev.sources;
+          if (ev.retrieval) retrieval = ev.retrieval;
           if (ev.degraded) degraded = true;
+          if (ev.message_seq) messageSeq = ev.message_seq;
           if (ev.session_id) {
             sessionId = ev.session_id;
             saveActiveSession();
@@ -1620,11 +2228,26 @@ async function send(options) {
       }
       if (degraded) addDegradedNote(bubble);
       attachSources(bubble, sources);
+      attachCitations(bubble, sources);
       attachTimings(bubble, timings);
-      addActions(bubble, answer, { question: text });
+      attachRetrieval(bubble, retrieval);
+      addActions(bubble, answer, {
+        question: text,
+        sources,
+        messageSeq,
+        rating: 0,
+      });
       srStatus.textContent = t("chat.answerReady");
-      history.push({ role: "user", content: text });
-      history.push({ role: "assistant", content: answer });
+      const stamp = new Date().toISOString();
+      history.push({ role: "user", content: text, ts: stamp });
+      history.push({
+        role: "assistant",
+        content: answer,
+        sources,
+        degraded,
+        timings,
+        ts: new Date().toISOString(),
+      });
       if (sessionsEnabled) {
         saveActiveSession();
         refreshSessions();
@@ -1672,6 +2295,18 @@ sendBtn.onclick = () => send();
 stopBtn.onclick = () => {
   if (abortController) abortController.abort();
 };
+// Esc stops an in-flight answer, but never steals Escape from a dialog/drawer.
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape" || !busy || !abortController) return;
+  if (!confirmModal.hidden || (renameModal && !renameModal.hidden)) return;
+  const preview = document.getElementById("preview");
+  if (preview && !preview.hidden) return;
+  const gate = document.getElementById("gate");
+  if (gate && !gate.hidden) return;
+  if (sessionBar && sessionBar.classList.contains("open")) return;
+  event.preventDefault();
+  abortController.abort();
+});
 input.addEventListener("keydown", e => {
   if (e.isComposing || e.keyCode === 229) return;
   if (e.key === "Enter" && !e.shiftKey) {
@@ -1685,6 +2320,8 @@ input.addEventListener("keydown", e => {
 function startNewSession(key, vars) {
   if (busy && abortController) abortController.abort();
   history = [];
+  sessionMessages = [];
+  sessionWindow = SESSION_PAGE;
   clearActiveSession();
   clearSession();
   chat.innerHTML = "";
@@ -1711,8 +2348,12 @@ newSessionBtn.onclick = () => {
 sessionToggle.onclick = () => setSidebar(!sessionBar.classList.contains("open"));
 sessionMask.onclick = closeSidebar;
 sessionCloseBtn.onclick = closeSidebar;
-sessionSearch.oninput = renderSessions;
+sessionSearch.oninput = () => {
+  if (sessionSearchTimer) clearTimeout(sessionSearchTimer);
+  sessionSearchTimer = setTimeout(() => refreshSessions(true), 250);
+};
 sessionRetry.onclick = () => refreshSessions();
+sessionMore.onclick = () => refreshSessions(false);
 
 // The mobile session drawer is modal: keep Tab inside it and let Escape close.
 document.addEventListener("keydown", (event) => {
@@ -1758,7 +2399,9 @@ document.querySelectorAll(".presets button").forEach(b => {
       deptSel.value = b.dataset.dept;
       deptSel.dispatchEvent(new Event("change"));
     }
-    input.value = b.dataset.q;
+    const zh = window.i18n.currentLanguage().startsWith("zh");
+    input.value = zh ? (b.dataset.qZh || b.dataset.q) : b.dataset.q;
+    updateCharCount();
     input.focus();
   };
 });
@@ -1809,6 +2452,7 @@ async function resolveAuth() {
   fields.forEach((el) => { if (el) el.hidden = true; });
   const logout = document.getElementById("logout");
   if (logout) logout.hidden = false;
+  if (switchAccountBtn) switchAccountBtn.hidden = false;
   if (!hasCredential()) {
     showGate();
     return false;
@@ -1872,9 +2516,13 @@ document.getElementById("loginForm").onsubmit = async (event) => {
     return;
   }
   if (!(await resolveAuth())) return;
-  startNewSession("auth.signedInNew");
+  await refreshSessions();
+  if (SHARED_SESSION && sessionsEnabled) {
+    await openSession(SHARED_SESSION);
+  } else {
+    startNewSession("auth.signedInNew");
+  }
   updateChatTools();
-  refreshSessions();
 };
 
 document.getElementById("logout").onclick = () => {
@@ -1883,6 +2531,15 @@ document.getElementById("logout").onclick = () => {
   startNewSession("auth.signedOut");
   showGate();
 };
+
+if (switchAccountBtn) {
+  switchAccountBtn.onclick = () => {
+    clearCredential();
+    sessionsCache = [];
+    startNewSession("auth.switched");
+    showGate(t("auth.switched"));
+  };
+}
 
 (async function boot() {
   const fromSso = consumeTokenFragment();
@@ -1903,6 +2560,9 @@ document.getElementById("logout").onclick = () => {
     document.getElementById("username").hidden = true;
     document.getElementById("password").hidden = true;
     document.getElementById("tokenFallback").open = true;
+    // "Forgot password" is meaningless without local accounts.
+    const gateHelp = document.getElementById("gateHelp");
+    if (gateHelp) gateHelp.hidden = true;
   }
   if (authMode === "jwt") document.getElementById("tokenFallback").open = !localLogin;
   const authed = await resolveAuth();
@@ -1913,11 +2573,15 @@ document.getElementById("logout").onclick = () => {
       sessionToggle.hidden = false;
       if (freshView) clearActiveSession();
       await refreshSessions();
-      // Reopen this tab's last server session; a deleted one falls back to the
-      // greeting without showing an error during boot.
-      const saved = freshView ? null : savedActiveSession();
-      if (saved && saved.sessionId && saved.uid === currentUserId()) {
-        await openSession(saved.sessionId, { silent: true });
+      // A shared link wins; otherwise reopen this tab's last session. A deleted
+      // one falls back to the greeting without an error during boot.
+      if (SHARED_SESSION) {
+        await openSession(SHARED_SESSION);
+      } else {
+        const saved = freshView ? null : savedActiveSession();
+        if (saved && saved.sessionId && saved.uid === currentUserId()) {
+          await openSession(saved.sessionId, { silent: true });
+        }
       }
     } else if (!freshView) {
       // Older servers (or SESSIONS_ENABLED=false) keep the localStorage transcript.

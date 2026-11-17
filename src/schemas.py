@@ -42,10 +42,18 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     response: str
     sources: List[Dict[str, Any]] = []
+    # Explicit 1-based numbering so the client can turn `[n]` in the answer
+    # into a citation link without guessing the source order.
+    citations: List[Dict[str, Any]] = []
+    # Retrieval diagnostics for the console's 「调试信息」 panel (query, recall
+    # candidates and rerank order). Empty when retrieval did not run.
+    retrieval: Dict[str, Any] = {}
     timings: Dict[str, Any] = {}
     request_id: str = ""
     # Echoed when the request carried `session_id`; empty for stateless calls.
     session_id: str = ""
+    # Assistant message sequence in the session, used to attach feedback.
+    message_seq: int = 0
     # True when the answer came from retrieval because the LLM failed.
     degraded: bool = False
     degraded_reason: str = ""

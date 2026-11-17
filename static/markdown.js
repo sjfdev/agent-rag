@@ -193,8 +193,8 @@ function renderMarkdown(source) {
   return out.join("");
 }
 
-// Fill a bubble with rendered markdown. While a reply streams we keep using
-// plain text (cheap, no layout thrash) and call this once it finishes.
+// Fill a bubble with rendered markdown. The chat page calls this on a throttle
+// while a reply streams (so partial answers are readable) and once at the end.
 function setMarkdown(bubble, text) {
   bubble.classList.add("md");
   bubble.innerHTML = renderMarkdown(text);

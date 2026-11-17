@@ -34,8 +34,11 @@
     return body;
   }
 
-  function sessionQuery(userId) {
-    return "user_id=" + encodeURIComponent(userId || "");
+  function sessionQuery(userId, query) {
+    let value = "user_id=" + encodeURIComponent(userId || "");
+    const search = String(query == null ? "" : query).trim();
+    if (search) value += "&q=" + encodeURIComponent(search);
+    return value;
   }
 
   function formatDate(iso, lang) {

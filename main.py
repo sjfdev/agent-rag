@@ -51,7 +51,7 @@ if _cors_origins():
         CORSMiddleware,
         allow_origins=_cors_origins(),
         allow_credentials=False,
-        allow_methods=["GET", "POST", "OPTIONS", "DELETE"],
+        allow_methods=["GET", "POST", "PATCH", "OPTIONS", "DELETE"],
         allow_headers=["Content-Type", "Authorization", "X-API-Key"],
         expose_headers=["X-Request-ID", "X-Cache"],
         max_age=600,

@@ -39,6 +39,8 @@ class AgentState(TypedDict, total=False):
     # Set when the answer was built from excerpts because the LLM failed.
     degraded: bool
     degraded_reason: str
+    # Retrieval diagnostics for the UI's 「调试信息」 panel.
+    retrieval_debug: Dict[str, Any]
 
 
 SYSTEM_PROMPT = """You are an enterprise knowledge base assistant.
@@ -210,6 +212,7 @@ def _prepare_turn(state: AgentState):
     dept = state["user_dept"]
     depts = state.get("user_depts") or [dept]
     timings = dict(state.get("timings") or {})
+    retrieval_debug: Dict[str, Any] = {}
 
     dept_label = ", ".join(depts)
     prompt: List[BaseMessage] = [
@@ -222,6 +225,7 @@ def _prepare_turn(state: AgentState):
     # Deterministic first-stage retrieval: permissions come from state, not the LLM.
     already_retrieved = any(isinstance(m, ToolMessage) for m in messages)
     sources: List[Dict[str, Any]] = []
+    query = ""
     if not already_retrieved:
         query = _retrieval_query(messages)
         t_search = time.perf_counter()
@@ -232,12 +236,36 @@ def _prepare_turn(state: AgentState):
             if query
             else []
         )
+        # The engine records recall/rerank details under a private key so the
+        # timing summary stays numeric.
+        recorded = timings.pop("_debug", None)
+        if isinstance(recorded, dict):
+            retrieval_debug.update(recorded)
         if docs and settings.ACL_ENABLED:
             from src.acl import filter_documents
 
             docs = filter_documents(
                 docs, state.get("user_id"), state.get("user_groups")
             )
+            # The engine captured candidates before the ACL ran. Drop any
+            # diagnostic entries whose source is not accessible to this caller
+            # so the debug panel cannot reveal hidden documents.
+            allowed_sources = {
+                (doc.metadata or {}).get("source") for doc in docs
+            }
+            for key in ("candidates", "reranked"):
+                entries = retrieval_debug.get(key)
+                if isinstance(entries, list):
+                    retrieval_debug[key] = [
+                        item
+                        for item in entries
+                        if isinstance(item, dict)
+                        and item.get("source") in allowed_sources
+                    ]
+            if "candidates" in retrieval_debug:
+                retrieval_debug["candidate_count"] = len(
+                    retrieval_debug["candidates"]
+                )
         timings["retrieval_ms"] = timings.get("retrieval_ms", 0.0) + (
             time.perf_counter() - t_search
         ) * 1000
@@ -319,7 +347,23 @@ def _prepare_turn(state: AgentState):
             )
         )
 
-    return prompt, sources, timings, already_retrieved
+    if not already_retrieved:
+        retrieval_debug.update({"query": query, "depts": list(depts), "k": settings.RETRIEVAL_K})
+        retrieval_debug.setdefault("hybrid", settings.HYBRID_ENABLED)
+        retrieval_debug.setdefault("rerank", settings.RERANK_ENABLED)
+        retrieval_debug.setdefault("engine", settings.HYBRID_ENGINE)
+        brief = []
+        for source in sources[:12]:
+            brief.append(
+                {
+                    key: source.get(key)
+                    for key in ("source", "page", "slide", "sheet", "title", "score")
+                    if source.get(key) is not None
+                }
+            )
+        retrieval_debug["sources"] = brief
+
+    return prompt, sources, timings, already_retrieved, retrieval_debug
 
 
 def _add_llm_time(timings: Dict[str, Any], started: float) -> None:
@@ -334,6 +378,7 @@ def _finish_turn(
     timings: Dict[str, Any],
     already_retrieved: bool,
     llm_started: float,
+    retrieval_debug: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     _add_llm_time(timings, llm_started)
     timings["llm_calls"] = timings.get("llm_calls", 0) + 1
@@ -341,6 +386,7 @@ def _finish_turn(
     update: Dict[str, Any] = {"messages": [response], "timings": timings}
     if not already_retrieved:
         update["sources"] = sources
+        update["retrieval_debug"] = retrieval_debug or {}
     return update
 
 
@@ -349,6 +395,7 @@ def _fallback_update(
     timings: Dict[str, Any],
     already_retrieved: bool,
     exc: Exception,
+    retrieval_debug: Optional[Dict[str, Any]] = None,
 ) -> Optional[Dict[str, Any]]:
     """Answer from the excerpts when the LLM is unreachable, else None.
 
@@ -370,6 +417,7 @@ def _fallback_update(
     return {
         "messages": [AIMessage(content=_fallback_answer(sources))],
         "sources": sources,
+        "retrieval_debug": retrieval_debug or {},
         "degraded": True,
         "degraded_reason": "llm_unavailable",
         "timings": timings,
@@ -378,17 +426,21 @@ def _fallback_update(
 
 def call_model(state: AgentState):
     """Sync node used by `/chat`: retrieve, then answer or call a tool."""
-    prompt, sources, timings, already_retrieved = _prepare_turn(state)
+    prompt, sources, timings, already_retrieved, retrieval_debug = _prepare_turn(state)
     llm_started = time.perf_counter()
     try:
         response = llm.invoke(prompt + state["messages"])
     except Exception as exc:
         _add_llm_time(timings, llm_started)
-        fallback = _fallback_update(sources, timings, already_retrieved, exc)
+        fallback = _fallback_update(
+            sources, timings, already_retrieved, exc, retrieval_debug
+        )
         if fallback is not None:
             return fallback
         raise
-    return _finish_turn(response, sources, timings, already_retrieved, llm_started)
+    return _finish_turn(
+        response, sources, timings, already_retrieved, llm_started, retrieval_debug
+    )
 
 
 async def call_model_async(state: AgentState):
@@ -399,17 +451,21 @@ async def call_model_async(state: AgentState):
     for StreamingResponse), the upstream LLM call is aborted instead of
     running to completion for an answer nobody will read.
     """
-    prompt, sources, timings, already_retrieved = _prepare_turn(state)
+    prompt, sources, timings, already_retrieved, retrieval_debug = _prepare_turn(state)
     llm_started = time.perf_counter()
     try:
         response = await llm.ainvoke(prompt + state["messages"])
     except Exception as exc:
         _add_llm_time(timings, llm_started)
-        fallback = _fallback_update(sources, timings, already_retrieved, exc)
+        fallback = _fallback_update(
+            sources, timings, already_retrieved, exc, retrieval_debug
+        )
         if fallback is not None:
             return fallback
         raise
-    return _finish_turn(response, sources, timings, already_retrieved, llm_started)
+    return _finish_turn(
+        response, sources, timings, already_retrieved, llm_started, retrieval_debug
+    )
 
 
 def should_continue(state: AgentState):

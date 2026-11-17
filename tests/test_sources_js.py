@@ -84,3 +84,26 @@ process.stdout.write(JSON.stringify(api.previewPath({})));
     )
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout) == "/sources/content"
+
+
+def test_file_path_reuses_the_citation_fields_and_download_flag():
+    code = """
+const api = require(process.argv[1]);
+process.stdout.write(JSON.stringify({
+  open: api.filePath({source: "Tech/a b.md", userId: "u1", dept: "Tech"}),
+  download: api.filePath({source: "Tech/a.md", userId: "u1", dept: "Tech", download: true}),
+}));
+"""
+    result = subprocess.run(
+        [NODE, "-e", code, str(SCRIPT)],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    data = json.loads(result.stdout)
+    assert data["open"].startswith("/sources/file?")
+    assert "source=Tech%2Fa%20b.md" in data["open"]
+    assert "download=" not in data["open"]
+    assert data["download"].endswith("&download=1")

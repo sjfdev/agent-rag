@@ -1241,6 +1241,23 @@ class FAISSDriver(BaseVectorStore):
         print(f"Removed FAISS index at {settings.DB_PATH}.")
 
 
+def _brief_docs(docs: List[Document], limit: int = 12) -> List[Dict[str, Any]]:
+    """Compact metadata for the retrieval debug panel (no chunk text)."""
+    items: List[Dict[str, Any]] = []
+    for doc in (docs or [])[:limit]:
+        meta = doc.metadata or {}
+        item: Dict[str, Any] = {}
+        for key in ("source", "dept", "page", "slide", "sheet", "kind", "chunk_index"):
+            value = meta.get(key)
+            if value not in (None, ""):
+                item[key] = value
+        if meta.get("retrieval_score") is not None:
+            item["score"] = meta["retrieval_score"]
+        if item:
+            items.append(item)
+    return items
+
+
 class KnowledgeBaseEngine:
     """Factory class to handle seamless switching between Milvus and FAISS."""
 
@@ -1422,14 +1439,27 @@ class KnowledgeBaseEngine:
         if not query.strip():
             return []
 
+        debug = timings.setdefault("_debug", {}) if timings is not None else None
+
         if not settings.HYBRID_ENABLED:
             self._observe("vector")
             candidates = max(
                 k, settings.RERANK_CANDIDATES if settings.RERANK_ENABLED else k
             )
-            return self._maybe_rerank(
-                query, self.driver.search(query, user_dept, candidates), k, timings
-            )
+            recalled = self.driver.search(query, user_dept, candidates)
+            if debug is not None:
+                debug.update(
+                    {
+                        "engine": "vector",
+                        "candidates": _brief_docs(recalled),
+                        "candidate_count": len(recalled),
+                        "rerank": bool(settings.RERANK_ENABLED),
+                    }
+                )
+            ranked = self._maybe_rerank(query, recalled, k, timings)
+            if debug is not None:
+                debug["reranked"] = _brief_docs(ranked)
+            return ranked
 
         candidates = max(k, settings.HYBRID_CANDIDATES)
         if settings.RERANK_ENABLED:
@@ -1439,14 +1469,37 @@ class KnowledgeBaseEngine:
             fused = self.driver.hybrid_search(query, user_dept, candidates, candidates)
             if fused is not None:
                 self._observe("milvus")
-                return self._maybe_rerank(query, fused, k, timings)
+                if debug is not None:
+                    debug.update(
+                        {
+                            "engine": "milvus",
+                            "candidates": _brief_docs(fused),
+                            "candidate_count": len(fused),
+                            "rerank": bool(settings.RERANK_ENABLED),
+                        }
+                    )
+                ranked = self._maybe_rerank(query, fused, k, timings)
+                if debug is not None:
+                    debug["reranked"] = _brief_docs(ranked)
+                return ranked
             # Server-side hybrid failed: degrade for this query only.
             self._observe("fallback")
 
         self._observe("local")
-        return self._maybe_rerank(
-            query, self._local_hybrid(query, user_dept, candidates, rrf_fuse), k, timings
-        )
+        recalled = self._local_hybrid(query, user_dept, candidates, rrf_fuse)
+        if debug is not None:
+            debug.update(
+                {
+                    "engine": "fallback" if self.hybrid_mode == "milvus" else "local",
+                    "candidates": _brief_docs(recalled),
+                    "candidate_count": len(recalled),
+                    "rerank": bool(settings.RERANK_ENABLED),
+                }
+            )
+        ranked = self._maybe_rerank(query, recalled, k, timings)
+        if debug is not None:
+            debug["reranked"] = _brief_docs(ranked)
+        return ranked
 
     def _local_hybrid(self, query: str, user_dept, candidates: int, fuse):
         vector_docs = self.driver.search(query, user_dept, candidates)

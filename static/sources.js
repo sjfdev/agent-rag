@@ -32,7 +32,15 @@
     return query ? "/sources/content?" + query : "/sources/content";
   }
 
-  const api = { previewQuery, previewPath };
+  function filePath(opts) {
+    const options = opts || {};
+    const query = previewQuery(options);
+    const download = options.download ? "download=1" : "";
+    const joined = [query, download].filter(Boolean).join("&");
+    return joined ? "/sources/file?" + joined : "/sources/file";
+  }
+
+  const api = { previewQuery, previewPath, filePath };
   root.ChatSources = api;
   if (typeof module === "object" && module.exports) module.exports = api;
 })(typeof globalThis !== "undefined" ? globalThis : this);

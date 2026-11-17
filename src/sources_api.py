@@ -10,9 +10,12 @@ applied afterwards, so a preview can never expose another department's text.
 """
 
 import logging
+import mimetypes
+from pathlib import Path
 from typing import List, Optional, Tuple
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import FileResponse
 
 from src import acl, auth
 from src.api_access import require_chat_key
@@ -97,6 +100,17 @@ def _truncate(docs) -> Tuple[List[dict], bool]:
     return chunks, truncated
 
 
+def _source_file(source: str) -> Path:
+    """Resolve a stored `source` under DATA_DIR; reject traversal."""
+    root = Path(settings.DATA_DIR).expanduser().resolve()
+    candidate = (root / source).resolve()
+    if candidate == root or root not in candidate.parents:
+        raise HTTPException(status_code=400, detail={"error": "invalid_source_path"})
+    if not candidate.is_file():
+        raise HTTPException(status_code=404, detail={"error": "source_file_not_found"})
+    return candidate
+
+
 @router.get("/sources/content")
 def source_content(
     request: Request,
@@ -142,3 +156,42 @@ def source_content(
         "chunks": chunks,
         "truncated": truncated,
     }
+
+
+@router.get("/sources/file")
+def source_file(
+    request: Request,
+    source: str = Query(min_length=1, max_length=512),
+    user_id: str = Query(default="", max_length=64),
+    user_dept: Optional[str] = Query(default=None, max_length=64),
+    user_depts: List[str] = Query(default=[]),
+    user_groups: List[str] = Query(default=[]),
+    download: bool = Query(default=False),
+):
+    """Serve the original uploaded file after the same dept/ACL check.
+
+    `source` comes from a citation, so authorization reuses the vector store's
+    department filter and the document ACL. The path is resolved under
+    `DATA_DIR` and can never escape it.
+    """
+    caller, depts, groups = _caller(
+        request.headers, user_id, user_dept, user_depts, user_groups
+    )
+    safe_depts = _safe_depts(depts)
+    docs = kb_engine.fetch_source_chunks(source, safe_depts, limit=1)
+    if docs and settings.ACL_ENABLED:
+        docs = acl.filter_documents(docs, caller, groups)
+    if not docs:
+        raise HTTPException(status_code=404, detail={"error": "source_not_found"})
+
+    # Resolve the path from the authorized document metadata, not from the raw
+    # query string, so the file served is exactly what the caller may read.
+    authorized_source = (docs[0].metadata or {}).get("source") or source
+    path = _source_file(authorized_source)
+    media_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+    return FileResponse(
+        path,
+        media_type=media_type,
+        filename=path.name,
+        content_disposition_type="attachment" if download else "inline",
+    )

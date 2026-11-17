@@ -12,6 +12,23 @@ three agree before you push a tag.
 
 ### Added
 
+- **Chat sessions, citations and source files**: the chat UI now supports
+  renaming sessions (`PATCH /sessions/{id}`) and server-side content search
+  (`GET /sessions?q=`), persists thumbs up/down feedback per assistant message
+  (`POST/GET /sessions/{id}/feedback`), turns `[n]` in answers into clickable
+  citation anchors using the new `citations` numbering map, shares a session via
+  `?session=<id>`, and opens/downloads the original upload through
+  `GET /sources/file` after the same department + ACL check. The 「调试信息」
+  toggle now expands the rewritten query plus recall/rerank candidates, the
+  streaming answer renders Markdown incrementally, Esc stops generation, and
+  account switching plus a forgot-password hint live in both UIs.
+  <br>**对话页会话/引用/原文增强（中文）**：会话支持重命名（`PATCH /sessions/{id}`）
+  与服务端正文搜索（`GET /sessions?q=`）；赞/踩按助手消息落库
+  （`POST/GET /sessions/{id}/feedback`）；响应新增 `citations` 编号映射，正文
+  `[n]` 可点击跳转引用；`?session=<id>` 可分享会话；`GET /sources/file` 在部门 +
+  ACL 校验后打开/下载原始文件。「调试信息」可展开改写 query 与召回/重排候选，流式
+  回答按节流增量渲染 Markdown，生成中 Esc 可停止，两个页面都提供切换账号与忘记
+  密码提示。
 - **Console file & vector management**: the 入库文件 card and the vector
   browser are merged into one 文件与向量 card that inspects what is actually
   indexed: `GET /admin/api/vectors` returns backend
@@ -190,6 +207,17 @@ three agree before you push a tag.
   可导出 Markdown；输入框随内容增高并在接近 4000 字时提示；停止生成保留 Markdown；
   耗时 chip 收进「调试信息」开关。删除会话改用统一确认弹窗，会话列表支持搜索及
   载入/失败/重试状态，对话开始或部门不可用时隐藏示例问题。
+- **Chat UI follow-ups: language-aware presets, paging and richer export**:
+  preset chips now send the question in the current UI language, session-delete
+  failures surface in the sidebar instead of the transcript, 401/429/413/5xx
+  restore the draft (and transient failures offer retry), exports include
+  timestamps and citations, long transcripts render the newest 60 messages with
+  a 「显示更早」 break, and `GET /sessions` accepts `limit`/`offset` so the
+  sidebar has a 「加载更多」 button.
+  <br>**对话页收尾（中文）**：预设问题按当前界面语言发送；删除会话失败改为侧栏
+  状态而不是污染对话；401/429/413/5xx 恢复草稿（瞬时错误提供重试）；Markdown 导出
+  带时间戳与引用；长会话只先渲染最近 60 条并提供「显示更早」；`GET /sessions` 支持
+  `limit`/`offset`，侧栏新增「加载更多」。
 
 ### Fixed
 

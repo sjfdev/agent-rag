@@ -663,7 +663,7 @@ curl -s -X POST localhost:8000/chat -H 'Content-Type: application/json' \
 
 ## 11. 后续待办（按优先级，2026-11-01 之后）
 
-> 当前基线：**639 项测试、CI 全绿**；管理台与对话页完成体验收口（2026-11-17，见 `WORKLOG.md` §22）；`milvus 2.5.4 + 服务端稀疏 BM25`；28 chunks；备份/恢复脚本已落地（`make backup` / `make restore`）；监控栈已落地（`make monitor-up` / `make monitor-check`）；服务端会话与前端会话栏已落地（`/sessions` + `ChatRequest.session_id` + 左侧侧栏）；`/chat/stream` 客户端断开即取消上游 LLM 调用。
+> 当前基线：**695 项测试、CI 全绿**；管理台与对话页完成体验收口（2026-11-17，见 `WORKLOG.md` §22）；`milvus 2.5.4 + 服务端稀疏 BM25`；28 chunks；备份/恢复脚本已落地（`make backup` / `make restore`）；监控栈已落地（`make monitor-up` / `make monitor-check`）；服务端会话与前端会话栏已落地（`/sessions` + `ChatRequest.session_id` + 左侧侧栏）；`/chat/stream` 客户端断开即取消上游 LLM 调用。
 > 容器化交付已完成（`Dockerfile` / `docker-compose.prod.yml` / `PRODUCTIZATION.md`）。
 > 管理台已支持运行时模型覆盖、`/admin` 与 `/ui/` 共享登录态、左侧分区菜单（2026-11-15）。
 > 下面按「对外发布必须先做 → 产品化 → 规模化」排序，每项都有落点与验收方式。
@@ -737,6 +737,8 @@ curl -s -X POST localhost:8000/chat -H 'Content-Type: application/json' \
 - [x] 引用点击预览原文：`GET /sources/content`（`src/sources_api.py`）按 `source` + page/slide/sheet 从向量库取回完整 chunk 文本，先在引擎内做部门过滤、再做 ACL，最后返回；前端点击来源条目弹窗展示（`static/sources.js` 构造查询串），`textContent` 渲染避免注入；手机端改用 `100dvh`、safe-area 内边距、全屏弹窗、16px 输入框（避免 iOS 缩放）、预设问题横向滚动。`tests/test_sources_api.py`（10 项）+ `tests/test_sources_js.py`（4 项）+ `tests/test_ui_sources.py`（2 项）
 - [x] 管理台体验（2026-11-15）：运行时「模型」卡片（`GET/PUT/DELETE /admin/api/model`、`POST /admin/api/model/test`，覆盖项持久化且只回掩码 Key）；`/admin` 与 `/ui/` 用共享 `ragBearer`，同标签页登录一次即可，登出同时清除；左侧分区菜单滚动定位/高亮当前卡片、隐藏不可用入口、窄屏转横向。`tests/test_admin_ui_js.py`（7 项）校验共享 key、菜单目标、侧栏门禁与内联脚本语法
 - [x] 管理台与对话页体验收口（2026-11-17）：管理台加入分区缓存、危险区二次确认（勾选 + 输入 `RESET`）、统一骨架/空态/错误+重试、菜单计数、固定操作列与键盘排序、审计本地时间/徽章/CSV、账户菜单（语言保留一级）、上传并入文件卡（卡内选部门）、主题预设/自定义与共享 `ragBearer`；对话页 JWT 身份只读并只列 token 部门、`/admin/api/session` 驱动、引用编号与排序说明、预览复制、复制/重新生成工具条、Markdown 导出、输入法防误发、切换会话/部门中止流、上翻不抢滚、统一确认弹窗、会话搜索与载入/失败态、耗时收进「调试信息」、主题与管理台共享、移动抽屉/预览焦点管理。`tests/test_admin_ui_js.py` 扩到 24 项，全套 **639 passed**。
+- [x] 对话页收尾（2026-11-17）：预设问题随界面语言发送；删除会话失败改为侧栏状态；401/429/413/5xx 恢复草稿并给重试；Markdown 导出含时间戳与引用；长会话按 60 条一页展开；`/sessions` 支持 `limit`/`offset`，侧栏提供「加载更多」。`tests/test_admin_ui_js.py` 31 项、`tests/test_sessions.py` offset 用例，全套 **645 passed**。
+- [x] 对话页增强（2026-11-17）：`PATCH /sessions/{id}` 重命名 + `GET /sessions?q=` 服务端正文搜索；`feedback` 表与 `POST/GET /sessions/{id}/feedback` 赞踩落库；响应 `citations` 编号映射 + 正文 `[n]` 可点击 + `?session=` 分享；`GET /sources/file` 在部门/ACL 后打开或下载原文件；`/ui` 与 `/admin` 切换账号、登录页忘记密码提示；「调试信息」展示改写 query 与召回/重排候选；流式回答节流增量渲染 Markdown；动态头像 `aria-hidden`、操作按钮 `aria-label`、生成中 Esc 停止、移动端「回到底部」跟随输入区高度。全套 **695 passed**。
 
 #### 11.2.4 服务端会话存储（已完成 2026-11-10）
 - [x] 会话表 + 消息表（role/content/sources/degraded）：`src/sessions.py`（SQLite，`SESSIONS_DB_PATH`，默认 `./logs/sessions.db`；`SESSIONS_ENABLED` 可关）；`POST/GET/DELETE /sessions`，`ChatRequest.session_id` 带上后服务端拥有完整对话，请求体只传当前消息

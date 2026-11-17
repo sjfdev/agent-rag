@@ -493,6 +493,7 @@
           </select>
         </label>
         <a href="/ui/" data-i18n="admin.backToChat">返回对话</a>
+        <button id="switchAccount" hidden data-i18n="auth.switch">切换账号</button>
         <button id="logout" hidden data-i18n="auth.logout">退出</button>
       </div>
     </details>
@@ -506,6 +507,7 @@
       用账号密码登录，或直接粘贴管理员 Bearer token／管理令牌（ADMIN_TOKEN）。
       凭据保存在本浏览器（localStorage），新标签页或重启后无需再次登录。
     </p>
+    <p class="gateHelp" id="gateHelp" data-i18n="auth.forgot">忘记密码？请联系管理员重置。</p>
     <div id="passwordFields" hidden>
       <input id="username" type="text" placeholder="用户名" data-i18n-placeholder="auth.username" autocomplete="username">
       <input id="password" type="password" placeholder="密码" data-i18n-placeholder="auth.password" autocomplete="current-password">
@@ -1262,6 +1264,7 @@ function showGate(message) {
   $("sidebar").hidden = true;
   $("identity").hidden = true;
   $("logout").hidden = true;
+  $("switchAccount").hidden = true;
   $("userMenu").hidden = true;
   document.title = t("page.adminTitle");
   if (message) $("gateErr").textContent = message;
@@ -1281,6 +1284,7 @@ function renderIdentity(info) {
   if (!info || info.auth_mode === "none") {
     el.hidden = true;
     $("logout").hidden = true;
+    $("switchAccount").hidden = true;
     return;
   }
   const parts = [];
@@ -1293,6 +1297,7 @@ function renderIdentity(info) {
   el.textContent = parts.join(" · ");
   el.hidden = false;
   $("logout").hidden = false;
+  $("switchAccount").hidden = false;
 }
 
 // Ask the server who we are. 401 = need a credential; 403 = authenticated but
@@ -2821,6 +2826,13 @@ $("logout").onclick = () => {
   stopPolling();
   $("credential").value = "";
   showGate();
+};
+
+$("switchAccount").onclick = () => {
+  clearCredential();
+  stopPolling();
+  $("credential").value = "";
+  showGate(t("auth.switched"));
 };
 
 // A 401 from any call means the credential expired/rotated: return to the gate.

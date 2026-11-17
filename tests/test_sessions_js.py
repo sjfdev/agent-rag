@@ -105,3 +105,16 @@ process.stdout.write(JSON.stringify({
     assert data["en"]
     assert data["bad"] == ""
     assert data["missing"] == ""
+
+
+def test_session_query_carries_the_search_term():
+    code = """
+const api = require(process.argv[1]);
+process.stdout.write(JSON.stringify({
+  plain: api.sessionQuery("u1"),
+  search: api.sessionQuery("u1", "leave & pay"),
+}));
+"""
+    data = _run(code)
+    assert data["plain"] == "user_id=u1"
+    assert data["search"] == "user_id=u1&q=leave%20%26%20pay"

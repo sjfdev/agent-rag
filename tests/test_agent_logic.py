@@ -89,6 +89,10 @@ def test_call_model_builds_citations_and_prompt(stub_engine, monkeypatch):
     assert by_source["Tech/a.md"]["snippet"].startswith("Every change")
     assert update["timings"]["retrieval_calls"] == 1
     assert update["timings"]["llm_calls"] == 1
+    debug = update["retrieval_debug"]
+    assert debug["query"] == "What is the review process?"
+    assert debug["depts"] == ["Tech", "Finance"]
+    assert debug["sources"]
 
     prompt_text = "\n".join(str(m.content) for m in stub.prompts[0])
     assert "<document source=" in prompt_text
@@ -170,3 +174,37 @@ def test_should_continue_routes_to_tools():
     tool_call = AIMessage(content="", tool_calls=[{"name": "t", "args": {}, "id": "1"}])
     assert agent_module.should_continue({"messages": [tool_call]}) == "tools"
     assert agent_module.should_continue({"messages": [AIMessage(content="done")]}) == END
+
+
+def test_retrieval_debug_drops_acl_hidden_candidates(stub_engine, monkeypatch):
+    from langchain_core.documents import Document
+
+    monkeypatch.setattr(settings, "ACL_ENABLED", True)
+    monkeypatch.setattr("src.acl.is_allowed", lambda source, uid, groups: source == "Tech/a.md")
+
+    def search(query, depts, k=4, timings=None):
+        if timings is not None:
+            timings["_debug"] = {
+                "engine": "vector",
+                "candidates": [
+                    {"source": "Tech/a.md", "page": 1},
+                    {"source": "Tech/secret.md", "page": 1},
+                ],
+                "reranked": [
+                    {"source": "Tech/a.md", "page": 1},
+                    {"source": "Tech/secret.md", "page": 1},
+                ],
+                "candidate_count": 2,
+            }
+        return [
+            Document(page_content="allowed", metadata={"source": "Tech/a.md", "page": 1}),
+            Document(page_content="hidden", metadata={"source": "Tech/secret.md", "page": 1}),
+        ]
+
+    monkeypatch.setattr(stub_engine, "search", search)
+    monkeypatch.setattr(agent_module, "llm", StubLLM())
+    update = agent_module.call_model(_state("review"))
+    debug = update["retrieval_debug"]
+    assert [item["source"] for item in debug["candidates"]] == ["Tech/a.md"]
+    assert [item["source"] for item in debug["reranked"]] == ["Tech/a.md"]
+    assert debug["candidate_count"] == 1

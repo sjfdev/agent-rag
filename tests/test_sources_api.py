@@ -17,8 +17,15 @@ LONG_TEXT = (
 
 
 @pytest.fixture()
-def seeded(monkeypatch):
+def seeded(tmp_path, monkeypatch):
     from src.engine import kb_engine as engine
+
+    data = tmp_path / "data"
+    (data / "Tech").mkdir(parents=True)
+    (data / "Finance").mkdir(parents=True)
+    (data / "Tech" / "policy.md").write_text(LONG_TEXT, encoding="utf-8")
+    (data / "Finance" / "budget.md").write_text("budget bytes", encoding="utf-8")
+    monkeypatch.setattr(settings, "DATA_DIR", str(data))
 
     engine.reset()
     engine.add_documents(
@@ -190,3 +197,52 @@ def test_preview_uses_the_token_in_jwt_mode(seeded, monkeypatch):
         assert finance.status_code == 404
     finally:
         monkeypatch.setattr(settings, "AUTH_MODE", "none")
+
+
+def test_file_endpoint_serves_the_original_after_access_check(seeded):
+    client, _ = seeded
+    resp = client.get(
+        "/sources/file",
+        params={"source": "Tech/policy.md", "user_id": "u1", "user_dept": "Tech"},
+    )
+    assert resp.status_code == 200
+    assert LONG_TEXT in resp.text
+    assert resp.headers["content-disposition"].startswith("inline")
+
+    download = client.get(
+        "/sources/file",
+        params={
+            "source": "Tech/policy.md",
+            "user_id": "u1",
+            "user_dept": "Tech",
+            "download": 1,
+        },
+    )
+    assert download.status_code == 200
+    assert download.headers["content-disposition"].startswith("attachment")
+
+
+def test_file_endpoint_keeps_departments_isolated(seeded):
+    client, _ = seeded
+    resp = client.get(
+        "/sources/file",
+        params={"source": "Finance/budget.md", "user_id": "u1", "user_dept": "Tech"},
+    )
+    assert resp.status_code == 404
+    ok = client.get(
+        "/sources/file",
+        params={"source": "Finance/budget.md", "user_id": "u1", "user_dept": "Finance"},
+    )
+    assert ok.status_code == 200
+    assert ok.text == "budget bytes"
+
+
+def test_source_file_path_never_escapes_data_dir(seeded):
+    from fastapi import HTTPException
+
+    from src.sources_api import _source_file
+
+    client, _ = seeded
+    with pytest.raises(HTTPException) as excinfo:
+        _source_file("../outside.txt")
+    assert excinfo.value.status_code == 400

@@ -273,7 +273,8 @@ def test_chat_citations_are_numbered_and_answers_have_actions():
     text = INDEX.read_text()
     assert "srchitNum" in text
     assert "box.open = sources.length <= 3;" in text
-    assert "addActions(bubble, answer, { question: text })" in text
+    assert "addActions(bubble, answer, {" in text
+    assert "question: text," in text
     assert "function regenerateAnswer(" in text
 
 
@@ -296,3 +297,74 @@ def test_sessions_search_loading_and_themed_confirmation():
     assert 'id="confirm"' in text
     assert "askConfirm(" in text
     assert "window.confirm" not in text
+
+
+def test_chat_presets_send_the_displayed_language():
+    text = INDEX.read_text()
+    assert 'data-q-zh="' in text
+    assert 'window.i18n.currentLanguage().startsWith("zh")' in text
+    assert "b.dataset.qZh || b.dataset.q" in text
+
+
+def test_session_delete_failure_uses_sidebar_status():
+    text = INDEX.read_text()
+    assert "function showSessionStatus(" in text
+    assert 'addMsg("bot", "", null, true, "sessions.deleteFailed")' not in text
+    assert "await refreshSessions();" in text
+
+
+def test_chat_retries_and_restores_drafts_for_transient_errors():
+    text = INDEX.read_text()
+    assert "if (resp.status === 413 || resp.status === 429 || resp.status >= 500)" in text
+    assert "restoreDraft(text);\n        showGate" in text
+
+
+def test_chat_can_page_sessions_and_long_transcripts():
+    text = INDEX.read_text()
+    assert "const SESSIONS_PAGE = 50;" in text
+    assert '"&limit=" + SESSIONS_PAGE + "&offset=" + offset' in text
+    assert 'id="sessionMore"' in text
+    assert "function renderSessionMessages(" in text
+    assert "SESSION_PAGE" in text
+
+
+def test_chat_export_includes_timestamps_and_citations():
+    text = INDEX.read_text()
+    assert 't("chat.exportSources")' in text
+    assert "message.sources.forEach" in text
+    assert "when.toLocaleString()" in text
+
+
+def test_chat_accessibility_mobile_feedback_and_share():
+    text = INDEX.read_text()
+    # Dynamic avatars are decorative; action buttons have explicit labels.
+    assert 'avatar.setAttribute("aria-hidden", "true")' in text
+    assert 'copy.setAttribute("aria-label", t("chat.copy"))' in text
+    assert 'again.setAttribute("aria-label", t("chat.regenerate"))' in text
+    # Esc stops generation without stealing it from dialogs/drawers.
+    assert 'event.key !== "Escape" || !busy || !abortController' in text
+    # The floating scroll button tracks the real composer height.
+    assert "--compose-offset" in text
+    assert "new ResizeObserver(syncComposeOffset)" in text
+    # Feedback is persisted per assistant message and citations are clickable.
+    assert "function submitFeedback(" in text
+    assert "/feedback?" in text
+    assert "messageSeq" in text
+    assert "function attachCitations(" in text
+    assert "function shareSession(" in text
+    assert 'searchParams.set("session", sessionId)' in text
+
+
+def test_chat_rename_search_and_original_file_controls():
+    text = INDEX.read_text()
+    assert 'id="renameModal"' in text
+    assert "function openRename(" in text
+    assert 'method: "PATCH"' in text
+    assert "ChatSessions.sessionQuery(currentUserId(), query)" in text
+    assert 'id="previewOpen"' in text
+    assert 'id="previewDownload"' in text
+    assert "updatePreviewFileLinks(" in text
+    assert "async function openPreviewFile(" in text
+    assert "fetch(ChatSources.filePath(base), { headers: authHeaders() })" in text
+    assert 'id="switchAccount"' in text
+    assert 'id="gateHelp"' in text
