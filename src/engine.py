@@ -59,9 +59,13 @@ def _raw_embeddings():
     # Local sentence-transformers model: works fully offline after first download.
     from langchain_huggingface import HuggingFaceEmbeddings
 
+    batch_size = max(1, min(512, int(settings.EMBEDDING_BATCH_SIZE)))
     return HuggingFaceEmbeddings(
         model_name=settings.LOCAL_EMBEDDING_MODEL,
-        encode_kwargs={"normalize_embeddings": True},
+        encode_kwargs={
+            "normalize_embeddings": True,
+            "batch_size": batch_size,
+        },
     )
 
 

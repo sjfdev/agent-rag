@@ -76,3 +76,20 @@ def test_completed_job_reports_full_progress_and_chunk_total(monkeypatch):
     assert progress["elapsed_seconds"] == pytest.approx(120, abs=3)
     assert progress["eta_seconds"] is None
 
+
+
+def test_progress_aggregates_phase_timings(monkeypatch):
+    monkeypatch.setattr(admin_api, "_count_supported_files", lambda dept=None: 10)
+    job = _job(
+        log=[
+            "  update   公共/A.pdf (10 chunks) [parse=10ms chunk=20ms embed=300ms write=40ms]",
+            "  update   公共/B.pdf (20 chunks) [parse=5ms chunk=10ms embed=200ms write=20ms]",
+        ]
+    )
+    progress = admin_api._job_progress(job)
+    assert progress["timings_ms"] == {
+        "parse": 15.0,
+        "chunk": 30.0,
+        "embed": 500.0,
+        "write": 60.0,
+    }

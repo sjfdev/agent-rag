@@ -83,6 +83,7 @@ def main():
         f"\nDone. docs: added={s['added']} updated={s['updated']} "
         f"skipped={s['skipped']} pruned={s['pruned']}; chunks written={s['chunks']}"
     )
+    print(f"Timings: {etl.timing_description()}")
     return 0
 
 

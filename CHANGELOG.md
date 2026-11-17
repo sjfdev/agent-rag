@@ -329,6 +329,17 @@ three agree before you push a tag.
   速度、预计剩余（进度 40% 后）、当前文件与实时日志。后端从持久化任务日志推导
   `progress`，因此面板上线前已启动的任务也能显示；完成后保留汇总。
 
+- **Ingestion throughput diagnostics**: each processed file now records
+  parse/chunk/embed/write timings in the job log and `stats.timings_ms`, and
+  the 运行监视 panel shows the phase breakdown. `EMBEDDING_BATCH_SIZE` (default
+  32, clamped to 512) controls local sentence-transformers ingestion batching,
+  and token counts are cached so the recursive splitter does not re-encode the
+  same candidates. These changes do not alter vectors or chunk boundaries.
+  <br>**入库吞吐诊断（中文）**：每个文件的解析/切分/嵌入/写入耗时会写入任务日志与
+  `stats.timings_ms`，并在「运行监视」面板显示阶段耗时；`EMBEDDING_BATCH_SIZE`
+  （默认 32，最大 512）控制本地 sentence-transformers 入库 batch；token 计数增加
+  缓存，避免递归切分重复 encode。这些改动不改变向量与分片边界。
+
 ### Fixed
 
 - **Admin account management and account switching**: the 账号 card now edits

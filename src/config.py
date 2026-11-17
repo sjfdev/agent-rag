@@ -227,5 +227,10 @@ class Settings(BaseSettings):
     EMBEDDING_BACKEND: Literal["local", "openai", "fake"] = "local"
     LOCAL_EMBEDDING_MODEL: str = "BAAI/bge-small-zh-v1.5"
     EMBEDDING_MODEL: str = "text-embedding-3-small"
+    # Batch size for local sentence-transformers ingestion embeddings. Larger
+    # batches improve CPU throughput but use more memory; 32–64 is a good
+    # starting point. Query embeddings are one-at-a-time and unaffected.
+    # 本地入库 embedding 的 batch 大小；32–64 通常较合适，查询不受影响。
+    EMBEDDING_BATCH_SIZE: int = 32
 
 settings = Settings()

@@ -6,12 +6,25 @@ memory would be wasted. The cache is process-local and bounded.
 """
 
 import threading
+import time
 from collections import OrderedDict
 from typing import Any, List
 
 from langchain_core.embeddings import Embeddings
 
 from src.config import settings
+
+_doc_timing = threading.local()
+
+
+def reset_document_timer() -> None:
+    """Start a new per-document embedding timing window."""
+    _doc_timing.ms = 0.0
+
+
+def document_embedding_ms() -> float:
+    """Embedding time accumulated since the last reset (milliseconds)."""
+    return float(getattr(_doc_timing, "ms", 0.0))
 
 
 class CachedEmbeddings(Embeddings):
@@ -63,7 +76,16 @@ class CachedEmbeddings(Embeddings):
 
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
         # Ingestion path: pass through, never cache (large and one-shot).
-        return self._inner.embed_documents(texts)
+        # Record the time so the ETL can separate embedding from the vector
+        # store write in its per-file timing breakdown.
+        # 记录 embedding 时间，供 ETL 区分嵌入与写库耗时。
+        started = time.perf_counter()
+        try:
+            return self._inner.embed_documents(texts)
+        finally:
+            _doc_timing.ms = document_embedding_ms() + (
+                time.perf_counter() - started
+            ) * 1000
 
     def stats(self) -> dict:
         with self._lock:

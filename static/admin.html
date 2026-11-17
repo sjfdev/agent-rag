@@ -828,6 +828,7 @@
       <span><span data-i18n="admin.jobEtaLabel">预计剩余</span> <b id="jobEta">—</b></span>
     </div>
     <div class="hint" id="jobCurrent"></div>
+    <div class="hint" id="jobTimings"></div>
     <pre id="jobLog"></pre>
     <div class="msg" id="jobMsg" aria-live="polite"></div>
   </section>
@@ -2545,6 +2546,7 @@ function jobProgressFromLog(job) {
   let processed = 0;
   let chunks = 0;
   let current = "";
+  const timings = { parse: 0, chunk: 0, embed: 0, write: 0 };
   for (const line of log) {
     const match = String(line).match(/^\s*(add|update|skip|error)\s+(.+?)(?:\s+\(|$)/);
     if (!match) continue;
@@ -2552,6 +2554,15 @@ function jobProgressFromLog(job) {
     current = match[2].trim();
     const chunkMatch = String(line).match(/\((\d+) chunks\)/);
     if (chunkMatch) chunks += Number(chunkMatch[1]);
+    const timingMatch = String(line).match(
+      /\[parse=(\d+)ms chunk=(\d+)ms embed=(\d+)ms write=(\d+)ms\]/
+    );
+    if (timingMatch) {
+      timings.parse += Number(timingMatch[1]);
+      timings.chunk += Number(timingMatch[2]);
+      timings.embed += Number(timingMatch[3]);
+      timings.write += Number(timingMatch[4]);
+    }
   }
   const stats = job.stats || {};
   if (stats.chunks) chunks = Number(stats.chunks);
@@ -2584,7 +2595,13 @@ function jobProgressFromLog(job) {
     rate_docs_per_min: minutes ? processed / minutes : 0,
     rate_chunks_per_min: minutes ? chunks / minutes : 0,
     current,
+    timings_ms: timings,
   };
+}
+
+function formatMs(ms) {
+  const value = Number(ms) || 0;
+  return value >= 1000 ? `${(value / 1000).toFixed(1)}s` : `${Math.round(value)}ms`;
 }
 
 function renderJob(job) {
@@ -2599,6 +2616,7 @@ function renderJob(job) {
     $("jobRate").textContent = "—";
     $("jobEta").textContent = "—";
     $("jobCurrent").textContent = "";
+    $("jobTimings").textContent = "";
     $("jobFill").style.width = "0%";
     $("jobLog").textContent = "";
     return;
@@ -2638,6 +2656,16 @@ function renderJob(job) {
     : status === "done"
       ? t("admin.jobFinished")
       : "";
+  const timings = progress.timings_ms || {};
+  const hasTimings = Object.values(timings).some((value) => Number(value) > 0);
+  $("jobTimings").textContent = hasTimings
+    ? t("admin.jobTimings", {
+        parse: formatMs(timings.parse),
+        chunk: formatMs(timings.chunk),
+        embed: formatMs(timings.embed),
+        write: formatMs(timings.write),
+      })
+    : "";
   $("jobLog").textContent = (job.log || []).join("\n");
   $("jobLog").scrollTop = $("jobLog").scrollHeight;
 }

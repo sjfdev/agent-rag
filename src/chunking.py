@@ -21,6 +21,7 @@ import hashlib
 import logging
 import re
 import threading
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -71,11 +72,12 @@ def _load_tokenizer():
 
 
 def reset_tokenizer() -> None:
-    """Drop the cached tokenizer (tests and settings changes)."""
+    """Drop the cached tokenizer and token counts (tests and model changes)."""
     global _tokenizer, _tokenizer_failed
     with _tokenizer_lock:
         _tokenizer = None
         _tokenizer_failed = False
+    _count_tokens_cached.cache_clear()
 
 
 def _heuristic_tokens(text: str) -> int:
@@ -90,8 +92,8 @@ def _heuristic_tokens(text: str) -> int:
     return max(1, cjk + (other + 3) // 4)
 
 
-def count_tokens(text: str) -> int:
-    """Token length used by the splitter and the title-prefix budget."""
+@lru_cache(maxsize=4096)
+def _count_tokens_cached(text: str) -> int:
     tokenizer = _load_tokenizer()
     if tokenizer is not None:
         try:
@@ -99,6 +101,15 @@ def count_tokens(text: str) -> int:
         except Exception:
             return _heuristic_tokens(text)
     return _heuristic_tokens(text)
+
+
+def count_tokens(text: str) -> int:
+    """Token length used by the splitter and the title-prefix budget.
+
+    The recursive splitter measures overlapping candidate strings repeatedly;
+    caching those measurements cuts tokenizer calls substantially.
+    """
+    return _count_tokens_cached(text)
 
 
 def load_config() -> Dict[str, Any]:

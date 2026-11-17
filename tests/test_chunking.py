@@ -172,3 +172,11 @@ def test_split_documents_preserves_section_metadata(monkeypatch):
     assert all(doc.metadata["source"] == "Tech/b.md" for doc in docs)
     assert all(doc.metadata["slide"] == 2 for doc in docs)
     assert all(doc.metadata["title"] == "b" for doc in docs)
+
+
+def test_token_counts_are_cached():
+    chunking.reset_tokenizer()
+    first = chunking.count_tokens("这是一段需要重复计数的文本")
+    second = chunking.count_tokens("这是一段需要重复计数的文本")
+    assert first == second
+    assert chunking._count_tokens_cached.cache_info().hits >= 1

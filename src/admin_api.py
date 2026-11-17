@@ -246,6 +246,9 @@ def _iter_files(dept: Optional[str] = None):
 
 _JOB_ACTION_RE = re.compile(r"^\s*(add|update|skip|error)\s+(.+?)(?:\s+\(|$)")
 _JOB_CHUNK_RE = re.compile(r"\((\d+) chunks\)")
+_JOB_TIMING_RE = re.compile(
+    r"\[parse=(\d+)ms chunk=(\d+)ms embed=(\d+)ms write=(\d+)ms\]"
+)
 _TOTAL_FILES_CACHE = {"key": None, "value": 0, "at": 0.0}
 
 
@@ -288,6 +291,7 @@ def _job_progress(job: Dict[str, Any]) -> Dict[str, Any]:
     processed = 0
     chunks = 0
     current = ""
+    timings = {"parse": 0.0, "chunk": 0.0, "embed": 0.0, "write": 0.0}
     for line in log:
         match = _JOB_ACTION_RE.match(str(line))
         if not match:
@@ -297,10 +301,19 @@ def _job_progress(job: Dict[str, Any]) -> Dict[str, Any]:
         chunk_match = _JOB_CHUNK_RE.search(str(line))
         if chunk_match:
             chunks += int(chunk_match.group(1))
+        timing_match = _JOB_TIMING_RE.search(str(line))
+        if timing_match:
+            for key, value in zip(
+                ("parse", "chunk", "embed", "write"), timing_match.groups(), strict=False
+            ):
+                timings[key] += float(value)
 
     stats = job.get("stats") or {}
     if stats:
         chunks = int(stats.get("chunks") or chunks)
+        saved = stats.get("timings_ms") or {}
+        if saved:
+            timings = {key: float(saved.get(key, timings[key])) for key in timings}
 
     total = _count_supported_files(job.get("dept"))
     status = str(job.get("status") or "queued")
@@ -334,6 +347,7 @@ def _job_progress(job: Dict[str, Any]) -> Dict[str, Any]:
         "rate_docs_per_min": round(processed / minutes, 1) if minutes else 0.0,
         "rate_chunks_per_min": round(chunks / minutes, 1) if minutes else 0.0,
         "current": current,
+        "timings_ms": {key: round(value, 1) for key, value in timings.items()},
     }
 
 
@@ -479,6 +493,7 @@ def _run_job(job_id: str, dept: Optional[str], reset: bool) -> None:
             "Done. docs: added={added} updated={updated} skipped={skipped} "
             "pruned={pruned} failed={failed}; chunks={chunks}".format(**stats),
         )
+        _job_log(job_id, f"Timings: {etl.timing_description()}")
         _job_update(job_id, status="done", stats=stats, finished=time.time())
         observe_ingest_job("done")
     except Exception as exc:

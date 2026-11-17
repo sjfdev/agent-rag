@@ -494,6 +494,7 @@ def test_ingestion_monitor_panel():
         'id="jobRate"',
         'id="jobEta"',
         'id="jobCurrent"',
+        'id="jobTimings"',
         'id="jobLog"',
     ):
         assert marker in text, marker

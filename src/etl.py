@@ -1,9 +1,10 @@
 import hashlib
 import logging
+import time
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Set
 
-from src import chunking
+from src import chunking, embedding_cache
 from src.config import settings
 from src.engine import kb_engine
 from src.hashing import file_sha1
@@ -49,6 +50,7 @@ class EnterpriseETL:
             "pruned": 0,
             "failed": 0,
             "chunks": 0,
+            "timings_ms": {"parse": 0.0, "chunk": 0.0, "embed": 0.0, "write": 0.0},
         }
 
     def chunk_description(self) -> str:
@@ -60,6 +62,23 @@ class EnterpriseETL:
             f"title_prefix={item['title_prefix']} signature={item['signature']} "
             f"tokenizer={item['tokenizer']}"
         )
+
+    def timing_description(self) -> str:
+        """Aggregate phase timings for the job log and monitor."""
+        timings = self.stats.get("timings_ms") or {}
+        return (
+            f"parse={int(timings.get('parse', 0))}ms "
+            f"chunk={int(timings.get('chunk', 0))}ms "
+            f"embed={int(timings.get('embed', 0))}ms "
+            f"write={int(timings.get('write', 0))}ms"
+        )
+
+    def _record_timing(self, parse_ms: float, chunk_ms: float, embed_ms: float, write_ms: float) -> None:
+        timings = self.stats["timings_ms"]
+        timings["parse"] += max(0.0, parse_ms)
+        timings["chunk"] += max(0.0, chunk_ms)
+        timings["embed"] += max(0.0, embed_ms)
+        timings["write"] += max(0.0, write_ms)
 
     def _log(self, message: str) -> None:
         print(message)
@@ -136,6 +155,7 @@ class EnterpriseETL:
             return doc_id
 
         # Load first: a parse failure must not delete the previously indexed copy.
+        parse_started = time.perf_counter()
         try:
             sections = load_file(path)
         except Exception as exc:
@@ -143,10 +163,12 @@ class EnterpriseETL:
             self._log(f"  error    {source} ({exc.__class__.__name__}: {exc})")
             self.stats["failed"] += 1
             return doc_id
+        parse_ms = (time.perf_counter() - parse_started) * 1000
 
         texts: List[str] = []
         metadatas: List[Dict] = []
         index = 0
+        chunk_started = time.perf_counter()
         for section in sections:
             meta = section.metadata or {}
             # Fixed key set with sentinels: the Milvus schema is derived from
@@ -172,6 +194,7 @@ class EnterpriseETL:
                 index += 1
                 texts.append(chunk.page_content)
                 metadatas.append(meta_chunk)
+        chunk_ms = (time.perf_counter() - chunk_started) * 1000
 
         if not texts:
             self._log(f"  skip     {source} (no extractable text)")
@@ -188,13 +211,23 @@ class EnterpriseETL:
             self.stats["added"] += 1
             action = "add"
 
+        write_started = time.perf_counter()
+        embedding_cache.reset_document_timer()
         kb_engine.add_documents(texts, metadatas)
         if existing_hash is not None:
             stale = kb_engine.delete_stale_versions(doc_id, doc_hash)
             if stale:
                 self._log(f"  replaced {source}: removed {stale} old chunk(s)")
+        write_total_ms = (time.perf_counter() - write_started) * 1000
+        embed_ms = min(write_total_ms, embedding_cache.document_embedding_ms())
+        write_ms = max(0.0, write_total_ms - embed_ms)
+        self._record_timing(parse_ms, chunk_ms, embed_ms, write_ms)
         self.stats["chunks"] += len(texts)
-        self._log(f"  {action:<8} {source} ({len(texts)} chunks)")
+        self._log(
+            f"  {action:<8} {source} ({len(texts)} chunks) "
+            f"[parse={int(parse_ms)}ms chunk={int(chunk_ms)}ms "
+            f"embed={int(embed_ms)}ms write={int(write_ms)}ms]"
+        )
         return doc_id
 
     def prune(self, keep: Set[str]) -> int:
