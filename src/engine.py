@@ -812,8 +812,11 @@ class MilvusDriver(BaseVectorStore):
             removed = 0
         try:
             self._write_db.delete(expr=expr)
-            if removed:
-                self.vector_db.client.flush(self._write_collection)
+            # Deliberately no flush() here: Milvus persists inserts/deletes in
+            # its WAL and auto-flushes sealed segments, and queries already
+            # exclude deleted rows. An explicit flush per replaced document
+            # measured ~9s on a 10k-chunk collection and dominated ingestion
+            # time (the batched prune path below still flushes once per run).
         except Exception:
             logger.warning("delete by expr failed: %s", expr, exc_info=True)
             return 0

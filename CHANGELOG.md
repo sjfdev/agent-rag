@@ -384,6 +384,18 @@ three agree before you push a tag.
 
 ### Changed
 
+- **No per-document Milvus flush during ingestion**: replacing a document used
+  to `flush()` the collection after every delete (~9s on a 10k-chunk
+  collection), which dominated ingestion once embedding got fast. Deletes are
+  already persisted through Milvus' WAL and visible to queries immediately, so
+  the flush was removed; a replaced 200-chunk document now writes in <1s
+  instead of ~9s. The batched prune/admin-delete path still flushes once per
+  batch.
+  <br>**入库不再逐文档 flush（中文）**：替换文档时原先每次删除后都 `flush()`
+  整个集合（1 万 chunk 时约 9 秒），在 embedding 提速后成为主要瓶颈。删除已通过
+  Milvus WAL 持久化且查询立即可见，因此去掉该 flush；替换一份 200 chunk 的文档
+  写入从约 9 秒降到 1 秒内。批量清理/管理台删除仍按批次 flush 一次。
+
 - **Faster image rebuilds**: the Dockerfile now bakes the embedding model into
   the image *before* copying `src/`, `static/`, `scripts/` and `eval/`. The
   model layer only depends on the installed packages and `EMBEDDING_MODEL` /
