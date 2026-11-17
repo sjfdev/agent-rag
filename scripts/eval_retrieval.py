@@ -4,6 +4,9 @@ Cases live in eval/cases.jsonl. Two kinds are supported:
 
 - expected cases: ``expect_sources`` lists filename substrings; a hit means at
   least one of them appears in the top-k results.
+- content cases: ``expect_contains`` lists keywords/phrases; a content hit means
+  at least one retrieved chunk contains one of them. This catches "right file,
+  wrong chunk" results that a source-only hit rate cannot see.
 - isolation cases: ``forbid_sources`` must never appear (permission leak).
 
 Exit code is non-zero when the hit rate is below ``--min-hit`` or any forbidden
@@ -75,8 +78,11 @@ def main() -> int:
 
     hits = 0
     expected = 0
+    content_hits = 0
+    content_expected = 0
     leaks = 0
     reciprocal_ranks = []
+    content_ranks = []
     latencies = []
 
     for case in cases:
@@ -93,21 +99,57 @@ def main() -> int:
             else:
                 print(f"ok    {case['id']} (isolation)")
 
+        content_rank = None
+        markers = case.get("expect_contains") or []
+        if markers:
+            content_expected += 1
+            # When a case names expected sources, content must come from one of
+            # them: a matching keyword in the wrong document is still a miss.
+            # 有 expect_sources 时，内容也必须来自期望文档；别的文档碰巧含关键词不算命中。
+            candidates = [
+                (i + 1, doc)
+                for i, doc in enumerate(docs)
+                if not case.get("expect_sources")
+                or matches(source_of(doc), case["expect_sources"])
+            ]
+            content_rank = next(
+                (
+                    rank
+                    for rank, doc in candidates
+                    if any(
+                        marker.lower() in (doc.page_content or "").lower()
+                        for marker in markers
+                    )
+                ),
+                None,
+            )
+            if content_rank:
+                content_hits += 1
+                content_ranks.append(1 / content_rank)
+            else:
+                print(f"content-MISS {case['id']} markers={markers[:3]}")
+
+        source_rank = None
         if case.get("expect_sources"):
             expected += 1
-            rank = next(
+            source_rank = next(
                 (i + 1 for i, s in enumerate(sources) if matches(s, case["expect_sources"])),
                 None,
             )
-            if rank:
+            if source_rank:
                 hits += 1
-                reciprocal_ranks.append(1 / rank)
-                print(f"hit   {case['id']} rank={rank} {sources[0]}")
+                reciprocal_ranks.append(1 / source_rank)
+                suffix = f" content_rank={content_rank}" if markers else ""
+                print(f"hit   {case['id']} rank={source_rank}{suffix} {sources[0]}")
             else:
                 print(f"MISS  {case['id']} top={sources[:3]}")
+        elif markers and content_rank:
+            print(f"hit-content {case['id']} rank={content_rank}")
 
     hit_rate = hits / expected if expected else 1.0
     mrr = statistics.mean(reciprocal_ranks) if reciprocal_ranks else 0.0
+    content_rate = content_hits / content_expected if content_expected else 1.0
+    content_mrr = statistics.mean(content_ranks) if content_ranks else 0.0
     p50 = statistics.median(latencies) if latencies else 0.0
     p95 = (
         statistics.quantiles(latencies, n=20)[18]
@@ -117,7 +159,9 @@ def main() -> int:
 
     print(
         f"\nhit@{args.k}={hits}/{expected} ({hit_rate:.0%})  MRR={mrr:.2f}  "
-        f"leaks={leaks}  latency p50={p50:.0f}ms p95={p95:.0f}ms"
+        f"content@{args.k}={content_hits}/{content_expected} ({content_rate:.0%})  "
+        f"content-MRR={content_mrr:.2f}  leaks={leaks}  "
+        f"latency p50={p50:.0f}ms p95={p95:.0f}ms"
     )
 
     failed = leaks > 0 or hit_rate < args.min_hit

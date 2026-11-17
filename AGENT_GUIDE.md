@@ -1092,13 +1092,13 @@ python scripts/bench_retrieval.py
 2. **建立索引**：Milvus 默认可为 `enterprise_kb` 建 HNSW 索引并 `load`，大规模下显著降低搜索延迟。
 3. **控制候选数**：`k` 从 4 提到更高会增加 prompt 长度和 LLM 时间。
 4. **切分参数**：已改为 token 级切分，默认 `CHUNK_TOKENS=450` / `CHUNK_OVERLAP_TOKENS=50`，中文标点优先且可选标题前缀；管理台「分片」卡片可运行时调整，参数签名并入 `doc_hash`，下一次入库自动重切。`bge-small-zh` 的 tokenizer 上限是 512，中文密集资料不要超过 480 token。
-5. **二阶段重排**：`src/reranker.py` 已接入 `kb_engine.search`，设置 `RERANK_ENABLED=true` 后先对融合后的候选做 CrossEncoder 重排再取 top-k。默认关闭。24 条中英评测（纯向量）：不重排 MRR 0.88 / p50≈16ms；MiniLM +≈205ms、MRR 0.92；`bge-reranker-base` +≈1.2s（p95 4.8s）、MRR 0.97。混合检索 + MiniLM 同样为 0.92。中文优先 BGE，英文/低延迟选 MiniLM，二者都需先缓存模型。
+5. **二阶段重排**：`src/reranker.py` 已接入 `kb_engine.search`，设置 `RERANK_ENABLED=true` 后先对融合后的候选做 CrossEncoder 重排再取 top-k。默认关闭。早期 24 条中英评测（纯向量）：不重排 MRR 0.88 / p50≈16ms；MiniLM +≈205ms、MRR 0.92；`bge-reranker-base` +≈1.2s（p95 4.8s）、MRR 0.97。混合检索 + MiniLM 同样为 0.92。中文优先 BGE，英文/低延迟选 MiniLM，二者都需先缓存模型。
 6. **多轮检索改写**：`src/agent.py::_retrieval_query` 检测代词/指示词或极短问句，把上一轮问题拼进检索 query，不额外调用 LLM。实测追问 "Who approves it?" 时目标文档从第 3 位升到第 1 位。
 7. **零停机重建**：全量重建写入影子索引（Milvus 临时集合 + alias 切换，FAISS 临时目录 + `os.replace`），提交前查询始终走旧索引；变更文件先写新版本再删旧版本，避免崩溃丢文档。维护标志只在提交的毫秒级切换瞬间置位。
-8. **混合检索（能力自适应）**：`HYBRID_ENGINE=auto` 默认。Milvus ≥ 2.5 且集合含 BM25 稀疏字段时，用服务端 `hybrid_search` + `RRFRanker`（一次请求完成稠密+稀疏融合）；否则自动回退到 `src/lexical.py` 的进程内 BM25（中英文分词：英文按词、中文按字 + 二元组，RRF 融合）。FAISS 永远走进程内 BM25。`local` 强制进程内，`milvus` 在能力不足时启动即报错（不会静默降级）。进程内 BM25 首次查询需加载该部门全部 chunk，启动后与入库后都会后台预热；`HYBRID_MAX_DOCS` 限制单部门语料。24 条评测 MRR 0.88 → 0.89，精确标识符（如 `DEMO-GUEST`）类查询收益最明显。
+8. **混合检索（能力自适应）**：`HYBRID_ENGINE=auto` 默认。Milvus ≥ 2.5 且集合含 BM25 稀疏字段时，用服务端 `hybrid_search` + `RRFRanker`（一次请求完成稠密+稀疏融合）；否则自动回退到 `src/lexical.py` 的进程内 BM25（中英文分词：英文按词、中文按字 + 二元组，RRF 融合）。FAISS 永远走进程内 BM25。`local` 强制进程内，`milvus` 在能力不足时启动即报错（不会静默降级）。进程内 BM25 首次查询需加载该部门全部 chunk，启动后与入库后都会后台预热；`HYBRID_MAX_DOCS` 限制单部门语料。早期 24 条评测 MRR 0.88 → 0.89，精确标识符（如 `DEMO-GUEST`）类查询收益最明显。
 
     从 2.4 升级到 2.5 后，旧集合没有稀疏字段：要么 `python run_ingestion.py --reset` 重建（推荐），要么先设 `HYBRID_ENGINE=local` 继续跑。可用 `GET /info` 的 `hybrid.engine` 确认当前实际走哪条路径；2.5 上运行 `python scripts/check_hybrid_milvus.py` 做端到端验证（使用临时集合，完成后删除）。
-9. **评测闭环**：`eval/cases.jsonl` + `scripts/eval_retrieval.py`，覆盖 Tech/Finance/HR/Demo 共 18 个命中用例和 6 个跨部门泄漏用例；调参、换重排模型或改混合策略后先跑它。
+9. **评测闭环**：`eval/cases.jsonl` + `scripts/eval_retrieval.py`。当前 84 条：原有 Tech/Finance/HR/Demo 18 个命中 + 6 个跨部门泄漏，另加 60 条「公共」编程 PDF 用例（Java/Python/SQL/Docker/Git 等）。除 `expect_sources` 外，新的 `expect_contains` 会检查命中 chunk 是否真的包含关键词，避免“文件名对了但片段错了”仍算通过。旧索引（800 字分片）基线：`hit@6=77/78（99%）`、`MRR=0.91`、`content@6=54/60（90%）`、`content-MRR=0.80`、p50≈30ms、p95≈57ms；重切分片、换重排模型或改混合策略后都跑同一套用例对比。
 
 ### 8.4 服务层
 

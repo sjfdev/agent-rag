@@ -22,3 +22,63 @@
 {"id": "zh-demo-wifi", "dept": "Demo", "query": "访客 Wi-Fi 密码是什么？", "expect_sources": ["faq.txt", "policy.md"]}
 {"id": "zh-tech-password", "dept": "Tech", "query": "密码多久需要更换一次？", "expect_sources": ["security_policy"]}
 {"id": "iso-zh-hr-budget", "dept": "HR", "query": "2026 年薪资预算区间", "forbid_sources": ["confidential_budget"]}
+{"id": "pub-java-runnable", "dept": "公共", "query": "Java 中如何通过实现 Runnable 接口创建线程？", "expect_sources": ["Java.pdf"], "expect_contains": ["Runnable"]}
+{"id": "pub-java-hashmap", "dept": "公共", "query": "Java 中 HashMap 和 Hashtable 有什么区别？", "expect_sources": ["Java.pdf"], "expect_contains": ["Hashtable"]}
+{"id": "pub-java-interface", "dept": "公共", "query": "Java 中接口和抽象类有什么区别？", "expect_sources": ["Java.pdf"], "expect_contains": ["抽象类", "abstract"]}
+{"id": "pub-python-comprehension", "dept": "公共", "query": "Python 中列表推导式的语法是什么？", "expect_sources": ["Python3.pdf"], "expect_contains": ["推导式"]}
+{"id": "pub-python-default-args", "dept": "公共", "query": "Python 中如何定义带默认参数的函数？", "expect_sources": ["Python.pdf", "Python3.pdf"], "expect_contains": ["默认参数"]}
+{"id": "pub-python-tuple", "dept": "公共", "query": "Python 中列表和元组有什么区别？", "expect_sources": ["Python.pdf", "Python3.pdf"], "expect_contains": ["元组"]}
+{"id": "pub-sql-joins", "dept": "公共", "query": "SQL 中 INNER JOIN 和 LEFT JOIN 有什么区别？", "expect_sources": ["SQL.pdf"], "expect_contains": ["INNER JOIN"]}
+{"id": "pub-sql-groupby", "dept": "公共", "query": "SQL 中 GROUP BY 的作用是什么？", "expect_sources": ["SQL.pdf"], "expect_contains": ["GROUP BY"]}
+{"id": "pub-sql-union", "dept": "公共", "query": "SQL 中 UNION 和 UNION ALL 有什么区别？", "expect_sources": ["SQL.pdf"], "expect_contains": ["UNION ALL"]}
+{"id": "pub-mysql-innodb", "dept": "公共", "query": "MySQL 中 InnoDB 和 MyISAM 有什么区别？", "expect_sources": ["Mysql.pdf"], "expect_contains": ["InnoDB"]}
+{"id": "pub-mysql-acid", "dept": "公共", "query": "MySQL 中事务的 ACID 特性是什么？", "expect_sources": ["Mysql.pdf"], "expect_contains": ["ACID"]}
+{"id": "pub-mysql-index", "dept": "公共", "query": "MySQL 中如何创建索引？", "expect_sources": ["Mysql.pdf", "SQL.pdf"], "expect_contains": ["CREATE INDEX", "INDEX"]}
+{"id": "pub-git-rebase", "dept": "公共", "query": "Git 中 merge 和 rebase 有什么区别？", "expect_sources": ["Git.pdf"], "expect_contains": ["rebase"]}
+{"id": "pub-git-branch", "dept": "公共", "query": "Git 中如何创建并切换到新分支？", "expect_sources": ["Git.pdf"], "expect_contains": ["checkout", "branch"]}
+{"id": "pub-docker-ps", "dept": "公共", "query": "Docker 中如何查看正在运行的容器？", "expect_sources": ["Docker.pdf"], "expect_contains": ["docker ps"]}
+{"id": "pub-docker-image", "dept": "公共", "query": "Docker 中镜像和容器有什么区别？", "expect_sources": ["Docker.pdf"], "expect_contains": ["镜像", "docker"]}
+{"id": "pub-linux-chmod", "dept": "公共", "query": "Linux 中 chmod 755 表示什么权限？", "expect_sources": ["Linux.pdf"], "expect_contains": ["chmod"]}
+{"id": "pub-linux-links", "dept": "公共", "query": "Linux 中软链接和硬链接有什么区别？", "expect_sources": ["Linux.pdf"], "expect_contains": ["硬链接", "软链接"]}
+{"id": "pub-vue-model", "dept": "公共", "query": "Vue 中 v-model 如何实现双向绑定？", "expect_sources": ["Vue.js.pdf"], "expect_contains": ["v-model"]}
+{"id": "pub-vue-bind", "dept": "公共", "query": "Vue 中 v-bind 指令的作用是什么？", "expect_sources": ["Vue.js.pdf"], "expect_contains": ["v-bind"]}
+{"id": "pub-go-goroutine", "dept": "公共", "query": "Go 中 goroutine 和 channel 如何配合使用？", "expect_sources": ["Go.pdf"], "expect_contains": ["goroutine"]}
+{"id": "pub-go-struct", "dept": "公共", "query": "Go 中如何定义结构体？", "expect_sources": ["Go.pdf"], "expect_contains": ["struct"]}
+{"id": "pub-kotlin-data-class", "dept": "公共", "query": "Kotlin 中 data class 有什么作用？", "expect_sources": ["Kotlin.pdf"], "expect_contains": ["data class"]}
+{"id": "pub-kotlin-val-var", "dept": "公共", "query": "Kotlin 中 val 和 var 有什么区别？", "expect_sources": ["Kotlin.pdf"], "expect_contains": ["val"]}
+{"id": "pub-swift-optional", "dept": "公共", "query": "Swift 中 Optional 可选类型如何使用？", "expect_sources": ["Swift.pdf"], "expect_contains": ["Optional"]}
+{"id": "pub-cpp-virtual", "dept": "公共", "query": "C++ 中虚函数的作用是什么？", "expect_sources": ["C++.pdf"], "expect_contains": ["虚函数"]}
+{"id": "pub-cpp-vector-list", "dept": "公共", "query": "C++ 中 vector 和 list 有什么区别？", "expect_sources": ["C++.pdf"], "expect_contains": ["vector"]}
+{"id": "pub-c-pointer", "dept": "公共", "query": "C 语言中指针和数组有什么关系？", "expect_sources": ["C.pdf"], "expect_contains": ["指针"]}
+{"id": "pub-c-malloc", "dept": "公共", "query": "C 语言中 malloc 和 free 如何使用？", "expect_sources": ["C.pdf"], "expect_contains": ["malloc"]}
+{"id": "pub-mongodb-insert", "dept": "公共", "query": "MongoDB 中如何插入文档？", "expect_sources": ["MongoDB.pdf"], "expect_contains": ["insert"]}
+{"id": "pub-mongodb-find", "dept": "公共", "query": "MongoDB 中 find 和 findOne 有什么区别？", "expect_sources": ["MongoDB.pdf"], "expect_contains": ["findOne"]}
+{"id": "pub-redis-expire", "dept": "公共", "query": "Redis 中如何设置带过期时间的键？", "expect_sources": ["Redis.pdf"], "expect_contains": ["EXPIRE"]}
+{"id": "pub-redis-persistence", "dept": "公共", "query": "Redis 的 RDB 和 AOF 持久化有什么区别？", "expect_sources": ["Redis.pdf"], "expect_contains": ["AOF"]}
+{"id": "pub-sqlite-types", "dept": "公共", "query": "SQLite 支持哪些数据类型？", "expect_sources": ["SQLite.pdf"], "expect_contains": ["TEXT"]}
+{"id": "pub-http-get-post", "dept": "公共", "query": "HTTP 中 GET 和 POST 有什么区别？", "expect_sources": ["HTTP.pdf"], "expect_contains": ["POST"]}
+{"id": "pub-http-301-302", "dept": "公共", "query": "HTTP 状态码 301 和 302 有什么区别？", "expect_sources": ["HTTP.pdf"], "expect_contains": ["301"]}
+{"id": "pub-json-types", "dept": "公共", "query": "JSON 支持哪些数据类型？", "expect_sources": ["JSON.pdf"], "expect_contains": ["数组"]}
+{"id": "pub-xml-dtd", "dept": "公共", "query": "XML 中 DTD 的作用是什么？", "expect_sources": ["XML.pdf", "DTD.pdf"], "expect_contains": ["DTD"]}
+{"id": "pub-xpath-book", "dept": "公共", "query": "XPath 中如何选取所有 book 节点？", "expect_sources": ["XPath.pdf"], "expect_contains": ["book"]}
+{"id": "pub-xslt-template", "dept": "公共", "query": "XSLT 中 template 的 match 属性有什么作用？", "expect_sources": ["XSLT.pdf"], "expect_contains": ["template"]}
+{"id": "pub-django-url", "dept": "公共", "query": "Django 中如何配置 URL 路由？", "expect_sources": ["Django.pdf"], "expect_contains": ["URL", "urlpatterns"]}
+{"id": "pub-bootstrap-grid", "dept": "公共", "query": "Bootstrap 中如何创建响应式栅格布局？", "expect_sources": ["Bootstrap3.pdf", "Bootstrap4.pdf"], "expect_contains": ["row", "col"]}
+{"id": "pub-jquery-ready", "dept": "公共", "query": "jQuery 中 $(document).ready 的作用是什么？", "expect_sources": ["jQuery.pdf"], "expect_contains": ["ready"]}
+{"id": "pub-ajax-readystate", "dept": "公共", "query": "AJAX 中 XMLHttpRequest 的 readyState 有哪些状态？", "expect_sources": ["AJAX.pdf"], "expect_contains": ["readyState"]}
+{"id": "pub-soap-envelope", "dept": "公共", "query": "SOAP 消息的 Envelope 元素有什么作用？", "expect_sources": ["SOAP.pdf"], "expect_contains": ["Envelope"]}
+{"id": "pub-wsdl-types", "dept": "公共", "query": "WSDL 文档中的 types 元素有什么作用？", "expect_sources": ["WSDL.pdf"], "expect_contains": ["types"]}
+{"id": "pub-maven-dependency", "dept": "公共", "query": "Maven 中如何在 pom.xml 中添加依赖？", "expect_sources": ["Maven.pdf"], "expect_contains": ["dependency"]}
+{"id": "pub-css-center", "dept": "公共", "query": "CSS 中如何实现元素水平垂直居中？", "expect_sources": ["CSS.pdf", "CSS3.pdf"], "expect_contains": ["居中"]}
+{"id": "pub-css-box-sizing", "dept": "公共", "query": "CSS 中 box-sizing: border-box 的作用是什么？", "expect_sources": ["CSS.pdf", "CSS3.pdf"], "expect_contains": ["box-sizing"]}
+{"id": "pub-html-id-class", "dept": "公共", "query": "HTML 中 id 和 class 有什么区别？", "expect_sources": ["HTML.pdf", "HTML5.pdf"], "expect_contains": ["class"]}
+{"id": "pub-js-listener", "dept": "公共", "query": "JavaScript 中如何给按钮绑定点击事件？", "expect_sources": ["JavaScript.pdf"], "expect_contains": ["addEventListener"]}
+{"id": "pub-js-equality", "dept": "公共", "query": "JavaScript 中 == 和 === 有什么区别？", "expect_sources": ["JavaScript.pdf"], "expect_contains": ["==="]}
+{"id": "pub-php-mysql", "dept": "公共", "query": "PHP 中如何连接 MySQL 数据库？", "expect_sources": ["PHP.pdf"], "expect_contains": ["mysqli", "PDO"]}
+{"id": "pub-ruby-class", "dept": "公共", "query": "Ruby 中如何定义类和方法？", "expect_sources": ["Ruby.pdf"], "expect_contains": ["class"]}
+{"id": "pub-node-readfile", "dept": "公共", "query": "Node.js 中如何异步读取文件？", "expect_sources": ["Node.js.pdf"], "expect_contains": ["readFile"]}
+{"id": "pub-linux-port", "dept": "公共", "query": "Linux 中如何查看端口被哪个进程占用？", "expect_sources": ["Linux.pdf"], "expect_contains": ["netstat", "lsof"]}
+{"id": "pub-en-java-thread", "dept": "公共", "query": "How do I create a thread by implementing Runnable in Java?", "expect_sources": ["Java.pdf"], "expect_contains": ["Runnable"]}
+{"id": "pub-en-sql-join", "dept": "公共", "query": "What is the difference between INNER JOIN and LEFT JOIN in SQL?", "expect_sources": ["SQL.pdf"], "expect_contains": ["INNER JOIN"]}
+{"id": "pub-en-docker-ps", "dept": "公共", "query": "How do I list running Docker containers?", "expect_sources": ["Docker.pdf"], "expect_contains": ["docker ps"]}
+{"id": "pub-en-git-rebase", "dept": "公共", "query": "What is the difference between merge and rebase in Git?", "expect_sources": ["Git.pdf"], "expect_contains": ["rebase"]}
