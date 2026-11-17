@@ -5,7 +5,7 @@
 
 import base64
 import json
-from datetime import date, timedelta
+from datetime import timedelta
 
 import pytest
 from cryptography.hazmat.primitives import serialization
