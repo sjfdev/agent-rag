@@ -33,6 +33,7 @@ make restore ARCHIVE=...  # verify an archive, then swap directories back
 make eval                 # retrieval hit@k / MRR / leak check
 make check                # lint + test
 make release              # version/CHANGELOG/git-tag consistency + lint + tests
+make prune                # drop dangling images; cap build cache at 8GB
 ```
 
 Single test / focused run:

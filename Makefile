@@ -10,7 +10,7 @@ endif
         backup restore daily-backup boot-recover agents-install agents-uninstall \
         agents-status monitor-config monitor-up monitor-down monitor-logs monitor-check \
         license-init license-verify license-console package package-image \
-        usage-report demo-up demo-seed demo-down demo-logs
+        usage-report demo-up demo-seed demo-down demo-logs prune
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | \
@@ -142,3 +142,25 @@ release: ## Full release gate: consistency + lint + tests
 clean: ## Remove caches and coverage artefacts
 	rm -rf .pytest_cache .ruff_cache .coverage htmlcov
 	find . -name '__pycache__' -type d -prune -exec rm -rf {} +
+
+# --build retags agent-rag:latest on every run, so the previous image turns
+# into an unreferenced <none> one; Docker never removes those on its own.
+# Cap the BuildKit cache instead of using --filter until=: some colima/OrbStack
+# buildx builds ignore the age filter, while the size cap works everywhere.
+# Keep the cap above the torch + embedded-model layers (~2GB): pruning those
+# turns the next `up --build` into a full reinstall and model download.
+PRUNE_CACHE_MAX ?= 8GB
+
+prune: ## Remove dangling images and cap the build cache (default 8GB)
+	@command -v docker >/dev/null 2>&1 || { echo "docker not found"; exit 1; }
+	docker image prune -f
+	@# BuildKit cache needs buildx; colima's VM has the plugin even when the
+	@# host CLI does not, so fall back to pruning from inside the VM.
+	@if docker buildx version >/dev/null 2>&1; then \
+	  docker buildx prune -f --max-used-space=$(PRUNE_CACHE_MAX); \
+	elif command -v colima >/dev/null 2>&1 && colima status >/dev/null 2>&1; then \
+	  colima ssh -- docker buildx prune -f --max-used-space=$(PRUNE_CACHE_MAX); \
+	else \
+	  echo "note: buildx unavailable; BuildKit cache left untouched."; \
+	fi
+	@docker system df
