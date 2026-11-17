@@ -33,12 +33,6 @@ RUN pip install --index-url "${TORCH_INDEX_URL}" "torch==2.2.2" \
  && pip install --index-url "${PIP_INDEX_URL}" -r requirements.runtime.txt \
  && rm requirements.runtime.txt
 
-COPY main.py run_ingestion.py ./
-COPY src ./src
-COPY static ./static
-COPY scripts ./scripts
-COPY eval ./eval
-
 # Embedding model is baked into the image so a cold start never downloads it.
 # Offline mode is turned off for this step only (the runtime keeps it on), and
 # the HF mirror is used by default for networks that cannot reach huggingface.co.
@@ -47,6 +41,11 @@ COPY eval ./eval
 # model files (hf-mirror.com started returning 403 for them) rather than the
 # build being slow. Point it at a working one without editing this file:
 #   docker build --build-arg HF_ENDPOINT=https://hf-api.gitee.com -t agent-rag:dev .
+#
+# This step sits BEFORE the source COPY on purpose: it only depends on the
+# installed Python packages and the two ARGs, so application code changes reuse
+# the cached model layer. (With `src/` copied first, every rebuild re-downloaded
+# the model and took minutes even for a one-line change.)
 ARG EMBEDDING_MODEL=BAAI/bge-small-zh-v1.5
 ARG HF_ENDPOINT=https://hf-mirror.com
 # HF_HUB_DISABLE_XET: the Xet CDN (transfer.xethub.hf.co) is frequently
@@ -54,6 +53,12 @@ ARG HF_ENDPOINT=https://hf-mirror.com
 # reachable.
 RUN HF_HUB_OFFLINE=0 HF_ENDPOINT="${HF_ENDPOINT}" HF_HUB_DISABLE_XET=1 \
     python -c "from sentence_transformers import SentenceTransformer as S; S('${EMBEDDING_MODEL}')"
+
+COPY main.py run_ingestion.py ./
+COPY src ./src
+COPY static ./static
+COPY scripts ./scripts
+COPY eval ./eval
 
 # Non-root runtime user; /app/data and /app/logs stay writable for ingestion.
 # /app/config holds mutable app state (local accounts, optional ACL rules), so

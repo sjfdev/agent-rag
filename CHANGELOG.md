@@ -340,6 +340,18 @@ three agree before you push a tag.
   （默认 32，最大 512）控制本地 sentence-transformers 入库 batch；token 计数增加
   缓存，避免递归切分重复 encode。这些改动不改变向量与分片边界。
 
+### Changed
+
+- **Faster image rebuilds**: the Dockerfile now bakes the embedding model into
+  the image *before* copying `src/`, `static/`, `scripts/` and `eval/`. The
+  model layer only depends on the installed packages and `EMBEDDING_MODEL` /
+  `HF_ENDPOINT`, so a code-only rebuild downloads the model once and reuses the
+  cached layer afterwards (previously every rebuild re-downloaded it and took
+  minutes even for a one-line change).
+  <br>**镜像重构建提速（中文）**：Dockerfile 把嵌入模型预热移到复制 `src/` 等
+  源码之前。模型层只依赖已安装的包与 `EMBEDDING_MODEL`/`HF_ENDPOINT`，因此只改
+  代码时模型层可复用缓存，不再每次重新下载（此前即使改一行代码也要等数分钟）。
+
 ### Fixed
 
 - **Admin account management and account switching**: the 账号 card now edits
