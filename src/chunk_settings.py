@@ -174,6 +174,16 @@ def effective() -> Dict[str, Any]:
     return config
 
 
+def _pdf_parser_id() -> str:
+    """Resolved PDF extractor name for the chunk signature (no hard import)."""
+    try:
+        from src.loaders import pdf_parser_name
+
+        return pdf_parser_name()
+    except Exception:
+        return "unknown"
+
+
 def signature(config: Dict[str, Any] | None = None) -> str:
     """Stable fingerprint of the effective chunking configuration.
 
@@ -196,6 +206,9 @@ def signature(config: Dict[str, Any] | None = None) -> str:
             "csv_rows": int(settings.CSV_ROWS_PER_CHUNK),
             "xlsx_max_rows": int(settings.XLSX_MAX_ROWS),
             "pdf_tables": bool(settings.PDF_TABLES_ENABLED),
+            # The extractor changes the text itself, and "auto" resolves
+            # differently depending on whether pypdfium2 is installed.
+            "pdf_parser": _pdf_parser_id(),
             "ocr": bool(settings.OCR_ENABLED),
             "ocr_min_chars": int(settings.OCR_MIN_CHARS),
             "ocr_lang": str(settings.OCR_LANG),

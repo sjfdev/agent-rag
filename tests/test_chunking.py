@@ -180,3 +180,12 @@ def test_token_counts_are_cached():
     second = chunking.count_tokens("这是一段需要重复计数的文本")
     assert first == second
     assert chunking._count_tokens_cached.cache_info().hits >= 1
+
+
+def test_signature_follows_the_resolved_pdf_parser(monkeypatch):
+    from src.config import settings
+
+    monkeypatch.setattr(settings, "PDF_PARSER", "pypdf")
+    with_pypdf = chunk_settings.signature()
+    monkeypatch.setattr(settings, "PDF_PARSER", "pdfium")
+    assert chunk_settings.signature() != with_pypdf

@@ -340,6 +340,24 @@ three agree before you push a tag.
   （默认 32，最大 512）控制本地 sentence-transformers 入库 batch；token 计数增加
   缓存，避免递归切分重复 encode。这些改动不改变向量与分片边界。
 
+- **Fast PDF parsing via pdfium**: `src/loaders.py` now extracts PDF text with
+  `pypdfium2` (C++/pdfium) when available and falls back to pypdf otherwise;
+  `PDF_PARSER=auto|pdfium|pypdf` pins the choice. On this repository's PDFs the
+  same books went from 11–15s to 0.3–1.0s (10–23x) with identical keyword
+  coverage, which moves ingestion from parse-bound to embedding-bound. The
+  resolved parser is part of the chunk signature, so installing pypdfium2 (or
+  switching `PDF_PARSER`) re-chunks indexed documents on the next ingestion
+  instead of silently keeping pypdf-era chunks. The OCR path renders pages with
+  pdfium when present, and the Docker image now ships the tesseract engine with
+  `chi_sim` data, so `OCR_ENABLED=true` works for scanned PDFs.
+  <br>**pdfium 快速 PDF 解析（中文）**：`src/loaders.py` 优先用 `pypdfium2`
+  （C++/pdfium）抽取 PDF 文本，未安装时回退 pypdf；`PDF_PARSER=auto|pdfium|pypdf`
+  可强制指定。实测同一批 PDF 从 11–15s 降到 0.3–1.0s（10–23x），关键词覆盖一致，
+  入库瓶颈从解析转为 embedding。解析器名称并入分片签名，安装 pypdfium2 或切换
+  `PDF_PARSER` 后下次入库会自动重切，不会静默保留旧分片。OCR 在可用时也用 pdfium
+  渲染页面；镜像内新增 tesseract 引擎与 `chi_sim` 语言包，`OCR_ENABLED=true`
+  即可处理扫描件。
+
 - **Prefetch ingestion pipeline**: `INGEST_PREFETCH=true` parses and chunks the
   next changed document on a worker thread while the main thread embeds and
   writes the current one, so PDF text extraction and embedding overlap instead

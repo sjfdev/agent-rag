@@ -16,9 +16,20 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-# No apt packages: the healthcheck uses Python's stdlib, and every dependency
-# ships a manylinux wheel, so the image builds without touching Debian mirrors
-# (a common failure point in restricted networks).
+# Only OCR needs apt packages (the tesseract engine + Chinese language data);
+# everything else ships a manylinux wheel. OCR stays disabled by default, but
+# having the binary in the image means enabling OCR_ENABLED=true just works.
+# The step is early so the slow tesseract install is cached across code builds.
+# deb.debian.org is frequently slow/unreachable from CN networks (the install
+# hangs on the 9.7MB Packages index); the mirror is overridable for others.
+ARG APT_MIRROR=mirrors.tuna.tsinghua.edu.cn
+RUN for f in /etc/apt/sources.list /etc/apt/sources.list.d/*.sources /etc/apt/sources.list.d/*.list; do \
+      [ -f "$f" ] && sed -i "s|deb.debian.org|${APT_MIRROR}|g" "$f" || true; \
+    done \
+ && apt-get update \
+ && apt-get install -y --no-install-recommends \
+      tesseract-ocr tesseract-ocr-chi-sim \
+ && rm -rf /var/lib/apt/lists/*
 
 # PyPI is slow or blocked in some networks; both indexes are overridable so
 # CI/offline builds can point at a mirror.

@@ -54,6 +54,11 @@ class Settings(BaseSettings):
     XLSX_MAX_ROWS: int = 20000
     # Structured PDF tables via pdfplumber (optional dependency).
     PDF_TABLES_ENABLED: bool = True
+    # PDF text extraction: "auto" uses pypdfium2 (C++/pdfium, 10-20x faster
+    # than pypdf) when installed and falls back to pypdf otherwise. The
+    # resolved parser is folded into the chunk signature, so switching it
+    # re-chunks already indexed documents.
+    PDF_PARSER: Literal["auto", "pdfium", "pypdf"] = "auto"
     # OCR for scanned PDFs via pytesseract + pdf2image (optional dependencies).
     # Disabled by default: it is slow and needs the tesseract binary.
     OCR_ENABLED: bool = False

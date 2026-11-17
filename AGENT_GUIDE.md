@@ -1116,11 +1116,12 @@ python scripts/bench_retrieval.py
 
 ### 8.5 入库层
 
-1. **预取流水线**：`INGEST_PREFETCH=true`（深度 `INGEST_PREFETCH_DEPTH`，默认 1）时，后台线程解析/切分下一份变更文档，主线程同时 embedding + 写入。实测 `公共/` 的 PDF 解析与 embedding 各占约一半（ionic.pdf 解析 20.2s / 嵌入 23.7s），所以入库总耗时实测可降 20–25%（三份大 PDF：110.9s → 89.4s）；预取期间会把 embedding 线程数限制为 `cpu_count - 2`，给解析线程留出 CPU，否则两边抢核反而更慢。所有向量库读写仍在主线程，`doc_hash` 跳过、`--reset` 影子索引与统计结果完全不变。CLI 可用 `--prefetch` / `--no-prefetch` / `--prefetch-depth N` 覆盖。
-2. `run_ingestion.py` 按部门循环、逐个 `add_documents`；`EMBEDDING_BATCH_SIZE`（默认 32）控制本地 embedding batch，32–64 通常更吞吐。
-3. 大文件可先做 OCR/表格抽取，避免 PDF 解析丢内容导致检索命中率低。
-4. 增量入库已按 `doc_hash` 跳过未变文件、按 `doc_id` 替换与清理；如需彻底清空用 `--reset`。
-5. 新增格式只需在 `src/loaders.py` 实现 `_load_xxx` 并注册扩展名；解析器应返回带 `kind` 与定位元数据的 `Document`。
+1. **PDF 解析器**：默认 `PDF_PARSER=auto`，安装了 `pypdfium2` 就用 pdfium（C++），否则回退 pypdf。实测同一批 PDF 解析从 11–15s 降到 0.3–1s（10–23x），文本更紧凑；解析器名称并入分片签名，切换后下次入库会自动重切。
+2. **预取流水线**：`INGEST_PREFETCH=true`（深度 `INGEST_PREFETCH_DEPTH`，默认 1）时，后台线程解析/切分下一份变更文档，主线程同时 embedding + 写入。实测 `公共/` 的 PDF 解析与 embedding 各占约一半（ionic.pdf 解析 20.2s / 嵌入 23.7s），所以入库总耗时实测可降 20–25%（三份大 PDF：110.9s → 89.4s）；预取期间会把 embedding 线程数限制为 `cpu_count - 2`，给解析线程留出 CPU，否则两边抢核反而更慢。所有向量库读写仍在主线程，`doc_hash` 跳过、`--reset` 影子索引与统计结果完全不变。CLI 可用 `--prefetch` / `--no-prefetch` / `--prefetch-depth N` 覆盖。
+3. `run_ingestion.py` 按部门循环、逐个 `add_documents`；`EMBEDDING_BATCH_SIZE`（默认 32）控制本地 embedding batch，32–64 通常更吞吐。
+4. 大文件可先做 OCR/表格抽取，避免 PDF 解析丢内容导致检索命中率低。
+5. 增量入库已按 `doc_hash` 跳过未变文件、按 `doc_id` 替换与清理；如需彻底清空用 `--reset`。
+6. 新增格式只需在 `src/loaders.py` 实现 `_load_xxx` 并注册扩展名；解析器应返回带 `kind` 与定位元数据的 `Document`。
 
 ---
 

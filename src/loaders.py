@@ -93,39 +93,111 @@ def _pdf_tables(path: Path) -> dict:
     return tables
 
 
+def pdf_parser_name() -> str:
+    """The PDF text extractor that will actually be used ("pdfium"/"pypdf").
+
+    Folded into the chunk signature: switching the parser (or installing
+    pypdfium2) changes the extracted text, so indexed documents must be
+    re-chunked instead of silently skipped.
+    """
+    if settings.PDF_PARSER == "pypdf":
+        return "pypdf"
+    try:
+        import pypdfium2  # noqa: F401  (availability probe)
+    except Exception:
+        if settings.PDF_PARSER == "pdfium":
+            logger.warning("PDF_PARSER=pdfium but pypdfium2 is not installed; using pypdf")
+        return "pypdf"
+    return "pdfium"
+
+
+def _pdf_pages_pypdf(path: Path) -> List[tuple]:
+    # Imported lazily: langchain's PyPDFLoader pulls in pypdf, which is
+    # unnecessary for non-PDF ingestion and slows down importing this module.
+    from langchain_community.document_loaders import PyPDFLoader
+
+    pages = []
+    for doc in PyPDFLoader(str(path)).load():
+        page = doc.metadata.get("page")
+        number = page + 1 if isinstance(page, int) else None
+        pages.append((number, doc.page_content or ""))
+    return pages
+
+
+def _pdf_pages_pdfium(path: Path) -> List[tuple]:
+    import pypdfium2 as pdfium
+
+    pages = []
+    pdf = pdfium.PdfDocument(str(path))
+    try:
+        for number, page in enumerate(pdf, start=1):
+            textpage = page.get_textpage()
+            try:
+                text = textpage.get_text_range()
+            finally:
+                textpage.close()
+                page.close()
+            pages.append((number, text or ""))
+    finally:
+        pdf.close()
+    return pages
+
+
+def _pdf_pages(path: Path) -> List[tuple]:
+    if pdf_parser_name() == "pdfium":
+        try:
+            return _pdf_pages_pdfium(path)
+        except Exception:
+            logger.warning("pdfium failed on %s; falling back to pypdf", path, exc_info=True)
+    return _pdf_pages_pypdf(path)
+
+
+def _render_page(path: Path, page_number: int):
+    """Rasterise one page at 200 dpi for OCR (returns a PIL image or None)."""
+    if pdf_parser_name() == "pdfium":
+        import pypdfium2 as pdfium
+
+        pdf = pdfium.PdfDocument(str(path))
+        try:
+            page = pdf[page_number - 1]
+            try:
+                return page.render(scale=200 / 72).to_pil()
+            finally:
+                page.close()
+        finally:
+            pdf.close()
+    from pdf2image import convert_from_path
+
+    images = convert_from_path(
+        str(path), first_page=page_number, last_page=page_number, dpi=200
+    )
+    return images[0] if images else None
+
+
 def _ocr_page(path: Path, page_number: int) -> str:
     """OCR one PDF page; returns "" when the toolchain is unavailable."""
     try:
         import pytesseract
-        from pdf2image import convert_from_path
     except Exception:
         logger.debug("OCR dependencies missing; cannot OCR page %s", page_number)
         return ""
     try:
-        images = convert_from_path(
-            str(path), first_page=page_number, last_page=page_number, dpi=200
-        )
-        if not images:
+        image = _render_page(path, page_number)
+        if image is None:
             return ""
-        return pytesseract.image_to_string(images[0], lang=settings.OCR_LANG) or ""
+        return pytesseract.image_to_string(image, lang=settings.OCR_LANG) or ""
     except Exception:
         logger.warning("OCR failed for %s page %s", path, page_number, exc_info=True)
         return ""
 
 
 def _load_pdf(path: Path) -> List[Document]:
-    # Imported lazily: the loader pulls in pypdf, which is unnecessary for
-    # non-PDF ingestion and slows down importing `src.loaders` in tests.
-    from langchain_community.document_loaders import PyPDFLoader
-
-    docs = PyPDFLoader(str(path)).load()
+    pages = _pdf_pages(path)
     tables = _pdf_tables(path)
     out = []
     ocr_used = 0
-    for doc in docs:
-        page = doc.metadata.get("page")
-        page_number = page + 1 if isinstance(page, int) else None
-        text = doc.page_content or ""
+    for page_number, page_text in pages:
+        text = page_text or ""
 
         if page_number and page_number in tables:
             # Keep the parsed text first; append rows so table cells stay

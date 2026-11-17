@@ -34,6 +34,11 @@ requests==2.34.2
 python-multipart==0.0.32
 
 pypdf==6.21.3
+# PDF text extraction: pdfium via pypdfium2 is 10-20x faster than pypdf and
+# produces tighter text; src/loaders.py falls back to pypdf when unavailable.
+pypdfium2==5.15.2
+# OCR for scanned PDFs; the tesseract binary is installed in the Docker image.
+pytesseract==0.3.13
 reportlab==5.1.0
 
 python-docx==1.2.0
@@ -49,5 +54,4 @@ ruff==0.8.6
 
 # Optional parsing extras (install only if you need them):
 #   pdfplumber==0.11.4     structured PDF tables (PDF_TABLES_ENABLED)
-#   pytesseract==0.3.13    OCR for scanned PDFs (OCR_ENABLED; needs tesseract)
-#   pdf2image==1.17.0      renders PDF pages for OCR (needs poppler)
+#   pdf2image==1.17.0      renders PDF pages for OCR only when pypdfium2 is absent
