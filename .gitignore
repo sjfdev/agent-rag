@@ -47,6 +47,8 @@ dist/
 config/acl.json
 config/model_settings.json
 config/model_settings.json.tmp
+config/chunk_settings.json
+config/chunk_settings.json.tmp
 
 # Local agent artifacts
 agensi/

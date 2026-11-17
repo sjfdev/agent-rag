@@ -554,6 +554,7 @@
       <div class="navGroup">
         <span class="navGroupLabel" data-i18n="admin.navGroup.config">配置</span>
         <button class="navBtn" role="tab" id="tab-modelCard" aria-controls="modelCard" data-target="modelCard" data-i18n="admin.nav.model">模型</button>
+        <button class="navBtn" role="tab" id="tab-chunkCard" aria-controls="chunkCard" data-target="chunkCard" data-i18n="admin.nav.chunk">分片</button>
         <button class="navBtn" role="tab" id="tab-usersCard" aria-controls="usersCard" data-target="usersCard" hidden><span data-i18n="admin.nav.accounts">账号</span><span class="navCount" id="navUsers" hidden></span></button>
       </div>
       <div class="navGroup">
@@ -754,6 +755,38 @@
       <button id="modelReset" data-i18n="admin.modelReset">恢复 .env</button>
     </div>
     <div class="msg" id="modelMsg" aria-live="polite"></div>
+  </section>
+
+  <section class="card" id="chunkCard">
+    <h2><span data-i18n="admin.chunkTitle">分片</span><span class="dirty" id="chunkDirty" hidden data-i18n="admin.chunkUnsaved">未保存</span></h2>
+    <p class="hint" style="margin:0 0 10px" data-i18n="admin.chunkHint">
+      按 token 切分，控制每片长度和重叠；中文标点优先，避免从句子/代码中间截断。保存后，已入库文档会在下一次入库时按新参数自动重切。
+    </p>
+    <div class="formGrid">
+      <label class="field"><span data-i18n="admin.chunkTokensLabel">每片 token 数</span>
+        <input id="chunkTokens" type="number" min="128" max="2048" step="1" inputmode="numeric">
+        <span class="fieldHint" data-i18n="admin.chunkTokensHint">建议 400–480；bge-small-zh 的 tokenizer 上限是 512。</span>
+      </label>
+      <label class="field"><span data-i18n="admin.chunkOverlapLabel">重叠 token 数</span>
+        <input id="chunkOverlap" type="number" min="0" max="1024" step="1" inputmode="numeric">
+        <span class="fieldHint" data-i18n="admin.chunkOverlapHint">建议为每片 token 的 10%–15%，不能超过每片的一半。</span>
+      </label>
+    </div>
+    <div class="row">
+      <label class="roleFlag"><input id="chunkChinese" type="checkbox"> <span data-i18n="admin.chunkChineseLabel">中文标点优先（。！？；，）</span></label>
+      <label class="roleFlag"><input id="chunkTitlePrefix" type="checkbox"> <span data-i18n="admin.chunkTitlePrefixLabel">为每个分片加标题前缀</span></label>
+    </div>
+    <div class="stats" id="chunkStats"></div>
+    <div class="row" style="margin-top:10px">
+      <button id="chunkSave" class="primary" data-i18n="common.save">保存</button>
+      <button id="chunkReingest" data-i18n="admin.chunkReingest">保存并重新入库</button>
+      <button id="chunkReset" data-i18n="admin.chunkReset">恢复默认</button>
+      <span class="hint" id="chunkSource"></span>
+    </div>
+    <div class="note" id="chunkNote" data-i18n="admin.chunkNote">
+      修改分片参数不会自动改写旧索引；点「保存并重新入库」或到「索引维护」执行增量入库，系统会按分片签名自动重切已入库文档。
+    </div>
+    <div class="msg" id="chunkMsg" aria-live="polite"></div>
   </section>
 
   <section class="card dangerZone" id="rebuildCard">
@@ -1000,6 +1033,7 @@ const SECTION_LOADERS = {
   filesCard: { run: loadFiles, msg: "fileMsg", name: "admin.panel.files" },
   indexCard: { run: loadFiles, msg: "indexMsg", name: "admin.panel.index" },
   usersCard: { run: loadUsers, msg: "userMsg", name: "admin.panel.accounts" },
+  chunkCard: { run: loadChunking, msg: "chunkMsg", name: "admin.panel.chunking" },
   modelCard: { run: loadModel, msg: "modelMsg", name: "admin.panel.model" },
   licenseCard: { run: loadLicense, msg: "licenseMsg", name: "admin.panel.license" },
   auditCard: { run: loadAudit, msg: null, name: "admin.panel.audit" },
@@ -1948,6 +1982,7 @@ async function refreshAll() {
     { name: "admin.panel.audit", run: loadAudit, msg: "auditMsg", card: "auditCard" },
     { name: "admin.panel.accounts", run: loadUsers, msg: "userMsg", card: "usersCard" },
     { name: "admin.panel.model", run: loadModel, msg: "modelMsg", card: "modelCard" },
+    { name: "admin.panel.chunking", run: loadChunking, msg: "chunkMsg", card: "chunkCard" },
     { name: "admin.panel.license", run: loadLicense, msg: "licenseMsg", card: "licenseCard" },
   ];
   panels.forEach((panel) => (panel.cards || [panel.card]).forEach((card) => markLoading(card, true)));
@@ -2426,6 +2461,11 @@ function syncActionButtons() {
   $("resetBtn").disabled = busy;
   $("upload").disabled = uploading || busy || noDept;
   $("upload").title = noDept && !uploading && !busy ? t("admin.selectDeptFirst") : "";
+  // Chunking writes are cheap but must not race an active ingestion job.
+  for (const id of ["chunkSave", "chunkReingest", "chunkReset"]) {
+    const button = $(id);
+    if (button) button.disabled = busy;
+  }
 }
 
 function setBusy(value) {
@@ -2652,6 +2692,122 @@ async function resetModel() {
     await loadMeta();
   } catch (error) {
     setMsg($("modelMsg"), error.message, "error");
+  }
+}
+
+// --- chunking --------------------------------------------------------------
+// Token-aware splitter, Chinese punctuation and title prefixes are persisted
+// server-side; the chunking signature changes doc_hash so the next ingestion
+// re-chunks already indexed documents automatically.
+// 分片参数持久化在服务端；签名变化会改写 doc_hash，下一次入库自动重切。
+let chunkBaseline = "";
+
+function chunkPayload() {
+  return {
+    chunk_tokens: Number($("chunkTokens").value || 0),
+    chunk_overlap_tokens: Number($("chunkOverlap").value || 0),
+    chinese_punctuation: $("chunkChinese").checked,
+    title_prefix: $("chunkTitlePrefix").checked,
+  };
+}
+
+function updateChunkDirty() {
+  $("chunkDirty").hidden = JSON.stringify(chunkPayload()) === chunkBaseline;
+}
+
+function renderChunkStats(data) {
+  const box = $("chunkStats");
+  box.innerHTML = "";
+  const pills = [
+    [t("admin.chunkSignature", { signature: data.signature || "—" })],
+    [t("admin.chunkTokenizer", { name: data.tokenizer || "—" })],
+  ];
+  for (const [text] of pills) {
+    const pill = document.createElement("span");
+    pill.className = "pill";
+    pill.textContent = text;
+    box.appendChild(pill);
+  }
+  $("chunkSource").textContent =
+    data.source === "override" ? t("admin.chunkSourceOverride") : t("admin.chunkSourceEnv");
+}
+
+function renderChunk(data) {
+  const config = data.config || {};
+  $("chunkTokens").value = config.chunk_tokens ?? 450;
+  $("chunkOverlap").value = config.chunk_overlap_tokens ?? 50;
+  $("chunkChinese").checked = config.chinese_punctuation !== false;
+  $("chunkTitlePrefix").checked = config.title_prefix !== false;
+  chunkBaseline = JSON.stringify(chunkPayload());
+  updateChunkDirty();
+  renderChunkStats(data);
+}
+
+async function loadChunking() {
+  renderChunk(await api("/admin/api/chunking"));
+}
+
+function validateChunkPayload(payload) {
+  if (
+    !Number.isInteger(payload.chunk_tokens) ||
+    payload.chunk_tokens < 128 ||
+    payload.chunk_tokens > 2048
+  ) {
+    setMsg($("chunkMsg"), t("admin.chunkInvalidTokens"), "error");
+    $("chunkTokens").focus();
+    return false;
+  }
+  if (
+    !Number.isInteger(payload.chunk_overlap_tokens) ||
+    payload.chunk_overlap_tokens < 0 ||
+    payload.chunk_overlap_tokens >= payload.chunk_tokens ||
+    payload.chunk_overlap_tokens > Math.floor(payload.chunk_tokens / 2)
+  ) {
+    setMsg($("chunkMsg"), t("admin.chunkInvalidOverlap"), "error");
+    $("chunkOverlap").focus();
+    return false;
+  }
+  return true;
+}
+
+async function saveChunking(reingest) {
+  const payload = chunkPayload();
+  if (!validateChunkPayload(payload)) return;
+  const buttons = [$("chunkSave"), $("chunkReingest")];
+  buttons.forEach((button) => (button.disabled = true));
+  try {
+    const data = await api("/admin/api/chunking", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    renderChunk(data);
+    setMsg($("chunkMsg"), t("admin.chunkSaved"), "ok");
+    if (reingest) {
+      const run = await askConfirm(t("admin.chunkReingestConfirm"), {
+        danger: false,
+        confirmText: t("admin.chunkReingestOk"),
+      });
+      if (!run) return;
+      showSection("indexCard", true);
+      rememberSection("indexCard");
+      await startIngest(null, false);
+    }
+  } catch (error) {
+    setMsg($("chunkMsg"), error.message, "error");
+  } finally {
+    buttons.forEach((button) => (button.disabled = busy));
+  }
+}
+
+async function resetChunking() {
+  if (!(await askConfirm(t("admin.chunkResetConfirm")))) return;
+  try {
+    const data = await api("/admin/api/chunking", { method: "DELETE" });
+    renderChunk(data);
+    setMsg($("chunkMsg"), t("admin.chunkResetDone"), "ok");
+  } catch (error) {
+    setMsg($("chunkMsg"), error.message, "error");
   }
 }
 
@@ -3108,15 +3264,25 @@ $("refresh").onclick = refreshAll;
 $("modelTest").onclick = testModel;
 $("modelSave").onclick = saveModel;
 $("modelReset").onclick = resetModel;
+$("chunkSave").onclick = () => saveChunking(false);
+$("chunkReingest").onclick = () => saveChunking(true);
+$("chunkReset").onclick = resetChunking;
 $("licenseInstall").onclick = installLicense;
 $("licenseCopy").onclick = copyLicenseInfo;
 
 ["modelBase", "modelName", "modelKey", "modelTemp", "modelTokens"].forEach((id) => {
   $(id).addEventListener("input", updateModelDirty);
 });
+["chunkTokens", "chunkOverlap"].forEach((id) => {
+  $(id).addEventListener("input", updateChunkDirty);
+});
+$("chunkChinese").onchange = updateChunkDirty;
+$("chunkTitlePrefix").onchange = updateChunkDirty;
 
 window.addEventListener("beforeunload", (event) => {
-  if (!modelBaseline || $("modelDirty").hidden) return;
+  const modelDirty = Boolean(modelBaseline) && !$("modelDirty").hidden;
+  const chunkDirty = Boolean(chunkBaseline) && !$("chunkDirty").hidden;
+  if (!modelDirty && !chunkDirty) return;
   event.preventDefault();
   event.returnValue = "";
 });

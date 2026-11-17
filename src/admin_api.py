@@ -18,7 +18,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from pydantic import BaseModel, Field
 
-from src import audit, auth, local_auth, model_settings
+from src import audit, auth, chunk_settings, chunking, local_auth, model_settings
 from src.config import settings
 from src.engine import kb_engine
 from src.etl import EnterpriseETL, doc_id_for
@@ -208,10 +208,12 @@ def _describe_file(
         existing = entry.get("doc_hash") if entry else None
         if existing is None:
             item["status"] = "pending"
-        elif existing == _file_hash(path):
-            item["status"] = "indexed"
         else:
-            item["status"] = "changed"
+            # doc_hash also carries the chunking signature: changing a chunking
+            # parameter marks indexed files as "changed" until the next ingest.
+            # doc_hash 内含分片签名：改分片参数后旧文档显示“有变更”，待重切。
+            expected = chunking.document_hash(_file_hash(path), chunk_settings.effective())
+            item["status"] = "indexed" if existing == expected else "changed"
     except Exception:
         logger.warning("failed to inspect %s", source, exc_info=True)
         item["status"] = "unknown"
@@ -337,6 +339,7 @@ def _run_job(job_id: str, dept: Optional[str], reset: bool) -> None:
         etl = EnterpriseETL(
             data_dir=settings.DATA_DIR, on_log=lambda m: _job_log(job_id, m)
         )
+        _job_log(job_id, f"Chunking: {etl.chunk_description()}")
         root = _data_root()
         departments = [dept] if dept else _list_depts()
         if not departments:
@@ -897,6 +900,52 @@ def reset_model(request: Request):
     """Drop the overrides and fall back to `.env`. / 删除覆盖项，回退到 `.env`。"""
     saved = model_settings.clear()
     audit.log_event("model.reset", _actor(request), detail={"model": saved["model"]})
+    return saved
+
+
+class ChunkSettingsRequest(BaseModel):
+    """Validated payload for `PUT /admin/api/chunking`.
+
+    Cross-field checks (overlap vs. window) live in `chunk_settings._validate`
+    so the API and direct callers share one rule set.
+    """
+
+    chunk_tokens: int = 450
+    chunk_overlap_tokens: int = 50
+    chinese_punctuation: bool = True
+    title_prefix: bool = True
+
+
+@router.get("/chunking")
+def get_chunking():
+    """Effective chunking settings, env defaults and signature."""
+    return chunk_settings.describe()
+
+
+@router.put("/chunking")
+def put_chunking(req: ChunkSettingsRequest, request: Request):
+    """Persist chunking overrides; the next ingestion re-chunks automatically."""
+    try:
+        saved = chunk_settings.save(req.model_dump())
+    except ValueError as exc:
+        raise _bad_request(exc)
+    audit.log_event(
+        "chunk.update",
+        _actor(request),
+        detail={"config": saved["config"], "signature": saved["signature"]},
+    )
+    return saved
+
+
+@router.delete("/chunking")
+def reset_chunking(request: Request):
+    """Drop chunking overrides and fall back to `.env`."""
+    saved = chunk_settings.clear()
+    audit.log_event(
+        "chunk.reset",
+        _actor(request),
+        detail={"config": saved["config"], "signature": saved["signature"]},
+    )
     return saved
 
 

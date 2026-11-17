@@ -99,7 +99,7 @@ agent-rag/
 ├── volumes/                 # Milvus/etcd 数据卷
 ├── eval/cases.jsonl         # 检索评测集（命中 + 泄漏用例）
 ├── config/acl.example.json  # 文档级 ACL 规则示例
-├── tests/                   # pytest 离线测试（716 项，覆盖率 93%）
+├── tests/                   # pytest 离线测试（742 项，覆盖率 93%）
 ├── Makefile                 # 常用命令（make help）
 ├── .github/workflows/ci.yml # ruff + pytest（CI）
 ├── WORKLOG.md               # 本轮迭代记录与验证矩阵
@@ -727,7 +727,7 @@ python scripts/check_loaders.py      # 9 种格式解析（不写向量库）
 python scripts/check_admin.py        # 管理台上传→入库→删除冒烟
 python scripts/bench_retrieval.py    # embedding / FAISS / Milvus / LLM 延迟
 python scripts/generate_demo_files.py  # 重建 data/Demo 多格式样例
-pytest -q                            # 离线测试（716 项，~30s，覆盖率 93%，无需服务/LLM）
+pytest -q                            # 离线测试（742 项，~30s，覆盖率 93%，无需服务/LLM）
 ruff check src tests main.py run_ingestion.py   # 代码检查
 python test_agent.py                 # 端到端 18 项断言（需服务已启动）
 ```
@@ -774,11 +774,18 @@ page, slide, sheet, title, chunk_index, vector, sparse
 | 从 Milvus 2.4 升级到 2.5 并启用服务端稀疏 BM25 | 需要新增 `sparse` 字段与索引 |
 | 改 `HYBRID_ENABLED`/稀疏检索方式但保留旧集合 | 旧集合没有 `sparse`，`hybrid.engine` 会退回 `local` |
 
-**不需要 `--reset`** 的变更（增量入库会自动按 `doc_id` 替换）：
+**不需要删除索引，但必须重新入库**的变更（增量入库会自动重切，`--reset` 也可）：
 
-- 改 `XLSX_ROWS_PER_CHUNK` / `CSV_ROWS_PER_CHUNK`、chunk 切分参数
-- 改解析开关（`PDF_TABLES_ENABLED` / `OCR_ENABLED`）——内容变化会让 `doc_hash` 变，触发替换
-- 改 `data/` 下的文件内容或目录结构
+- 改 `CHUNK_*` 分片参数（token 窗口、重叠、中文标点、标题前缀）
+- 改 `XLSX_ROWS_PER_CHUNK` / `CSV_ROWS_PER_CHUNK` / `XLSX_MAX_ROWS`
+- 改解析开关（`PDF_TABLES_ENABLED` / `OCR_ENABLED` / `OCR_MIN_CHARS` / `OCR_LANG`）
+
+这些设置已计入分片签名并写入 `doc_hash`，所以即使文件内容没变，下一次增量入库也会重新解析/切分；
+只改参数不跑入库，查询仍使用旧 chunk。管理台「分片」卡片的「保存并重新入库」可直接触发。
+
+**仅改 `data/` 下的文件内容或目录结构**：增量入库按内容 hash 自动替换/清理，无需 `--reset`。
+
+升级到带分片签名的新版本后，旧索引里的 `doc_hash` 不含签名，首次增量入库会把所有已入库文档视为“有变更”并重切一次；这是预期行为。10k 级 chunk 建议在低峰期执行，期间查询仍走旧索引，单篇文档写入新 chunk 后才删除旧版本。
 
 **迁移步骤**（零停机，查询全程可用）：
 
@@ -800,6 +807,8 @@ VECTOR_STORE_TYPE=milvus python scripts/eval_retrieval.py
 ### 5.6 入库管理台 `/admin`
 
 打开 `http://localhost:8000/admin`（对话页左下角也有入口）：
+
+「分片」卡片可配置每片 token 数、重叠、中文标点优先与标题前缀；保存后点「保存并重新入库」，系统会按新的分片签名自动重切已入库文档（查询期间仍可用）。
 
 - **部门**：切换/创建部门，显示文件总数与各状态数量
 - **上传**：拖拽或选择多文件，可指定子目录；单文件上限 `MAX_UPLOAD_MB`
@@ -847,6 +856,10 @@ VECTOR_STORE_TYPE=milvus python scripts/eval_retrieval.py
 | `VECTOR_STORE_TYPE` | `faiss` | `faiss` 或 `milvus` |
 | `DB_PATH` | `./db/vector_db` | FAISS 索引目录 |
 | `RETRIEVAL_K` | `4` | 注入提示词的片段数 |
+| `CHUNK_TOKENS` | `450` | 每片 token 数（token 级切分；中文约 1 字 1 token） |
+| `CHUNK_OVERLAP_TOKENS` | `50` | 相邻片重叠 token 数（不超过每片一半） |
+| `CHUNK_CHINESE_PUNCTUATION` | `true` | 中文标点优先（。！？；，），避免句子中间硬切 |
+| `CHUNK_TITLE_PREFIX` | `true` | 每个分片前加文档/文件名标题 |
 | `RERANK_ENABLED` | `false` | 开启 CrossEncoder 二阶段重排 |
 | `RERANK_MODEL` | `BAAI/bge-reranker-base` | 重排模型（中文推荐；英文可用 `cross-encoder/ms-marco-MiniLM-L-6-v2`） |
 | `RERANK_CANDIDATES` | `12` | 送入重排的候选数 |
@@ -1078,7 +1091,7 @@ python scripts/bench_retrieval.py
 1. **FAISS vs Milvus**：小数据量差异仅约 10ms。数据量到十万级后，Milvus 的 `expr` 服务端过滤优势明显——FAISS 需要取 50 个候选再本地过滤（`pool = max(k*20, 50)`），过滤选择性高时会浪费算力。
 2. **建立索引**：Milvus 默认可为 `enterprise_kb` 建 HNSW 索引并 `load`，大规模下显著降低搜索延迟。
 3. **控制候选数**：`k` 从 4 提到更高会增加 prompt 长度和 LLM 时间。
-4. **切分参数**：`RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=100)`。chunk 太小召回碎片化，太大增加 prompt；按文档类型调整。
+4. **切分参数**：已改为 token 级切分，默认 `CHUNK_TOKENS=450` / `CHUNK_OVERLAP_TOKENS=50`，中文标点优先且可选标题前缀；管理台「分片」卡片可运行时调整，参数签名并入 `doc_hash`，下一次入库自动重切。`bge-small-zh` 的 tokenizer 上限是 512，中文密集资料不要超过 480 token。
 5. **二阶段重排**：`src/reranker.py` 已接入 `kb_engine.search`，设置 `RERANK_ENABLED=true` 后先对融合后的候选做 CrossEncoder 重排再取 top-k。默认关闭。24 条中英评测（纯向量）：不重排 MRR 0.88 / p50≈16ms；MiniLM +≈205ms、MRR 0.92；`bge-reranker-base` +≈1.2s（p95 4.8s）、MRR 0.97。混合检索 + MiniLM 同样为 0.92。中文优先 BGE，英文/低延迟选 MiniLM，二者都需先缓存模型。
 6. **多轮检索改写**：`src/agent.py::_retrieval_query` 检测代词/指示词或极短问句，把上一轮问题拼进检索 query，不额外调用 LLM。实测追问 "Who approves it?" 时目标文档从第 3 位升到第 1 位。
 7. **零停机重建**：全量重建写入影子索引（Milvus 临时集合 + alias 切换，FAISS 临时目录 + `os.replace`），提交前查询始终走旧索引；变更文件先写新版本再删旧版本，避免崩溃丢文档。维护标志只在提交的毫秒级切换瞬间置位。

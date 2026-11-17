@@ -57,6 +57,7 @@ def main():
         kb_engine.begin_rebuild()
 
     etl = EnterpriseETL(data_dir=root)
+    print(f"Chunking: {etl.chunk_description()}")
     keep = set()
 
     for dept in departments:

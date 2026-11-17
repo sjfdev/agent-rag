@@ -109,3 +109,63 @@ def test_parse_failure_keeps_previous_copy(engine, data_dir, monkeypatch):
     assert engine.live_count() == before
     bodies = [d.page_content for d in engine.fetch_documents("Tech")]
     assert any("90 days" in body for body in bodies)
+
+
+def test_chunking_change_rechunks_an_unchanged_file(engine, data_dir, monkeypatch, tmp_path):
+    """A chunking change must invalidate the file-hash skip and re-chunk.
+
+    修改分片参数后，即使文件内容没变，下一次增量入库也要重切。
+    """
+    from src import chunk_settings, chunking
+    from src.config import settings
+    from src.hashing import file_sha1
+
+    monkeypatch.setattr("src.etl.kb_engine", engine)
+    monkeypatch.setattr(settings, "CHUNK_SETTINGS_FILE", str(tmp_path / "chunk_settings.json"))
+    monkeypatch.setattr(settings, "EMBEDDING_BACKEND", "fake")
+    monkeypatch.setattr(chunking, "count_tokens", len)
+    chunk_settings.reset_state()
+    chunking.reset_tokenizer()
+
+    path = data_dir / "Tech" / "policy.md"
+    path.write_text("这是一段用于测试分片配置变化的句子。" * 20)
+
+    chunk_settings.save(
+        {
+            "chunk_tokens": 150,
+            "chunk_overlap_tokens": 20,
+            "chinese_punctuation": True,
+            "title_prefix": True,
+        }
+    )
+    first = _ingest(engine, data_dir)
+    assert first.stats["added"] == 1
+    assert first.stats["chunks"] >= 2
+    first_chunks = engine.live_count()
+
+    same = _ingest(engine, data_dir)
+    assert same.stats["skipped"] == 1
+    assert engine.live_count() == first_chunks
+
+    # Change only the chunk window: the file bytes are identical, but the
+    # signature folded into doc_hash must force an update.
+    chunk_settings.save(
+        {
+            "chunk_tokens": 240,
+            "chunk_overlap_tokens": 20,
+            "chinese_punctuation": True,
+            "title_prefix": True,
+        }
+    )
+    changed = _ingest(engine, data_dir)
+    assert changed.stats["updated"] == 1
+    assert changed.stats["skipped"] == 0
+    assert engine.live_count() == changed.stats["chunks"]
+
+    bodies = [doc.page_content for doc in engine.fetch_documents("Tech")]
+    assert any(body.startswith("policy\n") for body in bodies)
+
+    doc_id = doc_id_for("Tech", "Tech/policy.md")
+    expected = chunking.document_hash(file_sha1(path), chunk_settings.effective())
+    assert engine.doc_summary()[doc_id]["doc_hash"] == expected
+    assert engine.doc_summary()[doc_id]["doc_hash"] != file_sha1(path)

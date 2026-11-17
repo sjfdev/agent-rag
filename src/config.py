@@ -23,6 +23,11 @@ class Settings(BaseSettings):
     # 管理台写入的运行时覆盖配置（见 src/model_settings.py）。
     # 放在 config/ 下，便于挂载、备份并被 gitignore。
     MODEL_SETTINGS_FILE: str = "./config/model_settings.json"
+    # Chunking overrides from the console (see src/chunk_settings.py). The
+    # effective signature is folded into doc_hash so changes re-chunk indexed
+    # documents on the next ingestion.
+    # 管理台的分片覆盖配置；其签名并入 doc_hash，参数变化后下次入库自动重切。
+    CHUNK_SETTINGS_FILE: str = "./config/chunk_settings.json"
 
     # Ingestion / admin
     DATA_DIR: str = "./data"
@@ -30,6 +35,16 @@ class Settings(BaseSettings):
     MAX_UPLOAD_MB: int = 50
     # Total size allowed in a single upload request (0 = no limit).
     MAX_UPLOAD_TOTAL_MB: int = 200
+    # Token window used by the token-aware splitter. The default fits
+    # bge-small-zh-v1.5's 512-token limit (Chinese is ~1 character per token)
+    # with room for the title prefix and special tokens. The admin console can
+    # override these at runtime (config/chunk_settings.json).
+    # 按 token 切片：默认值适配 bge-small-zh-v1.5 的 512 token 上限（中文约
+    # 1 字 1 token），给标题前缀与特殊 token 留余量；管理台可运行时覆盖。
+    CHUNK_TOKENS: int = 450
+    CHUNK_OVERLAP_TOKENS: int = 50
+    CHUNK_CHINESE_PUNCTUATION: bool = True
+    CHUNK_TITLE_PREFIX: bool = True
     # Parsing: split large tables into row blocks so a sheet is never silently
     # truncated (each block repeats the header row for context).
     # Small enough that a block usually stays within the 800-char splitter

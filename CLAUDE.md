@@ -98,7 +98,7 @@ Every engine write calls `_touch()`: bumps the version counter, drops BM25 index
 
 - Files live at `DATA_DIR/<Department>/**/*`; supported: PDF/DOCX/PPTX/XLSX/CSV/MD/TXT/HTML/JSON. Legacy `.doc/.ppt/.xls` are skipped with a hint.
 - Document identity is `sha1(dept|relative source path)`. Chunk metadata keys are fixed: `dept/source/page|slide|sheet/doc_id/doc_hash/kind/chunk_index/title` (sentinels when absent). **Every chunk must carry every key**, because the Milvus collection schema is derived from the first inserted batch; adding a metadata key requires a full `--reset`.
-- Incremental: unchanged files skipped by content hash; changed files are parsed first (a parse failure must not delete the old copy), new chunks are written, then old versions deleted (crash-safe); files removed from disk are pruned unless `--no-prune`.
+- Incremental: unchanged files are skipped by `doc_hash`, which folds the file hash with the effective chunking/parser signature (token window, overlap, punctuation, title prefix, XLSX/CSV rows, PDF tables/OCR); changing those settings re-chunks already indexed files on the next ingestion. Changed files are parsed first (a parse failure must not delete the old copy), new chunks are written, then old versions deleted (crash-safe); files removed from disk are pruned unless `--no-prune`.
 - XLSX/CSV are split into header-repeating row blocks (`XLSX_ROWS_PER_CHUNK`/`CSV_ROWS_PER_CHUNK`), so each block keeps column context.
 - `--reset`/admin rebuild writes into a **shadow index** (Milvus: temp collection + alias swap; FAISS: temp dir + `os.replace`). Queries keep hitting the live index; maintenance is set only around the millisecond swap. An empty rebuild aborts and keeps the previous index.
 
@@ -113,7 +113,7 @@ Every engine write calls `_touch()`: bumps the version counter, drops BM25 index
 ## Invariants and gotchas
 
 - **Tests must stay offline.** `tests/conftest.py` sets `EMBEDDING_BACKEND=fake`, `VECTOR_STORE_TYPE=faiss`, a temp DB/data dir and `HF_HUB_OFFLINE=1` before importing settings. Do not add fixtures that call the LLM or download models; CI installs only `requirements-test.txt` (no torch).
-- Changing `VECTOR_STORE_TYPE`, the embedding model, or any chunk metadata key requires `python run_ingestion.py --reset`. FAISS and Milvus are independent stores; switching one to the other without re-ingestion looks like "retrieval is broken".
+- Changing `VECTOR_STORE_TYPE`, the embedding model, or any chunk metadata key requires `python run_ingestion.py --reset`. Chunking/parser parameter changes do not drop the index but do require a re-ingestion (the signature in `doc_hash` triggers the re-chunk automatically; the 分片 card offers save + re-ingest). FAISS and Milvus are independent stores; switching one to the other without re-ingestion looks like "retrieval is broken".
 - Dependency pins are load-bearing: `numpy<2` (torch 2.2.2 ABI), `torch==2.2.2`, `transformers==4.49.0` (5.x needs torch≥2.6), `sentence-transformers==3.4.1`, `huggingface-hub==0.36.0`.
 - Milvus must be ≥2.5 for server-side BM25; upgrading an older collection needs `--reset`. Both etcd and Milvus must be healthy and `curl -f localhost:9091/healthz` must pass before using the Milvus backend.
 - A full disk breaks writes, not queries. Milvus caches the first ENOSPC in RocksDB, so after freeing space you must `docker restart milvus-standalone` — `df -h` will otherwise look fine while collection creation keeps failing.

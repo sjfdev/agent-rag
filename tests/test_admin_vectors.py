@@ -9,6 +9,7 @@ import importlib
 import pytest
 from fastapi.testclient import TestClient
 
+from src import chunk_settings, chunking
 from src.config import settings
 from src.etl import doc_id_for
 from src.hashing import file_sha1
@@ -52,7 +53,7 @@ def _seed_indexed(client_fixture, texts=("alpha chunk", "beta chunk")):
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("alpha chunk\nbeta chunk\n")
     doc_id = doc_id_for("Tech", "Tech/a.md")
-    doc_hash = file_sha1(path)
+    doc_hash = chunking.document_hash(file_sha1(path), chunk_settings.effective())
     engine.add_documents(
         list(texts),
         [

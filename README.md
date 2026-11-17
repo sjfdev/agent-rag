@@ -31,7 +31,7 @@
 | 治理 | `/health`、Prometheus `/metrics`、操作审计、任务持久化、限流、请求超时 |
 | 安全 | 部门名校验、JWT 登录（`AUTH_MODE=jwt`）或可选 API Key、OIDC 浏览器登录、管理台令牌或仅回环 |
 | 交付与试用 | 离线许可（含 30 天试用）、交付打包、用量/价值月报、演示栈 |
-| 质量保障 | 716 项离线测试、93% 覆盖率、ruff、GitHub Actions |
+| 质量保障 | 742 项离线测试、93% 覆盖率、ruff、GitHub Actions |
 
 ## 快速开始
 

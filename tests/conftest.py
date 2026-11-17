@@ -42,6 +42,7 @@ def _offline_env(tmp_path_factory):
     # Never read or write the developer's real console overrides.
     # 绝不读写开发者本机真实的控制台覆盖文件。
     os.environ.setdefault("MODEL_SETTINGS_FILE", str(root / "model_settings.json"))
+    os.environ.setdefault("CHUNK_SETTINGS_FILE", str(root / "chunk_settings.json"))
     # Imported here so settings pick up the environment above.
     import src  # noqa: F401
     from src.config import settings
@@ -60,9 +61,11 @@ def _offline_env(tmp_path_factory):
     settings.AUTH_JWKS_FILE = ""
     settings.AUTH_USERS_FILE = str(root / "users.json")
     settings.MODEL_SETTINGS_FILE = os.environ["MODEL_SETTINGS_FILE"]
-    from src import model_settings
+    settings.CHUNK_SETTINGS_FILE = os.environ["CHUNK_SETTINGS_FILE"]
+    from src import chunk_settings, model_settings
 
     model_settings.reset_state()
+    chunk_settings.reset_state()
     yield
 
 

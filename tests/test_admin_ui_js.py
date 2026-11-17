@@ -26,6 +26,7 @@ NAV_TARGETS = [
     "deptCard",
     "filesCard",
     "modelCard",
+    "chunkCard",
     "usersCard",
     "indexCard",
     "licenseCard",
@@ -71,8 +72,8 @@ def test_menu_entries_use_bilingual_nav_keys():
     text = ADMIN.read_text()
     keys = set(re.findall(r'data-i18n="(admin\.nav\.[^"]+)"', text))
     assert keys == {f"admin.nav.{name}" for name in
-                    ("dept", "files", "model", "accounts", "index", "license",
-                     "rebuild", "audit")}
+                    ("dept", "files", "model", "chunk", "accounts", "index",
+                     "license", "rebuild", "audit")}
 
 
 def test_license_card_installs_without_the_shell():
@@ -230,7 +231,7 @@ def test_console_uses_themed_confirmation_everywhere():
     assert "function askConfirm(" in text
     assert "!confirm(" not in text
     assert "confirm(t(" not in text
-    assert text.count("await askConfirm(") == 4
+    assert text.count("await askConfirm(") == 6
 
 
 def test_running_ingest_job_is_restored():
@@ -444,3 +445,36 @@ def test_account_departments_are_managed_in_dialogs():
     assert 'body: JSON.stringify({ password: value })' in text
     # Suggestions merge index departments with those already assigned.
     assert "knownDepts.concat(names)" in text
+
+
+def test_chunking_is_configurable_from_the_console():
+    text = ADMIN.read_text()
+    for marker in (
+        'id="chunkCard"',
+        'data-target="chunkCard"',
+        'id="chunkTokens"',
+        'id="chunkOverlap"',
+        'id="chunkChinese"',
+        'id="chunkTitlePrefix"',
+        'id="chunkSave"',
+        'id="chunkReingest"',
+        'id="chunkReset"',
+        'id="chunkDirty"',
+        'id="chunkStats"',
+        'id="chunkMsg"',
+    ):
+        assert marker in text, marker
+    assert "function loadChunking(" in text
+    assert "function saveChunking(" in text
+    assert "function resetChunking(" in text
+    assert 'api("/admin/api/chunking"' in text
+    assert 'method: "PUT"' in text
+    assert 'method: "DELETE"' in text
+    assert "startIngest(null, false)" in text
+    # The card is a first-class section with its own loader and refresh panel.
+    assert 'chunkCard: { run: loadChunking' in text
+    assert 'name: "admin.panel.chunking"' in text
+    assert 'data-i18n="admin.chunkTitle"' in text
+    # Saving is guarded by the themed confirmation before a full re-ingestion.
+    assert "admin.chunkReingestConfirm" in text
+    assert "admin.chunkResetConfirm" in text

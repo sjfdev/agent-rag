@@ -100,6 +100,20 @@ three agree before you push a tag.
   `docker-compose.demo.yml`、`.env.demo.example` 与 `make demo-up/demo-seed/
   demo-down`：无许可、FAISS、只挂载 `data/Demo`、关闭服务端会话、管理端仅回环，
   并默认按 IP 限流。
+- **Visual chunking configuration**: the admin console's 分片 card edits the
+  token window, overlap, Chinese punctuation preference and title prefix;
+  values persist to `config/chunk_settings.json` (0600, gitignored) and apply
+  to the next ingestion. Splitting is token-aware (embedding tokenizer, with a
+  deterministic fallback), reserves the title-prefix tokens inside the window,
+  and prefers Chinese sentence boundaries. The chunking/parser signature is
+  folded into `doc_hash`, so changing a parameter re-chunks already indexed
+  documents on the next incremental ingestion instead of skipping them; the
+  card offers save + incremental re-ingest.
+  <br>**分片可视化配置（中文）**：管理台「分片」卡片可配置 token 窗口、重叠、
+  中文标点优先与标题前缀，保存到 `config/chunk_settings.json`（0600、gitignore），
+  下一次入库生效。切分按 embedding tokenizer 计数（不可用时退回字符启发式），
+  标题前缀会在窗口内预留 token，并优先在中文标点处切分。分片/解析签名并入
+  `doc_hash`，改参数后增量入库会自动重切已入库文档，卡片提供「保存并重新入库」。
 - **Delivery package**: `scripts/package_release.py` (or `make package`) builds
   `dist/agent-rag-<version>-delivery.tar.gz` with the production compose files,
   Dockerfile, source/static/scripts, docs and `.env.example`, plus a generated

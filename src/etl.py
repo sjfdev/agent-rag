@@ -3,8 +3,7 @@ import logging
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Set
 
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-
+from src import chunking
 from src.config import settings
 from src.engine import kb_engine
 from src.hashing import file_sha1
@@ -23,9 +22,10 @@ def doc_id_for(dept_name: str, source: str) -> str:
 class EnterpriseETL:
     """Multi-format, incremental ingestion with department and page metadata.
 
-    A document is skipped when its sha1 content hash already exists in the
-    vector store, replaced when the hash changed, and pruned when the file is
-    gone. Nested folders under a department are supported.
+    A document is skipped when its stored hash (file sha1 plus the effective
+    chunking/parser signature) already exists in the vector store, replaced
+    when it changed, and pruned when the file is gone. Nested folders under a
+    department are supported.
     """
 
     def __init__(
@@ -35,11 +35,13 @@ class EnterpriseETL:
     ):
         self.data_dir = Path(data_dir)
         self.on_log = on_log
-        self.splitter = RecursiveCharacterTextSplitter(
-            chunk_size=800,
-            chunk_overlap=100,
-            separators=["\n\n", "\n", " ", ""],
-        )
+        # Chunking is token-aware and driven by the effective runtime config
+        # (admin console overrides included). The signature is folded into
+        # doc_hash so a parameter change re-chunks existing documents.
+        # 分片按 token 计算，并读取管理台覆盖；签名并入 doc_hash，
+        # 参数变化后下次增量入库会自动重切。
+        self.chunk_config = chunking.load_config()
+        self.chunk = chunking.summary(self.chunk_config)
         self.stats = {
             "added": 0,
             "updated": 0,
@@ -48,6 +50,16 @@ class EnterpriseETL:
             "failed": 0,
             "chunks": 0,
         }
+
+    def chunk_description(self) -> str:
+        """One-line summary for ingestion logs and the console."""
+        item = self.chunk
+        return (
+            f"tokens={item['chunk_tokens']} overlap={item['chunk_overlap_tokens']} "
+            f"chinese_punctuation={item['chinese_punctuation']} "
+            f"title_prefix={item['title_prefix']} signature={item['signature']} "
+            f"tokenizer={item['tokenizer']}"
+        )
 
     def _log(self, message: str) -> None:
         print(message)
@@ -111,7 +123,10 @@ class EnterpriseETL:
             self.stats["failed"] += 1
             return doc_id
 
-        doc_hash = file_sha1(path)
+        # Fold the chunking signature into the stored hash: a chunking change
+        # must invalidate the incremental skip even though the file is identical.
+        # 把分片签名并入 doc_hash：只改分片参数也要触发重切。
+        doc_hash = chunking.document_hash(file_sha1(path), self.chunk_config)
         # During a shadow rebuild `get_doc_hash()` reads the (empty) shadow, so
         # every file is written; outside a rebuild it reads the live index.
         existing_hash = kb_engine.get_doc_hash(doc_id)
@@ -147,8 +162,13 @@ class EnterpriseETL:
                 "sheet": meta.get("sheet") or "",
                 "title": meta.get("title") or "",
             }
-            for chunk in self.splitter.split_documents([section]):
-                meta_chunk = dict(base, chunk_index=index)
+            # Split one page/slide/sheet block with the token-aware splitter.
+            # The title prefix (when enabled) is added per chunk and its token
+            # cost is reserved inside the configured window.
+            for chunk in chunking.split_section(
+                section.page_content, base, self.chunk_config
+            ):
+                meta_chunk = dict(chunk.metadata, chunk_index=index)
                 index += 1
                 texts.append(chunk.page_content)
                 metadatas.append(meta_chunk)
