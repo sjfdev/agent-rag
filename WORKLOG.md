@@ -1337,4 +1337,54 @@ and rejected with 409 while ingestion runs. The engine gained
 
 ---
 
-## 22. 相关文档
+## 22. 前端体验收口（管理台 + 对话页，2026-11-17）
+
+### 管理台
+
+- 上传区并入文件卡，卡内新增「上传部门」并与顶栏/部门卡双向同步；「索引维护」独立分区承载增量入库、孤儿清理、检索测试与向量统计
+- 顶栏部门徽标改为可切换下拉；菜单按内容/配置/运维/危险区分组，重建索引独立标红，并显示待入库文件数与账号数
+- 分区切换 30 秒内复用已加载数据；≤1000px 顶部吸附横向标签栏，右缘渐隐并自动滚入当前分区
+- 表格统一骨架/空态/错误+重试；文件表固定操作列、表头支持键盘排序、每页 50 条；审计支持时间/文本筛选、条数切换、本地时间、成败徽章与 CSV 导出
+- 破坏性操作统一主题确认弹窗；重建索引仍需勾选并输入 `RESET`；账户菜单收拢身份/主题/返回/退出（语言保持一级），主题下拉提供深色/浅色/自定义与 4 套预设
+- 刷新后自动恢复未完成的入库任务；浏览器标题跟随当前分区
+
+### 对话页
+
+- JWT 下从 `/admin/api/session` 读取身份与部门：隐藏可编辑用户名，只列 token 内部门（单部门只读）；后端/模型收进「状态」弹层，标题与文案去掉测试台痕迹
+- 引用带编号 `[1]`、少量引用自动展开、按顺序标注排名（不再显示易误解的分数）；预览支持复制全文
+- 回答新增复制/重新生成工具条，支持导出 Markdown；耗时 chip 收进默认关闭的「调试信息」开关
+- 输入法组词回车不发送；切换会话/部门/用户会中止正在生成的流；上翻阅读不抢滚动并提供「回到底部」；停止生成保留 Markdown
+- 删除会话改用主题确认弹窗；会话列表支持搜索与载入/失败/重试状态；示例问题在对话开始或部门不可用时隐藏
+- 无障碍：回答完成经 `role=status` 区域播报，预览弹窗与移动会话抽屉锁定焦点并在关闭后归还，按钮补 `:focus-visible`
+- 主题复用 `static/theme.js` 与 `adminTheme`，与管理台共享深色/浅色/自定义配色
+
+### 验证（2026-11-17）
+
+- `make check`：ruff 干净，`pytest -q` **639 passed**
+- `VECTOR_STORE_TYPE=faiss python scripts/eval_retrieval.py`：`hit@4=18/18`、`MRR=0.89`、`leaks=0`、p50 10ms
+- `VECTOR_STORE_TYPE=milvus python scripts/eval_retrieval.py`：`hit@4=18/18`、`MRR=0.89`、`leaks=0`、p50 17ms
+- `scripts/doctor.py`：全部 OK（磁盘 24GB 可用、备份 2 天、2 个本地账号、26 chunks）
+- `scripts/check_release.py --no-tests`：4 项通过，HEAD 尚未打 tag（`v1.1.0-24-ge906271`）
+
+### 已知限制 / 未做
+
+- 会话重命名缺少后端 `PATCH` 接口；回答正文内联引用锚点需要后端返回 span，未做
+- 赞踩反馈、分享链接、直接打开原文件均无对应接口；预览只能复制文本
+- 耗时信息只对本次页面新生成的回答生效，重新打开的历史消息不带 timings
+
+### English summary
+
+The admin console now keeps uploads next to the file list (with an inline target
+department), moves index maintenance into its own section, remembers tabs for
+30 seconds, and puts destructive rebuilds behind a typed `RESET`. Tables share
+skeleton/empty/error states, file actions stay pinned while scrolling, audit
+rows render local times with badges and CSV export, and identity/theme/back/log
+live in one account menu. The chat page reads identity and departments from the
+token, hides developer status and timings by default, numbers citations with
+rank wording, adds copy/regenerate/export, guards IME sends, aborts on context
+switches, and keeps focus and live announcements intact. Verified with 639
+tests and hit@4=18/18 / MRR=0.89 / leaks=0 on both backends.
+
+---
+
+## 23. 相关文档

@@ -663,7 +663,7 @@ curl -s -X POST localhost:8000/chat -H 'Content-Type: application/json' \
 
 ## 11. 后续待办（按优先级，2026-11-01 之后）
 
-> 当前基线：**620 项测试、CI 全绿**；`milvus 2.5.4 + 服务端稀疏 BM25`；28 chunks；备份/恢复脚本已落地（`make backup` / `make restore`）；监控栈已落地（`make monitor-up` / `make monitor-check`）；服务端会话与前端会话栏已落地（`/sessions` + `ChatRequest.session_id` + 左侧侧栏）；`/chat/stream` 客户端断开即取消上游 LLM 调用。
+> 当前基线：**639 项测试、CI 全绿**；管理台与对话页完成体验收口（2026-11-17，见 `WORKLOG.md` §22）；`milvus 2.5.4 + 服务端稀疏 BM25`；28 chunks；备份/恢复脚本已落地（`make backup` / `make restore`）；监控栈已落地（`make monitor-up` / `make monitor-check`）；服务端会话与前端会话栏已落地（`/sessions` + `ChatRequest.session_id` + 左侧侧栏）；`/chat/stream` 客户端断开即取消上游 LLM 调用。
 > 容器化交付已完成（`Dockerfile` / `docker-compose.prod.yml` / `PRODUCTIZATION.md`）。
 > 管理台已支持运行时模型覆盖、`/admin` 与 `/ui/` 共享登录态、左侧分区菜单（2026-11-15）。
 > 下面按「对外发布必须先做 → 产品化 → 规模化」排序，每项都有落点与验收方式。
@@ -736,6 +736,7 @@ curl -s -X POST localhost:8000/chat -H 'Content-Type: application/json' \
 - [x] 服务端会话列表与历史：`static/index.html` 左侧会话栏（新建/切换/删除/刷新），请求带 `session_id` 且不再发送本地 `history`；刷新后按 `localStorage` 记住的 id 从 `/sessions/{id}` 恢复；`/info` 暴露 `sessions_enabled`/`history_max_messages`，关闭时回退到原有 localStorage 历史；`static/sessions.js` 负责请求体构造，`tests/test_sessions_js.py`（5 项）与 `tests/test_ui_sessions.py`（3 项）校验
 - [x] 引用点击预览原文：`GET /sources/content`（`src/sources_api.py`）按 `source` + page/slide/sheet 从向量库取回完整 chunk 文本，先在引擎内做部门过滤、再做 ACL，最后返回；前端点击来源条目弹窗展示（`static/sources.js` 构造查询串），`textContent` 渲染避免注入；手机端改用 `100dvh`、safe-area 内边距、全屏弹窗、16px 输入框（避免 iOS 缩放）、预设问题横向滚动。`tests/test_sources_api.py`（10 项）+ `tests/test_sources_js.py`（4 项）+ `tests/test_ui_sources.py`（2 项）
 - [x] 管理台体验（2026-11-15）：运行时「模型」卡片（`GET/PUT/DELETE /admin/api/model`、`POST /admin/api/model/test`，覆盖项持久化且只回掩码 Key）；`/admin` 与 `/ui/` 用共享 `ragBearer`，同标签页登录一次即可，登出同时清除；左侧分区菜单滚动定位/高亮当前卡片、隐藏不可用入口、窄屏转横向。`tests/test_admin_ui_js.py`（7 项）校验共享 key、菜单目标、侧栏门禁与内联脚本语法
+- [x] 管理台与对话页体验收口（2026-11-17）：管理台加入分区缓存、危险区二次确认（勾选 + 输入 `RESET`）、统一骨架/空态/错误+重试、菜单计数、固定操作列与键盘排序、审计本地时间/徽章/CSV、账户菜单（语言保留一级）、上传并入文件卡（卡内选部门）、主题预设/自定义与共享 `ragBearer`；对话页 JWT 身份只读并只列 token 部门、`/admin/api/session` 驱动、引用编号与排序说明、预览复制、复制/重新生成工具条、Markdown 导出、输入法防误发、切换会话/部门中止流、上翻不抢滚、统一确认弹窗、会话搜索与载入/失败态、耗时收进「调试信息」、主题与管理台共享、移动抽屉/预览焦点管理。`tests/test_admin_ui_js.py` 扩到 24 项，全套 **639 passed**。
 
 #### 11.2.4 服务端会话存储（已完成 2026-11-10）
 - [x] 会话表 + 消息表（role/content/sources/degraded）：`src/sessions.py`（SQLite，`SESSIONS_DB_PATH`，默认 `./logs/sessions.db`；`SESSIONS_ENABLED` 可关）；`POST/GET/DELETE /sessions`，`ChatRequest.session_id` 带上后服务端拥有完整对话，请求体只传当前消息
@@ -798,6 +799,8 @@ curl -s -X POST localhost:8000/chat -H 'Content-Type: application/json' \
 **11.2.3 剩余项已完成（2026-11-14）。** 新增 `GET /sources/content`（`src/sources_api.py`）：按 `source` + 可选 page/slide/sheet 从向量库取回完整 chunk（最多 12 段 / 2 万字符，超出标记 `truncated`），部门过滤在引擎内完成（Milvus `expr` / FAISS 后过滤），ACL 随后应用，未命中或越权统一 404；`CHAT_API_KEY` 与 `/chat` 共用守卫（抽到 `src/api_access.py`）。前端点击来源条目打开弹窗，`static/sources.js` 负责构造查询串并由 Node 单测覆盖；内容用 `textContent` 渲染。手机端补 `100dvh`、safe-area、全屏预览、16px 输入与横向滚动预设。测试：`test_sources_api.py` 10 项 + `test_sources_js.py` 4 项 + `test_ui_sources.py` 2 项，全套 **555 passed**。
 
 **11.2.1 剩余项已完成（2026-11-14）。** Alertmanager 作为独立服务加入监控栈（`127.0.0.1:9093`），Prometheus `prometheus.yml` 通过 `alerting` 转发；`scripts/render_alertmanager.py` 从 `.env`/环境渲染到 gitignored 的 `monitoring/alertmanager/alertmanager.yml`，邮件/Slack/Webhook 三渠道按变量开启，缺 SMTP 主机或密码时直接报错，全部未配置时用 `noop` 接收器保证配置合法；路由对 `critical|warning` 全渠道分发（`continue: true`），分组 `alertname`+`severity`，并用 inhibit 规则让 `AgentRagMetricsDown` 压掉同实例的错误率/缓存/重建派生告警。日志侧新增 `promtail`（Docker socket 发现、只保留 `agent-rag-*`、解 json-file 信封、label `container`/`service`/`stream`）与单节点 `loki`（tsdb、`LOKI_RETENTION` 默认 720h、compactor 清理）；Grafana 增加 `loki` 数据源与日志面板，`|= "<request_id>"` 可追踪单请求。`scripts/check_monitoring.py` 从 28 项扩到 42 项（含渲染、路由引用、日志采集、compose 挂载与回环端口），`tests/test_monitoring.py` 从 7 项扩到 20 项，全套 **568 passed**。已知限制：Promtail 依赖 Docker socket 与 `/var/lib/docker/containers`，rootless/远程 daemon 需覆盖 `DOCKER_SOCKET`/`DOCKER_CONTAINERS_DIR`；只采集容器 stdout，应用未额外写文件日志。
+
+**前端体验收口已完成（2026-11-17）。** 管理台把上传并入文件卡、索引维护独立分卡，顶栏部门可切换，菜单按内容/配置/运维/危险区分组并显示待入库/账号计数；分区 30 秒内复用数据，破坏性操作统一主题弹窗（重建仍需输入 `RESET`），审计支持本地时间、成败徽章与 CSV，文件表固定操作列并支持键盘排序，账户菜单收拢身份/主题/返回/退出（语言保持一级）。对话页在 JWT 下从 `/admin/api/session` 读取身份与部门（单部门只读），引用带编号并按顺序标注排名、少量引用自动展开、预览可复制；回答新增复制/重新生成工具条与 Markdown 导出，耗时 chip 默认隐藏；输入法组词回车不发送，切换会话/部门/用户会中止流，上翻阅读不抢滚动，回答完成经读屏区域播报；删除会话改用主题弹窗，会话列表支持搜索/载入/失败/重试。验证：`pytest -q` **639 passed**、`make check` 干净；FAISS 与 Milvus `eval_retrieval.py` 均 `hit@4=18/18`、`MRR=0.89`、`leaks=0`；`doctor.py` 全 OK；`check_release.py --no-tests` 4 项通过（HEAD 尚未打 tag）。
 
 下一项：TLS、开机自恢复/每日备份已完成（`WORKLOG.md` §17、§18）；IdP 与异地副本均已决策不做。告警渠道已决策不配（`noop`）；只剩 2027-02-14 季度演练一个排期项。功能侧无新排期；11.3 规模化项按各自触发条件再启动。
 
