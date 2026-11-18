@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import random
+import re
 import shutil
 import threading
 import time
@@ -1248,6 +1249,48 @@ class FAISSDriver(BaseVectorStore):
         print(f"Removed FAISS index at {settings.DB_PATH}.")
 
 
+_CODE_TOKEN = re.compile(r"===|!==|==|!=|<=|>=|&&|\|\||->|::|(?<![\w+])\+\+(?![\w+])|(?<![\w-])--(?![\w-])")
+
+
+def _code_tokens(query: str) -> List[str]:
+    """Symbolic operators/identifiers worth matching literally.
+
+    Regular tokenizers often drop ``==``/``===`` or split ``->``, so a query
+    such as "== 和 === 有什么区别" loses its most discriminative term and the
+    chunk that actually contains the comparison table ranks below generic
+    pages. Only symbol-heavy tokens are returned (``C++`` is not an operator).
+    """
+    return list(dict.fromkeys(_CODE_TOKEN.findall(query or "")))
+
+
+def _promote_code_tokens(query: str, docs: List[Document]) -> List[Document]:
+    """Move chunks containing the query's most specific code token to the front.
+
+    This is a deterministic, retrieval-only reorder: no new embedding call and
+    no change to the candidate set. When several tokens are present the longest
+    one wins (``===`` over ``==``); ties go to the token that appears in fewer
+    candidates. If nothing matches, the original order is returned untouched.
+    """
+    tokens = _code_tokens(query)
+    if not tokens or not docs:
+        return docs
+    longest = max(len(token) for token in tokens)
+    tokens = [token for token in tokens if len(token) == longest]
+    if len(tokens) > 1:
+        counts = {
+            token: sum(token in (doc.page_content or "") for doc in docs)
+            for token in tokens
+        }
+        token = min(tokens, key=lambda item: counts[item])
+    else:
+        token = tokens[0]
+    hits = [doc for doc in docs if token in (doc.page_content or "")]
+    if not hits or len(hits) == len(docs):
+        return docs
+    hit_ids = {id(doc) for doc in hits}
+    return hits + [doc for doc in docs if id(doc) not in hit_ids]
+
+
 def _brief_docs(docs: List[Document], limit: int = 12) -> List[Dict[str, Any]]:
     """Compact metadata for the retrieval debug panel (no chunk text)."""
     items: List[Dict[str, Any]] = []
@@ -1460,7 +1503,9 @@ class KnowledgeBaseEngine:
             candidates = max(
                 k, settings.RERANK_CANDIDATES if settings.RERANK_ENABLED else k
             )
-            recalled = self.driver.search(query, user_dept, candidates)
+            recalled = _promote_code_tokens(
+                query, self.driver.search(query, user_dept, candidates)
+            )
             if debug is not None:
                 debug.update(
                     {
@@ -1482,6 +1527,7 @@ class KnowledgeBaseEngine:
         if self.hybrid_mode == "milvus":
             fused = self.driver.hybrid_search(query, user_dept, candidates, candidates)
             if fused is not None:
+                fused = _promote_code_tokens(query, fused)
                 self._observe("milvus")
                 if debug is not None:
                     debug.update(
@@ -1500,7 +1546,9 @@ class KnowledgeBaseEngine:
             self._observe("fallback")
 
         self._observe("local")
-        recalled = self._local_hybrid(query, user_dept, candidates, rrf_fuse)
+        recalled = _promote_code_tokens(
+            query, self._local_hybrid(query, user_dept, candidates, rrf_fuse)
+        )
         if debug is not None:
             debug.update(
                 {

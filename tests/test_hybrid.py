@@ -7,6 +7,8 @@ from src.engine import (
     FakeEmbeddings,
     MilvusCapabilities,
     MilvusDriver,
+    _code_tokens,
+    _promote_code_tokens,
     hits_to_documents,
 )
 from src.hybrid import parse_version, resolve_hybrid_mode, version_at_least
@@ -41,6 +43,27 @@ def test_bm25_finds_exact_identifier():
     index = LexicalIndex(docs)
     hits = index.search("DEMO-GUEST", 2)
     assert hits and hits[0].metadata["doc_id"] == "d2"
+
+
+def test_code_tokens_ignore_cpp_and_pick_longest_operator():
+    assert _code_tokens("C++ 和 Java 的区别") == []
+    assert _code_tokens("JavaScript 中 == 和 === 有什么区别") == ["==", "==="]
+
+
+def test_promote_code_token_moves_exact_match_first():
+    docs = [
+        doc("plain JavaScript variables", "d1", 0),
+        doc("x === y compares type and value", "d2", 0),
+        doc("x == y only compares value", "d3", 0),
+    ]
+    ranked = _promote_code_tokens("JavaScript 中 == 和 === 有什么区别", docs)
+    assert [d.metadata["doc_id"] for d in ranked] == ["d2", "d1", "d3"]
+
+
+def test_promote_code_token_noop_without_match_or_symbol():
+    docs = [doc("alpha", "d1", 0), doc("beta", "d2", 0)]
+    assert _promote_code_tokens("alpha beta", docs) == docs
+    assert _promote_code_tokens("x != y", docs) == docs
 
 
 def test_bm25_empty_query_and_absent_term():

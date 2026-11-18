@@ -1448,4 +1448,24 @@ tests and hit@4=18/18 / MRR=0.89 / leaks=0 on both backends.
 
 ---
 
-## 24. 相关文档
+## 24. 检索质量：公共 PDF 评测剩余 `content@6` 未命中（2026-11-18）
+
+对 `eval/cases.jsonl` 的 60 条 `expect_contains` 用例逐条复测（生产 Milvus，9397 chunks），`content@6` 从 56/60 提升到 57/60，`hit@6=78/78`、`MRR=0.94`、`leaks=0`。
+
+### 已修复：符号查询（`pub-js-equality`）
+
+- 现象：问「JavaScript 中 `==` 和 `===` 有什么区别」，`JavaScript.pdf` 的 p40 比较运算符表在第 9 位；前 6 位是站点导航/评论较多的通用页。
+- 原因：BM25/embedding 分词会丢弃 `===` 这类纯符号 token，最关键的判别词没有参与排序。
+- 规则：`src/engine.py::_code_tokens` + `_promote_code_tokens`，只对查询里的符号 token（`===`/`!==`/`==`/`!=`/`->`/`::` 等，`C++` 不算）做确定性前置：选最长（`===` 优先于 `==`），并列时选候选集中出现次数最少的；不新增 embedding 调用，也不改变候选集。p40 升到第 1 位。
+- 测试：`tests/test_hybrid.py::test_code_tokens_ignore_cpp_and_pick_longest_operator`、`test_promote_code_token_moves_exact_match_first`、`test_promote_code_token_noop_without_match_or_symbol`。
+
+### 未修复（已记入 `AGENT_GUIDE.md` §10）
+
+- `pub-git-rebase`：`Git.pdf` 没有 rebase/变基正文，只有 p28 changelog 里一次 `rebase`。
+- `pub-html-id-class`：返回的 `CSS.pdf`「CSS Id 和 Class 选择器」是相关答案，但用例只接受 `HTML.pdf`/`HTML5.pdf`；属于用例口径，不改评分。
+- `pub-linux-port`：`Linux.pdf` 没有端口→进程章节，`netstat` 仅在命令清单/MySQL 示例，`lsof` 不存在。
+- 三条都不是表格跨页、目录页或扫描件，切分/降权规则无解；不为此调整评测集。
+
+---
+
+## 25. 相关文档

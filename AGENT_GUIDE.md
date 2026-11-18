@@ -1103,7 +1103,7 @@ python scripts/bench_retrieval.py
 8. **混合检索（能力自适应）**：`HYBRID_ENGINE=auto` 默认。Milvus ≥ 2.5 且集合含 BM25 稀疏字段时，用服务端 `hybrid_search` + `RRFRanker`（一次请求完成稠密+稀疏融合）；否则自动回退到 `src/lexical.py` 的进程内 BM25（中英文分词：英文按词、中文按字 + 二元组，RRF 融合）。FAISS 永远走进程内 BM25。`local` 强制进程内，`milvus` 在能力不足时启动即报错（不会静默降级）。进程内 BM25 首次查询需加载该部门全部 chunk，启动后与入库后都会后台预热；`HYBRID_MAX_DOCS` 限制单部门语料。早期 24 条评测 MRR 0.88 → 0.89，精确标识符（如 `DEMO-GUEST`）类查询收益最明显。
 
     从 2.4 升级到 2.5 后，旧集合没有稀疏字段：要么 `python run_ingestion.py --reset` 重建（推荐），要么先设 `HYBRID_ENGINE=local` 继续跑。可用 `GET /info` 的 `hybrid.engine` 确认当前实际走哪条路径；2.5 上运行 `python scripts/check_hybrid_milvus.py` 做端到端验证（使用临时集合，完成后删除）。
-9. **评测闭环**：`eval/cases.jsonl` + `scripts/eval_retrieval.py`。当前 84 条：原有 Tech/Finance/HR/Demo 18 个命中 + 6 个跨部门泄漏，另加 60 条「公共」编程 PDF 用例（Java/Python/SQL/Docker/Git 等）。除 `expect_sources` 外，新的 `expect_contains` 会检查命中 chunk 是否真的包含关键词，避免“文件名对了但片段错了”仍算通过。旧索引（800 字分片）基线：`hit@6=77/78（99%）`、`MRR=0.91`、`content@6=54/60（90%）`、`content-MRR=0.80`、p50≈30ms、p95≈57ms；450-token 重切后（9766 chunks）：`hit@6=78/78（100%）`、`MRR=0.92`、`content@6=54/60（90%）`、`content-MRR=0.82`、p50≈33ms、p95≈114ms。重切分片、换重排模型或改混合策略后都跑同一套用例对比。
+9. **评测闭环**：`eval/cases.jsonl` + `scripts/eval_retrieval.py`。当前 84 条：原有 Tech/Finance/HR/Demo 18 个命中 + 6 个跨部门泄漏，另加 60 条「公共」编程 PDF 用例（Java/Python/SQL/Docker/Git 等）。除 `expect_sources` 外，新的 `expect_contains` 会检查命中 chunk 是否真的包含关键词，避免“文件名对了但片段错了”仍算通过。旧索引（800 字分片）基线：`hit@6=77/78（99%）`、`MRR=0.91`、`content@6=54/60（90%）`、`content-MRR=0.80`、p50≈30ms、p95≈57ms；450-token 重切后（9766 chunks）：`hit@6=78/78（100%）`、`MRR=0.92`、`content@6=54/60（90%）`、`content-MRR=0.82`、p50≈33ms、p95≈114ms。2026-11-18 复测（生产 Milvus，9397 chunks）：`hit@6=78/78`、`MRR=0.94`、`content@6=57/60（95%）`、`content-MRR=0.89`、`leaks=0`；`==`/`===` 这类被分词器丢掉的符号查询由 `src/engine.py::_promote_code_tokens` 前置含该 token 的 chunk 修复（`pub-js-equality` 从第 9 位升到第 1 位），剩余 3 条见 §10「已知限制」。重切分片、换重排模型或改混合策略后都跑同一套用例对比。
 
 ### 8.4 服务层
 
@@ -1144,6 +1144,10 @@ python scripts/bench_retrieval.py
 - 多轮检索为启发式改写（代词/短句拼接上轮问题），复杂指代仍可能失败；更稳的方案是 LLM 改写（会多一次调用）
 - 进程内 BM25（FAISS 模式或 Milvus < 2.5）是**单进程**索引：多 worker 各自构建，重启需预热；超大数据量请升级 Milvus 2.5 并用 `HYBRID_ENGINE=milvus`
 - `/metrics` 为单进程指标，多 worker 需在 Prometheus 侧聚合
+- **检索评测剩余 3 条 `content@6` 未命中（2026-11-18）**：都不是表格跨页、目录页或扫描件，属于语料缺失/用例口径问题，无法靠切分或降权规则修复，保留为已知限制：
+  - `pub-git-rebase`：`公共/Git.pdf` 没有 rebase/变基 的正文说明，全文仅在 p28 的 changelog 里出现一次 `rebase`；中文问法把这条日志排到第 9 位，补规则也无法生成不存在的答案。
+  - `pub-html-id-class`：检索返回的是 `CSS.pdf` 的「CSS Id 和 Class 选择器」和 jQuery 示例（语义上相关），而用例只接受 `HTML.pdf`/`HTML5.pdf`；HTML 文档把 `class`（p12）和 `id`（p20）拆在两个章节。要算命中需放宽用例的 `expect_sources`，本次不改评分口径。
+  - `pub-linux-port`：`公共/Linux.pdf` 没有「端口→进程」章节；`netstat` 只出现在 p135 的命令清单和 p150 的 MySQL 示例里，`lsof` 全文不存在，因此只能作为语料缺口记录。
 - 可扩展：OCR、会话持久化、跨进程缓存（Redis）、召回率监控
 
 ---
