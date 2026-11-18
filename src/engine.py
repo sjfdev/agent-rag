@@ -1305,6 +1305,13 @@ class KnowledgeBaseEngine:
         self.driver.add_documents(texts, metadatas)
         self._touch()
 
+    def embed_documents(self, texts: List[str]):
+        """Embed texts without writing them (dry-run measurement only).
+
+        试跑只测量嵌入耗时，不进入写库路径，也不触碰索引。
+        """
+        return self.embeddings.embed_documents(texts)
+
     def fetch_documents(self, dept: str) -> List[Document]:
         return self.driver.fetch_documents(dept)
 

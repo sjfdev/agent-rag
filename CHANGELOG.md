@@ -12,6 +12,29 @@ three agree before you push a tag.
 
 ### Added
 
+- **Ingestion safety valves**: `POST /admin/api/jobs/{job_id}/cancel` stops a
+  running ingestion at the next document boundary (the current document always
+  finishes writing and deleting its stale version), reports terminal
+  `cancelled` distinct from `failed`, and releases `_ingest_lock` only after
+  that document; a cancelled rebuild aborts its shadow index and keeps the
+  previous one. `POST /admin/api/ingest/estimate` plans every file by hash only
+  and returns queued/skipped counts, estimated chunks (current index average
+  per document) and estimated minutes (the latest measured chunks/min). The
+  console preflights every 开始入库 and 分片保存并重切 click with those numbers.
+  `IngestRequest.dry_run` parses, chunks and embeds only the first N changed
+  documents (default 3), writes nothing, and extrapolates the full run from
+  measured bytes/chunks; the API returns per-document timings, chunks and
+  throughput. The monitor gains a 停止入库 button with the shared confirmation
+  dialog, and the 入库中 pill disappears once the job is cancelled.
+  <br>**入库安全阀（中文）**：`POST /admin/api/jobs/{job_id}/cancel` 在下一个
+  文档边界停止入库（当前文档一定写完新 chunk 再删旧版本），终态为 `cancelled`
+  并与 `failed` 区分，当前文档跑完后才释放 `_ingest_lock`；取消重建会放弃影子
+  索引并保留旧索引。`POST /admin/api/ingest/estimate` 只算哈希，返回待重切/跳过
+  篇数、预计 chunk 数（按当前索引篇均）和预计分钟（最近任务实测吞吐）；管理台在
+  每次「开始入库」和「分片保存并重切」前弹预检。`IngestRequest.dry_run` 只对前
+  N 篇（默认 3）解析/切分/嵌入，不写库、不删旧版本，并按实测字节/chunk 外推总
+  时长，返回每篇耗时、块数与吞吐。运行监视卡新增「停止入库」按钮（复用统一确认
+  弹窗），任务取消后「入库中」pill 消失。
 - **Chat sessions, citations and source files**: the chat UI now supports
   renaming sessions (`PATCH /sessions/{id}`) and server-side content search
   (`GET /sessions?q=`), persists thumbs up/down feedback per assistant message

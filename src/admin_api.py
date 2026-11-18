@@ -250,6 +250,9 @@ _JOB_TIMING_RE = re.compile(
     r"\[parse=(\d+)ms chunk=(\d+)ms embed=(\d+)ms write=(\d+)ms\]"
 )
 _TOTAL_FILES_CACHE = {"key": None, "value": 0, "at": 0.0}
+# Measured baseline until a completed job provides a real number: 7.8
+# chunks/s × 60. Used only for the pre-ingest estimate.
+_DEFAULT_CHUNKS_PER_MIN = 468.0
 
 
 def _count_supported_files(dept: Optional[str] = None) -> int:
@@ -330,6 +333,10 @@ def _job_progress(job: Dict[str, Any]) -> Dict[str, Any]:
         percent = (processed / total * 100.0) if total else 0.0
     percent = max(0.0, min(100.0, percent))
 
+    # A cancelled job stops at a document boundary, so its percent legitimately
+    # stays wherever it was. It is not "failed", and there is no meaningful ETA
+    # left to show — the remaining documents will not be processed.
+    # 取消的任务停在文档边界，进度就该停在中间；它不是失败，也不再有 ETA。
     eta = None
     if status == "running" and total > processed and processed > 0 and elapsed > 0:
         # Early progress is biased by small files; only estimate after 40%.
@@ -358,6 +365,13 @@ class DeptRequest(BaseModel):
 class IngestRequest(BaseModel):
     dept: Optional[str] = None
     reset: bool = False
+    # Dry run: parse + chunk + embed the first N changed documents only. It
+    # never writes, never deletes old versions, and never touches a shadow
+    # index, so it cannot leave a half-migrated index behind.
+    # 试跑只对前 N 篇做解析/切分/嵌入，不写库、不删旧版本，也绝不碰影子索引，
+    # 因此不会留下“半迁移”的索引。
+    dry_run: bool = False
+    dry_run_limit: int = Field(default=3, ge=1, le=20)
 
 
 class LicenseInstallRequest(BaseModel):
@@ -388,6 +402,31 @@ class UserUpdateRequest(BaseModel):
 
 _job_store = JobStore(max_jobs=_MAX_JOBS, max_log_lines=_MAX_LOG_LINES)
 _ingest_lock = threading.Lock()
+# One cooperative cancellation flag per running job. The ETL checks it only at
+# document boundaries; the worker releases _ingest_lock itself after the
+# current document finishes, so a cancel never lets a second job write
+# concurrently.
+# 每个运行中的任务一个取消标志；ETL 只在文档边界检查，当前文档跑完后由任务线程
+# 自己释放 _ingest_lock，绝不让第二个任务并发写入。
+_cancel_events: Dict[str, threading.Event] = {}
+_cancel_events_lock = threading.Lock()
+
+
+def _register_cancel_event(job_id: str) -> threading.Event:
+    event = threading.Event()
+    with _cancel_events_lock:
+        _cancel_events[job_id] = event
+    return event
+
+
+def _cancel_event_for(job_id: str) -> Optional[threading.Event]:
+    with _cancel_events_lock:
+        return _cancel_events.get(job_id)
+
+
+def _drop_cancel_event(job_id: str) -> None:
+    with _cancel_events_lock:
+        _cancel_events.pop(job_id, None)
 
 
 def _job_update(job_id: str, **fields: Any) -> None:
@@ -431,11 +470,36 @@ def _actor(request: Request) -> str:
     )
 
 
-def _run_job(job_id: str, dept: Optional[str], reset: bool) -> None:
-    started = time.time()
-    _job_update(job_id, status="running", started=started)
-    rebuilding = False
+class _IngestCancelled(Exception):
+    """Raised at a safe point when the operator asked to stop a job."""
+
+
+def _abort_rebuild_after_cancel(job_id: str) -> None:
+    """Discard a shadow rebuild so a cancellation can never half-migrate.
+
+    Queries keep serving the previous index; a rebuild is only worth keeping
+    once every document has been written into the shadow.
+    """
     try:
+        kb_engine.abort_rebuild()
+        _job_log(job_id, "Rebuild aborted; the previous index is still live.")
+    except Exception:
+        logger.exception("could not abort rebuild")
+
+
+def _run_job(
+    job_id: str, dept: Optional[str], reset: bool, cancel_event: threading.Event
+) -> None:
+    started = time.time()
+    _job_update(
+        job_id, status="running", started=started, cancel_requested=False
+    )
+    rebuilding = False
+    etl: Optional[EnterpriseETL] = None
+    try:
+        if cancel_event.is_set():
+            raise _IngestCancelled("cancelled before the first document")
+
         if reset:
             # Build into a shadow index: queries keep serving the old data and
             # the switch happens only after every document is written.
@@ -444,7 +508,9 @@ def _run_job(job_id: str, dept: Optional[str], reset: bool) -> None:
             rebuilding = True
 
         etl = EnterpriseETL(
-            data_dir=settings.DATA_DIR, on_log=lambda m: _job_log(job_id, m)
+            data_dir=settings.DATA_DIR,
+            on_log=lambda m: _job_log(job_id, m),
+            cancel_event=cancel_event,
         )
         _job_log(job_id, f"Chunking: {etl.chunk_description()}")
         _job_log(job_id, f"Pipeline: {etl.pipeline_description()}")
@@ -455,8 +521,15 @@ def _run_job(job_id: str, dept: Optional[str], reset: bool) -> None:
 
         keep = set()
         for name in departments:
+            if cancel_event.is_set():
+                raise _IngestCancelled("cancelled before the next department")
             _job_log(job_id, f"[{name}]")
             keep |= etl.process_department_folder(name, str(root / name))
+
+        # The ETL stops at a document boundary; stop the job before pruning or
+        # committing, so a cancelled rebuild keeps the previous index.
+        if cancel_event.is_set() or etl.cancel_requested:
+            raise _IngestCancelled("cancelled at a document boundary")
 
         if reset and not keep:
             raise RuntimeError(
@@ -469,6 +542,8 @@ def _run_job(job_id: str, dept: Optional[str], reset: bool) -> None:
                 _job_log(job_id, f"Pruned {pruned} document(s) no longer present.")
 
         if rebuilding:
+            if cancel_event.is_set():
+                raise _IngestCancelled("cancelled before the index switch")
             _job_log(job_id, "Switching over to the rebuilt index...")
             # Only the (millisecond) switch is a maintenance window now.
             begin_maintenance()
@@ -478,6 +553,9 @@ def _run_job(job_id: str, dept: Optional[str], reset: bool) -> None:
                 end_maintenance()
             rebuilding = False
             _job_log(job_id, "Rebuild committed; previous index dropped.")
+
+        if cancel_event.is_set():
+            raise _IngestCancelled("cancelled before warm-up")
 
         if kb_engine.hybrid_mode == "local":
             try:
@@ -497,6 +575,30 @@ def _run_job(job_id: str, dept: Optional[str], reset: bool) -> None:
         _job_log(job_id, f"Timings: {etl.timing_description()}")
         _job_update(job_id, status="done", stats=stats, finished=time.time())
         observe_ingest_job("done")
+    except _IngestCancelled as exc:
+        # Cancelled is deliberately distinct from failed: it is an operator
+        # decision, not a service error, and the documents already written are
+        # valid. 取消是操作者决定，不是故障；已写入的文档保持有效。
+        _job_log(job_id, f"CANCELLED: {exc}")
+        if rebuilding:
+            _abort_rebuild_after_cancel(job_id)
+        stats = dict(etl.stats) if etl is not None else None
+        if stats is not None:
+            _job_log(
+                job_id,
+                "Cancelled. docs: added={added} updated={updated} skipped={skipped} "
+                "failed={failed}; chunks={chunks}".format(**stats),
+            )
+        else:
+            _job_log(job_id, "Cancelled before any document was processed.")
+        _job_update(
+            job_id,
+            status="cancelled",
+            stats=stats,
+            finished=time.time(),
+            cancel_requested=True,
+        )
+        observe_ingest_job("cancelled")
     except Exception as exc:
         logger.exception("ingestion job %s failed", job_id)
         _job_log(job_id, f"ERROR: {exc}")
@@ -511,6 +613,7 @@ def _run_job(job_id: str, dept: Optional[str], reset: bool) -> None:
         )
         observe_ingest_job("error")
     finally:
+        _drop_cancel_event(job_id)
         _ingest_lock.release()
 
 
@@ -765,22 +868,145 @@ def delete_file(dept: str, source: str, request: Request):
     return {"deleted": source, "chunks_removed": removed}
 
 
-@router.post("/ingest")
-def start_ingest(req: IngestRequest, request: Request):
-    if req.dept:
-        dept = validate_dept(req.dept)
+def _ingest_target(dept: Optional[str], reset: bool) -> Optional[str]:
+    """Validate a department/reset combination shared by all ingest entry points."""
+    if dept:
+        dept = validate_dept(dept)
         if dept not in _list_depts():
             raise HTTPException(status_code=404, detail="department not found")
     else:
         dept = None
-    if req.reset and dept:
+    if reset and dept:
         raise HTTPException(
             status_code=400, detail="reset must target the whole knowledge base"
         )
+    return dept
+
+
+def _collect_plans(
+    dept: Optional[str], reset: bool
+) -> tuple[EnterpriseETL, List[Any], List[str]]:
+    """Plan every target file without parsing (hash only)."""
+    etl = EnterpriseETL(data_dir=settings.DATA_DIR)
+    root = _data_root()
+    departments = [dept] if dept else _list_depts()
+    plans: List[Any] = []
+    for name in departments:
+        plans.extend(
+            etl.plan_department_folder(
+                name, str(root / name), assume_absent=reset
+            )
+        )
+    return etl, plans, departments
+
+
+def _ingest_rate_baseline() -> tuple[float, str]:
+    """Chunks per minute from the most recent measured job, else the default."""
+    for job in _job_store.list(limit=_MAX_JOBS):
+        if job.get("status") not in {"done", "cancelled", "error"}:
+            continue
+        progress = _job_progress(job)
+        rate = float(progress.get("rate_chunks_per_min") or 0.0)
+        if rate > 0:
+            return rate, f"job:{job.get('id')}"
+    return _DEFAULT_CHUNKS_PER_MIN, "default"
+
+
+def _estimate_payload(dept: Optional[str], reset: bool) -> Dict[str, Any]:
+    """Pre-ingest cost estimate: hash-only planning plus the measured rate."""
+    etl, plans, departments = _collect_plans(dept, reset)
+    queued = sum(1 for plan in plans if plan.queued)
+    skipped = sum(1 for plan in plans if plan.status == "skip")
+    failed = sum(1 for plan in plans if plan.status == "fail")
+
+    # "当前索引平均块/篇" — no parsing, so this is the only cheap predictor.
+    summary = kb_engine.doc_summary()
+    chunk_counts = [int(entry.get("chunks") or 0) for entry in summary.values()]
+    avg_chunks = sum(chunk_counts) / len(chunk_counts) if chunk_counts else 0.0
+    estimated_chunks = int(round(avg_chunks * queued))
+    rate, baseline = _ingest_rate_baseline()
+    estimated_minutes = estimated_chunks / rate if rate else 0.0
+    return {
+        "dept": dept,
+        "reset": reset,
+        "departments": departments,
+        "total_files": len(plans),
+        "queued": queued,
+        "skipped": skipped,
+        "failed": failed,
+        "estimated_chunks": estimated_chunks,
+        "estimated_minutes": round(estimated_minutes, 1),
+        "estimated_seconds": round(estimated_minutes * 60.0, 1),
+        "avg_chunks_per_doc": round(avg_chunks, 1),
+        "chunks_per_min": round(rate, 1),
+        "chunks_per_second": round(rate / 60.0, 2),
+        "baseline": baseline,
+        "basis": "index-average" if chunk_counts else "empty-index",
+        "chunking": etl.chunk_description(),
+    }
+
+
+@router.post("/ingest/estimate")
+def estimate_ingest(req: IngestRequest, request: Request):
+    """Estimate an incremental (or reset) run without touching the index.
+
+    Hash-only planning keeps this cheap (tens of files in well under a second),
+    and the estimate is exposed before a chunking change is applied so an
+    operator can see the cost instead of discovering it after a 40-minute run.
+    """
+    dept = _ingest_target(req.dept, req.reset)
+    payload = _estimate_payload(dept, req.reset)
+    audit.log_event(
+        "ingest.estimate",
+        _actor(request),
+        dept=dept,
+        detail={
+            "queued": payload["queued"],
+            "estimated_chunks": payload["estimated_chunks"],
+            "reset": req.reset,
+        },
+    )
+    return payload
+
+
+@router.post("/ingest")
+def start_ingest(req: IngestRequest, request: Request):
+    dept = _ingest_target(req.dept, req.reset)
     if not _ingest_lock.acquire(blocking=False):
         raise HTTPException(status_code=409, detail="an ingestion job is already running")
 
+    if req.dry_run:
+        # Synchronous (FastAPI runs sync endpoints in its threadpool): the
+        # caller gets the measurements directly, and nothing is written.
+        # 同步执行（FastAPI 在线程池中跑同步端点）：直接返回测量结果，不写任何东西。
+        try:
+            etl, plans, departments = _collect_plans(dept, req.reset)
+            report = etl.dry_run_plans(plans, limit=req.dry_run_limit)
+            report.update(
+                {
+                    "dept": dept,
+                    "reset": req.reset,
+                    "departments": departments,
+                    "chunking": etl.chunk_description(),
+                }
+            )
+            audit.log_event(
+                "ingest.dryrun",
+                _actor(request),
+                dept=dept,
+                detail={
+                    "sampled": report["sampled"],
+                    "queued": report["queued"],
+                    "estimated_minutes": report["estimated_minutes"],
+                    "reset": req.reset,
+                },
+            )
+            return report
+        finally:
+            _ingest_lock.release()
+
     job_id = uuid.uuid4().hex[:8]
+    cancel_event = _register_cancel_event(job_id)
     _job_store.create(
         {
             "id": job_id,
@@ -793,6 +1019,7 @@ def start_ingest(req: IngestRequest, request: Request):
             "log": [],
             "stats": None,
             "error": None,
+            "cancel_requested": False,
         }
     )
     audit.log_event(
@@ -803,9 +1030,12 @@ def start_ingest(req: IngestRequest, request: Request):
     )
     try:
         threading.Thread(
-            target=_run_job, args=(job_id, dept, req.reset), daemon=True
+            target=_run_job,
+            args=(job_id, dept, req.reset, cancel_event),
+            daemon=True,
         ).start()
     except Exception:
+        _drop_cancel_event(job_id)
         _ingest_lock.release()
         raise
     return {"job_id": job_id, "dept": dept, "reset": req.reset}
@@ -819,6 +1049,49 @@ def job_status(job_id: str):
     data = dict(job)
     data["progress"] = _job_progress(data)
     return data
+
+
+@router.post("/jobs/{job_id}/cancel")
+def cancel_job(job_id: str, request: Request):
+    """Request a cooperative stop at the next document boundary.
+
+    The current document always finishes (write new chunks, then delete the
+    stale version), and only then does the worker release ``_ingest_lock``.
+    The endpoint therefore returns immediately, while the terminal
+    ``cancelled`` state appears after at most one document's processing time.
+    请求在下一个文档边界停止；当前文档始终跑完，之后任务线程才释放 _ingest_lock，
+    因此接口立即返回，最终状态最多等一篇文档的耗时。
+    """
+    job = _job_store.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="job not found")
+    status = str(job.get("status") or "queued")
+    if status not in {"queued", "running"}:
+        raise HTTPException(status_code=409, detail="job is not running")
+    event = _cancel_event_for(job_id)
+    if event is None:
+        raise HTTPException(status_code=409, detail="job is not cancellable")
+
+    event.set()
+    progress = _job_progress(job)
+    _job_update(job_id, cancel_requested=True)
+    audit.log_event(
+        "ingest.cancel",
+        _actor(request),
+        dept=job.get("dept"),
+        detail={
+            "job_id": job_id,
+            "processed": progress["processed"],
+            "total": progress["total"],
+        },
+    )
+    return {
+        "job_id": job_id,
+        "status": status,
+        "cancelling": True,
+        "processed": progress["processed"],
+        "total": progress["total"],
+    }
 
 
 @router.get("/jobs")

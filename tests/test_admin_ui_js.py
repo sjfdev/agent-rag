@@ -476,8 +476,10 @@ def test_chunking_is_configurable_from_the_console():
     assert 'chunkCard: { run: loadChunking' in text
     assert 'name: "admin.panel.chunking"' in text
     assert 'data-i18n="admin.chunkTitle"' in text
-    # Saving is guarded by the themed confirmation before a full re-ingestion.
-    assert "admin.chunkReingestConfirm" in text
+    # Saving and re-ingesting goes through the shared ingest preflight so the
+    # rechunk cost is visible before the job starts.
+    assert "function preflightIngest(" in text
+    assert 'api("/admin/api/ingest/estimate"' in text
     assert "admin.chunkResetConfirm" in text
 
 
@@ -496,6 +498,7 @@ def test_ingestion_monitor_panel():
         'id="jobCurrent"',
         'id="jobTimings"',
         'id="jobLog"',
+        'id="jobCancel"',
     ):
         assert marker in text, marker
     assert "function renderJob(" in text
@@ -507,3 +510,6 @@ def test_ingestion_monitor_panel():
     # Job progress is surfaced in the API and rendered by the monitor.
     assert 'api("/admin/api/jobs"' in text
     assert 'api("/admin/api/jobs/" + latest.id)' in text
+    # Cancelling goes through the themed confirmation and the cancel endpoint.
+    assert "function cancelIngest(" in text
+    assert '"/cancel"' in text

@@ -102,6 +102,7 @@ Every engine write calls `_touch()`: bumps the version counter, drops BM25 index
 - Incremental: unchanged files are skipped by `doc_hash`, which folds the file hash with the effective chunking/parser signature (token window, overlap, punctuation, title prefix, XLSX/CSV rows, PDF tables/OCR); changing those settings re-chunks already indexed files on the next ingestion. Changed files are parsed first (a parse failure must not delete the old copy), new chunks are written, then old versions deleted (crash-safe); files removed from disk are pruned unless `--no-prune`.
 - XLSX/CSV are split into header-repeating row blocks (`XLSX_ROWS_PER_CHUNK`/`CSV_ROWS_PER_CHUNK`), so each block keeps column context.
 - `--reset`/admin rebuild writes into a **shadow index** (Milvus: temp collection + alias swap; FAISS: temp dir + `os.replace`). Queries keep hitting the live index; maintenance is set only around the millisecond swap. An empty rebuild aborts and keeps the previous index.
+- `POST /admin/api/jobs/{job_id}/cancel` stops at a document boundary (never between writing new chunks and deleting the old version) and a cancelled rebuild aborts its shadow. `POST /admin/api/ingest/estimate` and `IngestRequest.dry_run` report cost without writing; a dry run parses/chunks/embeds only the first N changed documents.
 
 ### Operations
 

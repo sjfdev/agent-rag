@@ -991,6 +991,9 @@
       <span><span data-i18n="admin.jobRateLabel">速度</span> <b id="jobRate">—</b></span>
       <span><span data-i18n="admin.jobEtaLabel">预计剩余</span> <b id="jobEta">—</b></span>
     </div>
+    <div class="row" style="margin-top:10px">
+      <button id="jobCancel" class="danger" hidden data-i18n="admin.jobCancel">停止入库</button>
+    </div>
     <div class="hint" id="jobCurrent"></div>
     <div class="hint" id="jobTimings"></div>
     <pre id="jobLog"></pre>
@@ -2648,6 +2651,7 @@ async function upload() {
 
 let busy = false;
 let uploading = false;
+let cancelRequested = false;
 
 function syncActionButtons() {
   const noDept = !currentDept;
@@ -2789,6 +2793,8 @@ function renderJob(job) {
     $("jobTimings").textContent = "";
     $("jobFill").style.width = "0%";
     $("jobLog").textContent = "";
+    $("jobCancel").hidden = true;
+    cancelRequested = false;
     return;
   }
   const status = String(job.status || "queued");
@@ -2797,11 +2803,24 @@ function renderJob(job) {
   const processed = Number(progress.processed) || 0;
   const percent = Math.max(0, Math.min(100, Number(progress.percent) || 0));
   const badgeClass =
-    status === "done" ? "b-indexed" : status === "error" ? "b-fail" : status === "running" || status === "queued" ? "b-pending" : "b-unknown";
+    status === "done"
+      ? "b-indexed"
+      : status === "error"
+        ? "b-fail"
+        : status === "cancelled"
+          ? "b-unknown"
+          : status === "running" || status === "queued"
+            ? "b-pending"
+            : "b-unknown";
   $("jobBadge").hidden = false;
   $("jobBadge").className = "badge " + badgeClass;
   $("jobBadge").textContent = jobStatusLabel(status);
   $("jobStatus").textContent = jobStatusLabel(status);
+  const stoppable = status === "running" || status === "queued";
+  const stopping = cancelRequested || Boolean(job.cancel_requested);
+  $("jobCancel").hidden = !stoppable;
+  $("jobCancel").disabled = stopping;
+  $("jobCancel").textContent = stopping ? t("admin.jobCancelling") : t("admin.jobCancel");
   $("jobDocs").textContent = total
     ? t("admin.jobDocsValue", { processed, total, percent: Math.round(percent) })
     : "—";
@@ -2821,11 +2840,14 @@ function renderJob(job) {
         ? t("admin.jobEtaComputing")
         : "—";
   $("jobFill").style.width = percent + "%";
-  $("jobCurrent").textContent = progress.current
-    ? t("admin.jobCurrent", { source: progress.current })
-    : status === "done"
-      ? t("admin.jobFinished")
-      : "";
+  $("jobCurrent").textContent =
+    status === "cancelled"
+      ? t("admin.jobCancelled")
+      : progress.current
+        ? t("admin.jobCurrent", { source: progress.current })
+        : status === "done"
+          ? t("admin.jobFinished")
+          : "";
   const timings = progress.timings_ms || {};
   const hasTimings = Object.values(timings).some((value) => Number(value) > 0);
   $("jobTimings").textContent = hasTimings
@@ -2876,8 +2898,52 @@ async function loadJobMonitor() {
   }
 }
 
+function ingestBody(dept, reset) {
+  const body = { reset: !!reset };
+  if (dept) body.dept = dept;
+  return body;
+}
+
+// Preflight every ingest start. The estimate endpoint only hashes files and
+// reads the current index, so it is cheap enough to run before every click and
+// makes a chunking change carry a visible price tag. 「分片」卡保存并重切也走这里。
+async function preflightIngest(dept, reset) {
+  let estimate;
+  try {
+    estimate = await api("/admin/api/ingest/estimate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(ingestBody(dept, reset)),
+    });
+  } catch (error) {
+    setMsg($("indexMsg"), t("admin.estimateFailed", { error: error.message }), "error");
+    return false;
+  }
+  const message = Number(estimate.queued) > 0
+    ? t("admin.estimateSummary", {
+        total: estimate.total_files,
+        queued: estimate.queued,
+        chunks: Number(estimate.estimated_chunks || 0).toLocaleString(),
+        minutes: Math.max(1, Math.round(Number(estimate.estimated_minutes) || 0)),
+      })
+    : t("admin.estimateNothing", { total: estimate.total_files });
+  return askConfirm(message, {
+    title: t("admin.estimateTitle"),
+    danger: false,
+    confirmText: t("admin.estimateProceed"),
+  });
+}
+
 async function startIngest(dept, reset) {
+  if (busy) return;
+  // Keep the buttons disabled while the preflight modal is open so a double
+  // click cannot start two jobs. 预检弹窗期间禁用按钮，避免双击启动两个任务。
   setBusy(true);
+  if (!(await preflightIngest(dept, reset))) {
+    setBusy(false);
+    return;
+  }
+  cancelRequested = false;
   jobId = null;
   $("jobPill").hidden = false;
   $("jobStatus").textContent = t("admin.jobStarting");
@@ -2885,15 +2951,14 @@ async function startIngest(dept, reset) {
   $("jobLog").textContent = "";
   $("jobCurrent").textContent = "";
   $("jobFill").style.width = "0%";
+  $("jobCancel").hidden = true;
   showSection("jobCard");
   rememberSection("jobCard");
   try {
-    const body = { reset: !!reset };
-    if (dept) body.dept = dept;
     const data = await api("/admin/api/ingest", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
+      body: JSON.stringify(ingestBody(dept, reset)),
     });
     jobId = data.job_id;
     localStorage.setItem(JOB_KEY, jobId);
@@ -2908,13 +2973,30 @@ async function startIngest(dept, reset) {
   }
 }
 
+async function cancelIngest() {
+  if (!jobId) return;
+  if (!(await askConfirm(t("admin.jobCancelConfirm"), {
+    danger: true,
+    confirmText: t("admin.jobCancelOk"),
+  }))) return;
+  try {
+    await api("/admin/api/jobs/" + jobId + "/cancel", { method: "POST" });
+    cancelRequested = true;
+    $("jobCancel").disabled = true;
+    $("jobCancel").textContent = t("admin.jobCancelling");
+    setMsg($("jobMsg"), t("admin.jobCancelRequested"), "ok");
+  } catch (error) {
+    setMsg($("jobMsg"), t("admin.jobCancelFailed", { error: error.message }), "error");
+  }
+}
+
 async function pollJob() {
   clearTimeout(pollTimer);
   if (!jobId) return;
   try {
     const job = await api("/admin/api/jobs/" + jobId);
     renderJob(job);
-    if (job.status === "done" || job.status === "error") {
+    if (job.status === "done" || job.status === "error" || job.status === "cancelled") {
       setBusy(false);
       $("jobPill").hidden = true;
       jobId = null;
@@ -2952,7 +3034,7 @@ async function restoreJob() {
   try {
     const job = await api("/admin/api/jobs/" + jobId);
     renderJob(job);
-    if (job.status === "done" || job.status === "error") {
+    if (job.status === "done" || job.status === "error" || job.status === "cancelled") {
       $("jobPill").hidden = true;
       jobId = null;
       localStorage.removeItem(JOB_KEY);
@@ -3156,11 +3238,9 @@ async function saveChunking(reingest) {
     renderChunk(data);
     setMsg($("chunkMsg"), t("admin.chunkSaved"), "ok");
     if (reingest) {
-      const run = await askConfirm(t("admin.chunkReingestConfirm"), {
-        danger: false,
-        confirmText: t("admin.chunkReingestOk"),
-      });
-      if (!run) return;
+      // startIngest runs the shared preflight; that dialog is the single
+      // confirmation for this rechunk (no second generic prompt).
+      // 保存并重切复用入库预检，不再弹第二次通用确认。
       showSection("indexCard", true);
       rememberSection("indexCard");
       await startIngest(null, false);
@@ -3807,6 +3887,10 @@ $("ingestAll").onclick = () => startIngest(null, false);
 $("jobPill").onclick = () => {
   showSection("jobCard", true);
   rememberSection("jobCard");
+};
+
+$("jobCancel").onclick = () => {
+  cancelIngest().catch((e) => setMsg($("jobMsg"), e.message, "error"));
 };
 
 updateDeptBadge();
