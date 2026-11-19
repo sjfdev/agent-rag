@@ -3,11 +3,18 @@
     python scripts/daily_backup.py
     python scripts/daily_backup.py --offsite /Volumes/kb-archive
     python scripts/daily_backup.py --dry-run
+    python scripts/daily_backup.py --max-age-hours 24
 
 `make backup` refuses to copy a running Milvus. This wrapper performs the
 stop/start dance so launchd can run it unattended (install_launchd.py). The
 restart lives in a ``finally`` block: a failed backup never leaves the service
 down.
+
+`--max-age-hours N` makes the run conditional: when the newest archive is
+younger than N hours the job exits 0 immediately without pausing the stack.
+launchd fires it every few hours (StartInterval) instead of once a night, so a
+missed 03:30 window (machine asleep) is caught up on the next wake; the default
+0 keeps an explicit `make daily-backup` unconditional.
 """
 
 from __future__ import annotations
@@ -34,6 +41,7 @@ DEV_COMPOSE = ROOT / "docker-compose.yml"
 DEV_CONTAINERS = ("milvus-etcd", "milvus-standalone")
 ARCHIVE_PATTERN = "agent-rag-backup-*.tar.gz"
 SILENCES_URL = "http://127.0.0.1:9093/api/v2/silences"
+LOCK_PATH = ROOT / "logs" / ".daily-backup.lock"
 
 Runner = Callable[[Sequence[str]], int]
 Capture = Callable[[Sequence[str]], str]
@@ -99,6 +107,59 @@ def prune_archives(dest: Path, keep: int) -> list[str]:
     return removed
 
 
+def acquire_lock(path: Optional[Path] = None):
+    """Hold an exclusive lock for the whole run, or None when another run owns it.
+
+    launchd can fire the interval agent and boot-recover's catch-up within the
+    same login; two runs would stop/start the stack against each other's
+    archive. The lock is released when the returned handle is closed.
+    """
+    target = Path(path) if path is not None else LOCK_PATH
+    target.parent.mkdir(parents=True, exist_ok=True)
+    handle = target.open("a+")
+    try:
+        import fcntl
+    except ImportError:  # pragma: no cover - POSIX only in practice
+        return handle
+    try:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        handle.close()
+        return None
+    return handle
+
+
+def newest_archive(dest: Path) -> Optional[Path]:
+    """Newest complete archive in `dest` (an in-flight `.partial` does not count)."""
+    archives = [
+        path for path in dest.glob(ARCHIVE_PATTERN) if not path.name.endswith(".partial")
+    ]
+    if not archives:
+        return None
+    return max(archives, key=lambda path: path.stat().st_mtime)
+
+
+def backup_age_hours(dest: Path, now: Optional[datetime] = None) -> Optional[float]:
+    """Age of the newest archive in hours, or None when there is no archive."""
+    archive = newest_archive(dest)
+    if archive is None:
+        return None
+    moment = now or datetime.now(timezone.utc)
+    modified = datetime.fromtimestamp(archive.stat().st_mtime, tz=timezone.utc)
+    return (moment - modified).total_seconds() / 3600.0
+
+
+def is_stale(dest: Path, max_age_hours: float, now: Optional[datetime] = None) -> bool:
+    """True when a backup is due: no archive, or the newest one is too old.
+
+    `max_age_hours <= 0` means "always back up" and short-circuits to True.
+    """
+    if max_age_hours <= 0:
+        return True
+    age = backup_age_hours(dest, now)
+    return age is None or age >= max_age_hours
+
+
 def silence_payload(minutes: int, now: Optional[datetime] = None) -> dict:
     """Silence the readiness alert for a planned backup window."""
     start = now or datetime.now(timezone.utc)
@@ -158,6 +219,7 @@ def run_daily(
     stop: bool = True,
     dry_run: bool = False,
     silence_minutes: int = 15,
+    max_age_hours: float = 0,
     runner: Runner = _run,
     capture: Capture = _capture,
     backup_module=None,
@@ -172,6 +234,14 @@ def run_daily(
             "dry run: "
             f"stop={'yes' if stop else 'no'} dest={dest} keep={keep} "
             f"offsite={offsite or '(skipped)'}"
+        )
+        return 0
+
+    if max_age_hours > 0 and not is_stale(dest, max_age_hours):
+        age = backup_age_hours(dest) or 0.0
+        log(
+            f"skipping: {newest_archive(dest)} is {age:.1f}h old "
+            f"(limit {max_age_hours:g}h); pass --max-age-hours 0 to force a backup"
         )
         return 0
 
@@ -253,17 +323,32 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         default=15,
         help="silence the readiness alert for this long (0 disables, default 15)",
     )
+    parser.add_argument(
+        "--max-age-hours",
+        type=float,
+        default=0,
+        help="skip (exit 0, no downtime) when the newest archive is younger than this; "
+        "0 always backs up (default 0; launchd passes 24)",
+    )
     parser.add_argument("--dry-run", action="store_true", help="print the plan only")
     args = parser.parse_args(argv)
     dest = Path(args.dest) if args.dest else None
-    return run_daily(
-        dest=dest,
-        keep=args.keep,
-        offsite=args.offsite,
-        stop=not args.no_stop,
-        dry_run=args.dry_run,
-        silence_minutes=args.silence_minutes,
-    )
+    lock = acquire_lock()
+    if lock is None:
+        log("skipping: another backup is already running")
+        return 0
+    try:
+        return run_daily(
+            dest=dest,
+            keep=args.keep,
+            offsite=args.offsite,
+            stop=not args.no_stop,
+            dry_run=args.dry_run,
+            silence_minutes=args.silence_minutes,
+            max_age_hours=args.max_age_hours,
+        )
+    finally:
+        lock.close()
 
 
 if __name__ == "__main__":

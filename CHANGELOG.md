@@ -407,6 +407,25 @@ three agree before you push a tag.
 
 ### Changed
 
++- **Backups are checked on an interval instead of a nightly calendar time**:
+  `com.agent-rag.daily-backup` used `StartCalendarInterval` at 03:30 and never
+  ran on a machine that sleeps at night (`launchctl print` reported `runs = 0`,
+  leaving the newest archive four days old). It now uses `StartInterval`
+  (default 6 h) plus `RunAtLoad`, and every firing is cheap:
+  `daily_backup.py --max-age-hours 24` exits 0 immediately, without pausing
+  the stack, unless the newest archive is older than 24 hours.
+  `scripts/boot_recover.py` runs the same check once the app is live, so a
+  missed interval is repaired at the next login/boot. A `flock` guard
+  (`logs/.daily-backup.lock`) keeps the interval run and the boot catch-up
+  from stopping/starting the stack at the same time.
+  <br>**备份改为间隔检查（中文）**：`com.agent-rag.daily-backup` 原先用
+  `StartCalendarInterval` 定在 03:30，机器夜间睡眠时从不执行（`launchctl
+  print` 显示 `runs = 0`，归档停在四天前）。现在改为 `StartInterval`（默认
+  6 小时）加 `RunAtLoad`，且每次触发都很便宜：`daily_backup.py
+  --max-age-hours 24` 在最新归档未超过 24 小时时直接退出 0，不暂停服务。
+  `scripts/boot_recover.py` 在 app 起来后再做一次同样的检查，所以错过的窗口
+  会在下次登录/开机时补上。新增 `flock` 守卫（`logs/.daily-backup.lock`），
+  避免间隔任务与开机补跑同时停启服务栈。
 - **The dev Milvus stack no longer resurrects**: `docker-compose.yml`'s `etcd`
   and `standalone` switched from `restart: unless-stopped` to `restart: "no"`,
   and `make milvus-up` now refuses to start when the production Milvus

@@ -1506,12 +1506,26 @@ tests and hit@4=18/18 / MRR=0.89 / leaks=0 on both backends.
 - `scripts/boot_recover.py`：开机时先探测 `milvus-standalone`，若在跑则 `compose down` 清掉 dev 栈；prod `up -d` 失败改为重试 3 次（硬停机后 Milvus 常超过 compose 的依赖等待，原逻辑一次失败就 `return 1`）。
 - `tests/test_ops_agents.py`：boot 用例从 3 项扩到 7 项（新增 dev 栈清理 2 项、失败重试 2 项），`ruff` 干净。
 
-### 未修（按用户决定只记录，不动代码）
+### 备份定时：已修（2026-11-19 17:06）
 
-- `com.agent-rag.daily-backup` **自 2026-11-15 安装以来一次都没跑过**：`launchctl print gui/501/com.agent-rag.daily-backup` 显示 `runs = 0`、`last exit code = (never exited)`，`logs/backup-agent.log` 最后一次写入仍是 11-15 20:29 那次**手工**执行。最新归档因此停在 `backups/agent-rag-backup-20261115-122824.tar.gz`（11-15 20:28），本次抢修前没有近期可回滚点，`AgentRagBackupStale`（48 h）的告警本来就应成立。
-- 根因推测：定时器是 `StartCalendarInterval`（03:30），机器夜间睡眠/关机时不补跑，而 LaunchAgent 只在 GUI 会话内派发。
-- 后续若要修，建议把定时改为 `StartInterval`（例如每 6 小时）+ 脚本内自检「最新归档是否超过 24 h，旧则跑一次」，并在 `boot_recover.py` 末尾补一次检查；这样睡眠唤醒后一定能补上。
-- 另注：本机 `/etc/hosts` 没有 `kb.internal`，浏览器要访问 TLS 入口需客户端自行解析该主机名（Caddy 证书名即它）。
+**原问题**：`com.agent-rag.daily-backup` 自 2026-11-15 安装以来一次都没跑过 —— `launchctl print gui/501/com.agent-rag.daily-backup` 显示 `runs = 0`、`last exit code = (never exited)`，`logs/backup-agent.log` 最后一次写入仍是 11-15 20:29 那次**手工**执行。定时器是 `StartCalendarInterval`（03:30），机器夜间睡眠时不派发，LaunchAgent 又只在 GUI 会话内运行，所以从来对不上；最新归档因此停在 11-15，抢修当天（11-19）已 92.6 小时无备份，`AgentRagBackupStale`（48 h）的告警本来就应成立。
+
+**改法**：
+
+- `scripts/install_launchd.py`：`backup_payload` 由 `StartCalendarInterval{3:30}` 改为 `StartInterval`（默认 6 h = 21600 s）+ `RunAtLoad: True`，并把 `--max-age-hours 24` 写进 `ProgramArguments`；CLI 参数改为 `--interval-hours` / `--max-age-hours`。
+- `scripts/daily_backup.py`：新增 `newest_archive()` / `backup_age_hours()` / `is_stale()` 与 `--max-age-hours`（默认 0 = 每次都备份，保持 `make daily-backup` 语义）。归档未过期时在 `run_daily` 入口直接 `return 0`，**不碰 docker、不暂停服务**。
+- `scripts/boot_recover.py`：`app is live` 之后补一次 `daily_backup.py --max-age-hours 24`（失败只 warning，不影响退出码），保证错过的窗口在下次登录/开机时被补上。
+- 新增 `logs/.daily-backup.lock`（`fcntl.flock`）：间隔任务与开机补跑可能在同一次登录里同时触发，两个备份会各自停/起服务栈并写同一目录，锁让后到者直接退出 0。
+
+**实机验证（2026-11-19 17:06–17:08）**：
+
+- `install_launchd.py install` 重装两个 agent；`plutil -p` 显示 `StartInterval = 21600`、`RunAtLoad = 1`、参数 `["--max-age-hours", "24"]`，`StartCalendarInterval` 已不存在；`launchctl print` 显示 `run interval = 21600 seconds`、`runs = 1`。
+- 装完 agent 立即按 `RunAtLoad` 跑了一次：17:06:56 silence `AgentRagHealthDown` → 17:07:32 写出 `agent-rag-backup-20261119-090710.tar.gz`（**196,844,308 bytes**，`shasum -a 256 -c` 校验 OK）→ 17:08 前后 app/milvus 恢复 healthy，停机约 90 秒（`/health` 200）。
+- 同一次登录里 `boot_recover.py`（17:06:55 启动）因为备份暂停了栈而一直等到 `/info` 恢复（17:08:29 `app is live`），然后执行补跑检查：归档新鲜 → 直接跳过（日志 `backup check done`），说明两条路径不会互相打架。
+- 空跑成本实测：`daily_backup.py --max-age-hours 24` 在当前新鲜归档下 **0.385 秒**退出，docker 容器状态不变（`skipping: ... is 0.0h old`）。
+- 测试：`tests/test_ops_agents.py` 26 项（新增间隔 plist、staleness、空跑、锁、开机补跑 7 项），全量 **790 passed**，`ruff` 干净。
+
+**遗留**：本机 `/etc/hosts` 没有 `kb.internal`，浏览器访问 TLS 入口需客户端自行解析该主机名（Caddy 证书名即它）。
 
 ---
 

@@ -1,4 +1,4 @@
-"""Install the macOS launchd agents: boot recovery and the nightly backup.
+"""Install the macOS launchd agents: boot recovery and the periodic backup.
 
     python scripts/install_launchd.py install
     python scripts/install_launchd.py status
@@ -8,7 +8,15 @@ Two LaunchAgents, both in ~/Library/LaunchAgents (they start at login: colima
 needs the user session, so a root LaunchDaemon is the wrong hook):
 
   com.agent-rag.boot-recover   scripts/boot_recover.py at login
-  com.agent-rag.daily-backup   scripts/daily_backup.py at 03:30 local time
+  com.agent-rag.daily-backup   scripts/daily_backup.py every `--interval-hours`
+                               (default 6) and at login
+
+The backup uses `StartInterval` instead of `StartCalendarInterval`: a calendar
+job at 03:30 never fired on this machine (`launchctl print` showed
+`runs = 0`) because it stays asleep at night, whereas an interval job is
+coalesced by launchd and runs on the next wake. Every firing is cheap when
+nothing is due — `daily_backup.py --max-age-hours 24` exits immediately
+without pausing the stack unless the newest archive is older than 24 hours.
 """
 
 from __future__ import annotations
@@ -46,19 +54,27 @@ def boot_payload(python: str, logs_dir: Path = LOGS_DIR) -> dict:
 def backup_payload(
     python: str,
     logs_dir: Path = LOGS_DIR,
-    hour: int = 3,
-    minute: int = 30,
+    interval_hours: float = 6,
     keep: Optional[int] = None,
+    max_age_hours: float = 24,
 ) -> dict:
     # No --keep means the job follows BACKUP_KEEP from .env.
-    arguments = [python, str(ROOT / "scripts" / "daily_backup.py")]
+    arguments = [
+        python,
+        str(ROOT / "scripts" / "daily_backup.py"),
+        "--max-age-hours",
+        f"{max_age_hours:g}",
+    ]
     if keep is not None:
         arguments += ["--keep", str(keep)]
     return {
         "Label": BACKUP_LABEL,
         "ProgramArguments": arguments,
         "WorkingDirectory": str(ROOT),
-        "StartCalendarInterval": {"Hour": hour, "Minute": minute},
+        # Interval, not a calendar time: the job is coalesced and runs on wake.
+        "StartInterval": int(interval_hours * 3600),
+        # Also check once at login, which is when this laptop comes back.
+        "RunAtLoad": True,
         "StandardOutPath": str(logs_dir / "backup-agent.log"),
         "StandardErrorPath": str(logs_dir / "backup-agent.err.log"),
         "EnvironmentVariables": {"PATH": PATH_VALUE},
@@ -86,9 +102,9 @@ def _launchctl(*args: str) -> int:
 
 def install(
     python: str,
-    hour: int = 3,
-    minute: int = 30,
+    interval_hours: float = 6,
     keep: Optional[int] = None,
+    max_age_hours: float = 24,
     agents_dir: Path = AGENTS_DIR,
     logs_dir: Path = LOGS_DIR,
 ) -> int:
@@ -96,7 +112,7 @@ def install(
     agents_dir.mkdir(parents=True, exist_ok=True)
     payloads = {
         BOOT_LABEL: boot_payload(python, logs_dir),
-        BACKUP_LABEL: backup_payload(python, logs_dir, hour, minute, keep),
+        BACKUP_LABEL: backup_payload(python, logs_dir, interval_hours, keep, max_age_hours),
     }
     domain = f"gui/{os.getuid()}"
     for label, payload in payloads.items():
@@ -138,8 +154,18 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("command", choices=("install", "uninstall", "status"))
     parser.add_argument("--python", default=sys.executable, help="interpreter for the agents (default: this one)")
-    parser.add_argument("--hour", type=int, default=3, help="backup hour, 0-23 (default 3)")
-    parser.add_argument("--minute", type=int, default=30, help="backup minute (default 30)")
+    parser.add_argument(
+        "--interval-hours",
+        type=float,
+        default=6,
+        help="how often the backup job checks for a stale archive (default 6)",
+    )
+    parser.add_argument(
+        "--max-age-hours",
+        type=float,
+        default=24,
+        help="only archive when the newest one is older than this (0 = every run, default 24)",
+    )
     parser.add_argument(
         "--keep",
         type=int,
@@ -155,7 +181,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         if not Path(args.python).exists():
             print(f"interpreter not found: {args.python}")
             return 1
-        return install(args.python, args.hour, args.minute, args.keep)
+        return install(args.python, args.interval_hours, args.keep, args.max_age_hours)
     if args.command == "uninstall":
         return uninstall()
     return status()

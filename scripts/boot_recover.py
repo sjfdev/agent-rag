@@ -7,7 +7,10 @@ Starts colima when the Docker daemon is not running, waits for it, stops a
 leftover dev stack (`docker-compose.yml`: `milvus-standalone`) that would
 otherwise compete for the VM's memory with the production Milvus, then
 `compose up -d` for the production and monitoring stacks and waits for
-`/info` to answer. The compose call is retried a few times because a hard VM
+`/info` to answer. Once the app is live it runs the backup catch-up
+(`daily_backup.py --max-age-hours 24`), which exits immediately unless the
+newest archive is overdue, so a missed interval is repaired at the next
+login/boot. The compose call is retried a few times because a hard VM
 stop leaves Milvus needing longer than compose's dependency wait before it is
 healthy. Exit codes: 0 healthy, 1 docker/compose failure, 2 app not live in
 time.
@@ -30,6 +33,7 @@ sys.path.insert(0, str(ROOT))
 PROD_COMPOSE = ROOT / "docker-compose.prod.yml"
 DEV_COMPOSE = ROOT / "docker-compose.yml"
 MONITOR_COMPOSE = ROOT / "docker-compose.monitoring.yml"
+DAILY_BACKUP = ROOT / "scripts" / "daily_backup.py"
 DEV_MILVUS = "milvus-standalone"
 LIVENESS_URL = "http://127.0.0.1:8000/info"
 
@@ -98,6 +102,8 @@ def recover(
     monitoring: bool = True,
     retries: int = 3,
     retry_delay: float = 15.0,
+    catch_up_backup: bool = True,
+    backup_max_age_hours: float = 24,
     runner: Callable[[Sequence[str]], int] = _run,
     probe: Callable[[Sequence[str]], str] = _capture,
     liveness: Callable[[], bool] = lambda: http_ok(LIVENESS_URL),
@@ -139,6 +145,17 @@ def recover(
         log("app did not answer /info in time")
         return 2
     log("app is live")
+
+    if catch_up_backup:
+        # A no-op when the newest archive is fresh: the script exits 0 without
+        # touching the stack. Never fail the boot because of the backup.
+        log("checking whether a backup is overdue")
+        if runner(
+            [sys.executable, str(DAILY_BACKUP), "--max-age-hours", f"{backup_max_age_hours:g}"]
+        ) != 0:
+            log("warning: the catch-up backup failed")
+        else:
+            log("backup check done")
     return 0
 
 

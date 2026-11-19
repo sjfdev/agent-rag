@@ -1,8 +1,9 @@
 """Boot recovery, daily backup and the macOS launchd agents."""
 
 import importlib.util
+import os
 import plistlib
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -43,14 +44,25 @@ def test_boot_agent_runs_at_login(installer):
     assert parsed["EnvironmentVariables"]["PATH"].startswith("/usr/local/bin")
 
 
-def test_backup_agent_runs_daily(installer):
-    payload = installer.backup_payload("/usr/bin/python3", Path("/tmp/logs"), 3, 30, 14)
+def test_backup_agent_checks_on_an_interval(installer):
+    payload = installer.backup_payload("/usr/bin/python3", Path("/tmp/logs"), 6, 14, 24)
     parsed = plistlib.loads(installer.render_plist(payload))
     assert parsed["Label"] == installer.BACKUP_LABEL
-    assert "RunAtLoad" not in parsed
-    assert parsed["StartCalendarInterval"] == {"Hour": 3, "Minute": 30}
-    assert parsed["ProgramArguments"][-2:] == ["--keep", "14"]
-    assert parsed["ProgramArguments"][1].endswith("scripts/daily_backup.py")
+    # An interval job is coalesced by launchd and runs on wake; a 03:30
+    # calendar job never fired on a machine that sleeps at night (runs = 0).
+    assert parsed["StartInterval"] == 6 * 3600
+    assert "StartCalendarInterval" not in parsed
+    assert parsed["RunAtLoad"] is True
+    arguments = parsed["ProgramArguments"]
+    assert arguments[1].endswith("scripts/daily_backup.py")
+    assert arguments[2:4] == ["--max-age-hours", "24"]
+    assert arguments[-2:] == ["--keep", "14"]
+
+
+def test_backup_agent_defaults_to_six_hours_and_24h_staleness(installer):
+    parsed = plistlib.loads(installer.render_plist(installer.backup_payload("/usr/bin/python3")))
+    assert parsed["StartInterval"] == 21600
+    assert parsed["ProgramArguments"][2:4] == ["--max-age-hours", "24"]
 
 
 def test_plist_paths_live_in_launch_agents(installer):
@@ -84,6 +96,57 @@ def test_offsite_copy_is_verified(daily, tmp_path):
     target = daily.copy_offsite(archive, str(tmp_path / "offsite"))
     assert target.read_bytes() == b"payload"
     assert (target.parent / (archive.name + ".sha256")).exists()
+
+
+def _archive(dest, name="agent-rag-backup-20260101-000000.tar.gz"):
+    path = dest / name
+    path.write_bytes(b"x")
+    return path
+
+
+def test_backup_age_and_staleness(daily, tmp_path):
+    now = datetime.now(timezone.utc)
+    assert daily.newest_archive(tmp_path) is None
+    assert daily.backup_age_hours(tmp_path, now) is None
+    # Nothing to compare against: a backup is due, and 0 means "always".
+    assert daily.is_stale(tmp_path, 24, now) is True
+    assert daily.is_stale(tmp_path, 0, now) is True
+
+    fresh = _archive(tmp_path)
+    os.utime(fresh, (now.timestamp(), now.timestamp()))
+    assert daily.backup_age_hours(tmp_path, now) == pytest.approx(0.0, abs=1e-3)
+    assert daily.is_stale(tmp_path, 24, now) is False
+    assert daily.is_stale(tmp_path, 0, now) is True
+
+    # The newest archive wins, not the alphabetically last one.
+    newer = _archive(tmp_path, "agent-rag-backup-20260102-000000.tar.gz")
+    os.utime(newer, ((now + timedelta(hours=2)).timestamp(),) * 2)
+    assert daily.newest_archive(tmp_path) == newer
+
+
+def test_daily_backup_skips_when_the_archive_is_fresh(daily, tmp_path):
+    fresh = _archive(tmp_path)
+    now = datetime.now(timezone.utc)
+    os.utime(fresh, (now.timestamp(), now.timestamp()))
+
+    def runner(cmd):
+        raise AssertionError(f"a fresh archive must not touch docker: {cmd}")
+
+    assert daily.run_daily(dest=tmp_path, max_age_hours=24, runner=runner) == 0
+
+
+def test_daily_backup_is_unconditional_without_max_age(daily, tmp_path):
+    fresh = _archive(tmp_path)
+    now = datetime.now(timezone.utc)
+    os.utime(fresh, (now.timestamp(), now.timestamp()))
+    calls = []
+
+    def runner(cmd):
+        calls.append(list(cmd))
+        return 0
+
+    assert daily.run_daily(dest=tmp_path, stop=False, runner=runner) == 0
+    assert calls, "max_age_hours=0 must still run the backup"
 
 
 def test_daily_backup_restarts_stack_after_a_failure(daily, tmp_path):
@@ -249,6 +312,82 @@ def test_boot_recover_survives_monitoring_being_down(boot):
         sleep=lambda _: None,
     )
     assert rc == 0
+
+
+def test_boot_recover_runs_the_backup_catch_up(boot):
+    calls = []
+
+    def runner(cmd):
+        calls.append(list(cmd))
+        return 0
+
+    rc = boot.recover(
+        timeout=1,
+        runner=runner,
+        probe=lambda cmd: "",
+        liveness=lambda: True,
+        sleep=lambda _: None,
+    )
+    assert rc == 0
+    catch_up = [c for c in calls if "daily_backup.py" in " ".join(c)]
+    assert len(catch_up) == 1
+    assert catch_up[0][-2:] == ["--max-age-hours", "24"]
+
+
+def test_boot_recover_backup_failure_does_not_fail_the_boot(boot):
+    def runner(cmd):
+        return 1 if "daily_backup.py" in " ".join(cmd) else 0
+
+    rc = boot.recover(
+        timeout=1,
+        runner=runner,
+        probe=lambda cmd: "",
+        liveness=lambda: True,
+        sleep=lambda _: None,
+    )
+    assert rc == 0
+
+
+def test_boot_recover_can_skip_the_catch_up(boot):
+    calls = []
+
+    def runner(cmd):
+        calls.append(list(cmd))
+        return 0
+
+    rc = boot.recover(
+        timeout=1,
+        runner=runner,
+        probe=lambda cmd: "",
+        liveness=lambda: True,
+        sleep=lambda _: None,
+        catch_up_backup=False,
+    )
+    assert rc == 0
+    assert not [c for c in calls if "daily_backup.py" in " ".join(c)]
+
+
+def test_daily_backup_refuses_when_another_run_holds_the_lock(daily, tmp_path):
+    lock = daily.acquire_lock(tmp_path / "backup.lock")
+    assert lock is not None
+    # A second run (e.g. boot-recover's catch-up next to the interval agent)
+    # must not stop/start the stack concurrently.
+    assert daily.acquire_lock(tmp_path / "backup.lock") is None
+    lock.close()
+    assert daily.acquire_lock(tmp_path / "backup.lock") is not None
+
+
+def test_main_skips_while_the_lock_is_held(daily, tmp_path, monkeypatch):
+    monkeypatch.setattr(daily, "LOCK_PATH", tmp_path / "backup.lock")
+    monkeypatch.setattr(
+        daily, "run_daily", lambda **kwargs: pytest.fail("a locked run must not back up")
+    )
+    lock = daily.acquire_lock(tmp_path / "backup.lock")
+    assert lock is not None
+    try:
+        assert daily.main([]) == 0
+    finally:
+        lock.close()
 
 
 def test_daily_backup_archives_the_prod_vector_store(daily, tmp_path, monkeypatch):
