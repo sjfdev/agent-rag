@@ -4,7 +4,11 @@ services:
   etcd:
     container_name: milvus-etcd
     image: ${ETCD_IMAGE:-quay.io/coreos/etcd:v3.5.5}
-    restart: unless-stopped
+    # Deliberately not `unless-stopped`: this dev stack must be started by hand
+    # (`make milvus-up`). It used to come back after every VM/daemon restart and
+    # run next to the production Milvus in the same 8 GB colima VM; two 5 g
+    # instances OOM-kill each other (exit 137) and take the whole KB down.
+    restart: "no"
     mem_limit: 512m
     environment:
       - ETCD_AUTO_COMPACTION_MODE=revision
@@ -23,7 +27,8 @@ services:
   standalone:
     container_name: milvus-standalone
     image: ${MILVUS_IMAGE:-milvusdb/milvus:v2.5.4}
-    restart: unless-stopped
+    # See the note on etcd above: only one Milvus may live in the VM at a time.
+    restart: "no"
     mem_limit: 5g
     command: ["milvus", "run", "standalone"]
     security_opt:

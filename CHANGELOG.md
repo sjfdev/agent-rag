@@ -407,6 +407,19 @@ three agree before you push a tag.
 
 ### Changed
 
+- **The dev Milvus stack no longer resurrects**: `docker-compose.yml`'s `etcd`
+  and `standalone` switched from `restart: unless-stopped` to `restart: "no"`,
+  and `make milvus-up` now refuses to start when the production Milvus
+  (`agent-rag-milvus`) is running. Two 5 GB instances do not fit in the 8 GB
+  colima VM: both were OOM-killed (exit 137), which left Milvus wedged (even
+  `docker inspect`/`docker logs` hung) and made the app crash-loop with
+  `Fail connecting to server on milvus:19530`.
+  <br>**dev Milvus 不再自动复活（中文）**：`docker-compose.yml` 的 `etcd` 与
+  `standalone` 由 `restart: unless-stopped` 改为 `restart: "no"`，`make
+  milvus-up` 在生产 Milvus（`agent-rag-milvus`）运行时直接拒绝启动。两个 5 GB
+  实例装不进 8 GB 的 colima VM，会同时被 OOM-kill（exit 137），Milvus 僵死
+  （`docker inspect`/`docker logs` 都会超时），app 随后以
+  `Fail connecting to server on milvus:19530` 无限重启。
 - **No per-document Milvus flush during ingestion**: replacing a document used
   to `flush()` the collection after every delete (~9s on a 10k-chunk
   collection), which dominated ingestion once embedding got fast. Deletes are
@@ -431,6 +444,19 @@ three agree before you push a tag.
 
 ### Fixed
 
+- **Boot recovery retries a Milvus that is not ready yet**: `scripts/boot_recover.py`
+  now stops a leftover dev stack (`milvus-standalone`) before starting
+  production, and retries `compose up -d` up to three times instead of giving
+  up on the first `dependency failed to start: container agent-rag-milvus is
+  unhealthy`. After a hard VM stop Milvus needs longer than compose's
+  dependency wait, so the old single attempt left the KB down until someone
+  intervened.
+  <br>**开自恢复重试（中文）**：`scripts/boot_recover.py` 在拉起生产栈前先清掉
+  残留的 dev 栈（`milvus-standalone`），并把 `compose up -d` 改为最多重试三次，
+  不再因为第一次 `dependency failed to start: container agent-rag-milvus is
+  unhealthy` 就放弃。硬停机后 Milvus 的启动时间会超过 compose 的依赖等待，原逻辑
+  一次失败就让知识库一直宕着，必须人工介入。
+-
 - **Admin account management and account switching**: the 账号 card now edits
   an existing account's departments, groups, admin flag and enabled status in a
   dialog (previously only creation and password reset were exposed), password

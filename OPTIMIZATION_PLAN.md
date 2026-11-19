@@ -822,10 +822,13 @@ curl -s -X POST localhost:8000/chat -H 'Content-Type: application/json' \
 ```bash
 git pull && make doctor && pytest -q
 docker compose ps                      # 开发栈 etcd + milvus
+docker ps --format '{{.Names}}' | grep -c milvus   # 必须是 2（etcd+milvus），4 说明两套栈同时在跑
 curl -s localhost:8000/health          # 期望 ok；storage.ok 必须为 true
 python scripts/verify_retrieval.py     # 部门隔离
 VECTOR_STORE_TYPE=milvus python scripts/eval_retrieval.py
 ```
+
+若 `docker ps` 里同时出现 `milvus-standalone`（dev）和 `agent-rag-milvus`（prod），**先停 dev 栈**：8 GB 的 colima VM 装不下两个 `mem_limit: 5g` 的 Milvus，两者会被 OOM-kill（exit 137），随后 `docker inspect`/`docker logs` 都会卡死，只能 `colima restart` 才能清掉（2026-11-19 事故，见 `WORKLOG.md` §25）。
 
 若 `/health` 显示 `storage.ok=false`，先清理磁盘**再 `docker restart milvus-standalone`**；只清空间不会恢复写入（RocksDB 缓存了第一次 ENOSPC，见 `WORKLOG.md` 同日条目）。
 

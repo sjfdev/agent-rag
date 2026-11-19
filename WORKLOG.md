@@ -1468,4 +1468,51 @@ tests and hit@4=18/18 / MRR=0.89 / leaks=0 on both backends.
 
 ---
 
-## 25. 相关文档
+## 25. 生产事故：两套 Milvus 抢内存导致全栈宕机（2026-11-19）
+
+**结论**：代码无问题（`pytest -q` 777 passed、工作区干净），故障来自运维：同一个 8 GB 的 colima VM 里同时跑了两套 Milvus（prod `agent-rag-milvus` 与 dev `milvus-standalone`，各自 `mem_limit: 5g`），8 GB 装不下两个 5 g 实例，被 cgroup OOM-kill（exit 137）后 Milvus 起不来，app 连不上 Milvus 便无限重启。
+
+### 时间线与现象
+
+| 时间 | 现象 |
+|---|---|
+| 11-19 ~13:5x | colima VM 停机（宿主内存压力，见下），两个 Milvus 容器同时开始 `Restarting (137)` |
+| 14:02 | `boot-agent.log`：`docker daemon is not reachable` → 起 colima |
+| 14:03 | prod `up -d` 报 `dependency failed to start: container agent-rag-milvus is unhealthy`，启动脚本直接放弃 |
+| 14:03–16:00 | `agent-rag-app` `exit 3` 重启 **160 次**，日志 `MilvusException(... Fail connecting to server on milvus:19530)` → `Application startup failed` |
+| 16:00 | `docker inspect` / `docker logs` 对两个 Milvus 容器**全部 60 s 超时**（daemon 卡在僵死的 shim 上），`colima ssh -- docker logs` 同样 `exit status 255`；此时 `docker ps` 仍正常 |
+
+宿主侧佐证 VM 反复被打死：`~/Library/Logs/DiagnosticReports/JetsamEvent-2026-11-18-192324.ips` 与多个 `com.apple.Virtualization.VirtualMachine_*.diag`；`boot-agent.log` 记录 11-18 14:12 / 19:11 / 19:33、11-19 14:02 四次「daemon 不可达」。dev 栈是 `restart: unless-stopped`，所以每次 VM 一起它自动复活，形成复发模式。
+
+### 修复（P0）
+
+1. `colima restart` 清掉僵死的容器/shim —— 注意它要写 `~/.colima`，工作区沙箱下会被 `operation not permitted` 拒绝，需要更宽的权限；VM 停下后 `colima start` 即可。
+2. `docker compose -f docker-compose.yml down --remove-orphans` 移除 dev 那套。
+3. prod compose 自动恢复：dev 栈移除后 **24 秒内** `agent-rag-milvus` healthy、`agent-rag-app` healthy（无需重建索引）。
+
+### 验证
+
+- `/health`：`vector_store.type=milvus`、`ok=true`、**9397 chunks**、`storage.ok=true`（余量 29 GB）；`/info`：`hybrid.engine=milvus`、`sparse_ready=true`、`auth_mode=jwt`。
+- `verify_retrieval.py`：`RESULT: OK - isolation holds`（含 Tech+HR 多部门用例）。
+- `eval_retrieval.py`：`hit@4=76/78 (97%)`、`content@4=55/60`、`MRR=0.96`、`leaks=0`、p50 67 ms。
+- 端到端 `POST /chat`（Tech token）：回答正常、`sources` 全为 `Tech/*`、`degraded=false`。
+- TLS：`curl -sk --resolve kb.internal:443:127.0.0.1 https://kb.internal/...` → `/health` 200、`/ui/` 200、`/metrics` 404（Caddyfile 有意屏蔽）。
+- 资源复原后：VM 用 1.3 GB / 7.9 GB，Milvus 235 MB / 5 GiB，app 384 MB。
+
+### 加固（P2）
+
+- `docker-compose.yml`：dev 的 `etcd` 与 `standalone` 由 `restart: unless-stopped` 改为 `restart: "no"` —— dev 栈必须手动 `make milvus-up`，不再随 VM/daemon 重启复活。
+- `make milvus-up`：检测到 `agent-rag-milvus` 在跑时直接拒绝，并打印「两个 5 g 实例装不进 8 g VM」的原因（实测拒绝生效）。
+- `scripts/boot_recover.py`：开机时先探测 `milvus-standalone`，若在跑则 `compose down` 清掉 dev 栈；prod `up -d` 失败改为重试 3 次（硬停机后 Milvus 常超过 compose 的依赖等待，原逻辑一次失败就 `return 1`）。
+- `tests/test_ops_agents.py`：boot 用例从 3 项扩到 7 项（新增 dev 栈清理 2 项、失败重试 2 项），`ruff` 干净。
+
+### 未修（按用户决定只记录，不动代码）
+
+- `com.agent-rag.daily-backup` **自 2026-11-15 安装以来一次都没跑过**：`launchctl print gui/501/com.agent-rag.daily-backup` 显示 `runs = 0`、`last exit code = (never exited)`，`logs/backup-agent.log` 最后一次写入仍是 11-15 20:29 那次**手工**执行。最新归档因此停在 `backups/agent-rag-backup-20261115-122824.tar.gz`（11-15 20:28），本次抢修前没有近期可回滚点，`AgentRagBackupStale`（48 h）的告警本来就应成立。
+- 根因推测：定时器是 `StartCalendarInterval`（03:30），机器夜间睡眠/关机时不补跑，而 LaunchAgent 只在 GUI 会话内派发。
+- 后续若要修，建议把定时改为 `StartInterval`（例如每 6 小时）+ 脚本内自检「最新归档是否超过 24 h，旧则跑一次」，并在 `boot_recover.py` 末尾补一次检查；这样睡眠唤醒后一定能补上。
+- 另注：本机 `/etc/hosts` 没有 `kb.internal`，浏览器要访问 TLS 入口需客户端自行解析该主机名（Caddy 证书名即它）。
+
+---
+
+## 26. 相关文档

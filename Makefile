@@ -38,6 +38,7 @@ cov: ## Tests with coverage report
 	$(PYTHON) -m pytest -q --cov=src --cov-report=term-missing
 
 milvus-up: ## Start etcd + Milvus (v2.5.4)
+	@docker ps --format '{{.Names}}' | grep -qx agent-rag-milvus && { echo "refusing: the production Milvus (agent-rag-milvus) is running."; echo "Two 5 g Milvus instances do not fit in the 8 GB colima VM and both get OOM-killed (exit 137)."; echo "Stop the prod stack first, or keep using it instead of the dev stack."; exit 1; } || true
 	docker compose up -d
 	@echo "waiting for Milvus health..."
 	@for i in $$(seq 1 60); do curl -sf localhost:9091/healthz >/dev/null && break; sleep 2; done

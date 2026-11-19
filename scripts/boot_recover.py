@@ -3,10 +3,14 @@
     python scripts/boot_recover.py
     python scripts/boot_recover.py --skip-monitoring
 
-Starts colima when the Docker daemon is not running, waits for it, then
+Starts colima when the Docker daemon is not running, waits for it, stops a
+leftover dev stack (`docker-compose.yml`: `milvus-standalone`) that would
+otherwise compete for the VM's memory with the production Milvus, then
 `compose up -d` for the production and monitoring stacks and waits for
-`/info` to answer. Exit codes: 0 healthy, 1 docker/compose failure, 2 app not
-live in time.
+`/info` to answer. The compose call is retried a few times because a hard VM
+stop leaves Milvus needing longer than compose's dependency wait before it is
+healthy. Exit codes: 0 healthy, 1 docker/compose failure, 2 app not live in
+time.
 """
 
 from __future__ import annotations
@@ -24,7 +28,9 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 PROD_COMPOSE = ROOT / "docker-compose.prod.yml"
+DEV_COMPOSE = ROOT / "docker-compose.yml"
 MONITOR_COMPOSE = ROOT / "docker-compose.monitoring.yml"
+DEV_MILVUS = "milvus-standalone"
 LIVENESS_URL = "http://127.0.0.1:8000/info"
 
 
@@ -44,6 +50,24 @@ def _run(cmd: Sequence[str], timeout: int = 600) -> int:
         detail = (proc.stderr or proc.stdout or "").strip()
         log(f"command failed ({proc.returncode}): {' '.join(cmd)}: {detail}")
     return proc.returncode
+
+
+def _capture(cmd: Sequence[str], timeout: int = 60) -> str:
+    """Run a read-only probe and return its stdout ("" when it fails)."""
+    try:
+        proc = subprocess.run(
+            list(cmd), cwd=str(ROOT), text=True, capture_output=True, timeout=timeout
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    if proc.returncode:
+        return ""
+    return proc.stdout
+
+
+def dev_milvus_running(probe: Callable[[Sequence[str]], str]) -> bool:
+    out = probe(["docker", "ps", "--filter", f"name={DEV_MILVUS}", "--format", "{{.Names}}"])
+    return DEV_MILVUS in out
 
 
 def wait_for(
@@ -72,7 +96,10 @@ def recover(
     *,
     timeout: float = 240,
     monitoring: bool = True,
+    retries: int = 3,
+    retry_delay: float = 15.0,
     runner: Callable[[Sequence[str]], int] = _run,
+    probe: Callable[[Sequence[str]], str] = _capture,
     liveness: Callable[[], bool] = lambda: http_ok(LIVENESS_URL),
     sleep: Callable[[float], None] = time.sleep,
 ) -> int:
@@ -86,9 +113,22 @@ def recover(
             return 1
     log("docker daemon is up")
 
-    if runner(["docker", "compose", "-f", str(PROD_COMPOSE), "up", "-d"]) != 0:
-        log("could not start the production stack")
-        return 1
+    # A leftover dev Milvus would be a second 5 GB instance in the same 8 GB VM
+    # and both get OOM-killed (exit 137). Production owns the VM; drop the dev
+    # stack instead of racing it.
+    if dev_milvus_running(probe):
+        log(f"dev Milvus ({DEV_MILVUS}) is running; stopping the dev stack first")
+        if runner(["docker", "compose", "-f", str(DEV_COMPOSE), "down", "--remove-orphans"]) != 0:
+            log("warning: could not stop the dev stack")
+
+    for attempt in range(1, retries + 1):
+        if runner(["docker", "compose", "-f", str(PROD_COMPOSE), "up", "-d"]) == 0:
+            break
+        if attempt == retries:
+            log("could not start the production stack")
+            return 1
+        log(f"production stack did not start (attempt {attempt}/{retries}); retrying")
+        sleep(retry_delay)
     log("production stack requested")
 
     if monitoring and runner(["docker", "compose", "-f", str(MONITOR_COMPOSE), "up", "-d"]) != 0:

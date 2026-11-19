@@ -130,7 +130,11 @@ def test_boot_recover_starts_colima_then_waits_for_the_app(boot):
         return 0
 
     rc = boot.recover(
-        timeout=1, runner=runner, liveness=lambda: True, sleep=lambda _: None
+        timeout=1,
+        runner=runner,
+        probe=lambda cmd: "",
+        liveness=lambda: True,
+        sleep=lambda _: None,
     )
     assert rc == 0
     assert ["colima", "start"] in calls
@@ -138,12 +142,95 @@ def test_boot_recover_starts_colima_then_waits_for_the_app(boot):
     assert ["docker", "compose", "-f", str(boot.MONITOR_COMPOSE), "up", "-d"] in calls
 
 
+def test_boot_recover_stops_a_leftover_dev_milvus(boot):
+    """A second 5 GB Milvus in the same 8 GB VM gets both stacks OOM-killed."""
+    calls = []
+
+    def runner(cmd):
+        calls.append(list(cmd))
+        return 0
+
+    rc = boot.recover(
+        timeout=1,
+        runner=runner,
+        probe=lambda cmd: "milvus-standalone\n" if cmd[0] == "docker" else "",
+        liveness=lambda: True,
+        sleep=lambda _: None,
+    )
+    assert rc == 0
+    assert ["docker", "compose", "-f", str(boot.DEV_COMPOSE), "down", "--remove-orphans"] in calls
+
+
+def test_boot_recover_leaves_the_dev_stack_alone_when_it_is_down(boot):
+    calls = []
+
+    def runner(cmd):
+        calls.append(list(cmd))
+        return 0
+
+    rc = boot.recover(
+        timeout=1,
+        runner=runner,
+        probe=lambda cmd: "",
+        liveness=lambda: True,
+        sleep=lambda _: None,
+    )
+    assert rc == 0
+    assert ["docker", "compose", "-f", str(boot.DEV_COMPOSE), "down", "--remove-orphans"] not in calls
+
+
+def test_boot_recover_retries_a_stack_that_was_not_ready_yet(boot):
+    """A hard VM stop leaves Milvus slower than compose's dependency wait."""
+    calls = []
+    state = {"attempts": 0}
+
+    def runner(cmd):
+        calls.append(list(cmd))
+        if cmd[:2] == ["docker", "compose"] and str(boot.PROD_COMPOSE) in cmd:
+            state["attempts"] += 1
+            return 1 if state["attempts"] == 1 else 0
+        return 0
+
+    rc = boot.recover(
+        timeout=1,
+        runner=runner,
+        probe=lambda cmd: "",
+        liveness=lambda: True,
+        sleep=lambda _: None,
+        retry_delay=0,
+    )
+    assert rc == 0
+    ups = [c for c in calls if str(boot.PROD_COMPOSE) in c and "up" in c]
+    assert len(ups) == 2
+
+
+def test_boot_recover_gives_up_after_the_last_retry(boot):
+    def runner(cmd):
+        if cmd[:2] == ["docker", "compose"] and str(boot.PROD_COMPOSE) in cmd:
+            return 1
+        return 0
+
+    rc = boot.recover(
+        timeout=1,
+        runner=runner,
+        probe=lambda cmd: "",
+        liveness=lambda: True,
+        sleep=lambda _: None,
+        retry_delay=0,
+    )
+    assert rc == 1
+
+
 def test_boot_recover_reports_a_dead_app(boot):
     def runner(cmd):
         return 0
 
     rc = boot.recover(
-        timeout=1, runner=runner, liveness=lambda: False, sleep=lambda _: None
+        timeout=1,
+        runner=runner,
+        probe=lambda cmd: "",
+        liveness=lambda: False,
+        sleep=lambda _: None,
     )
     assert rc == 2
 
@@ -155,7 +242,11 @@ def test_boot_recover_survives_monitoring_being_down(boot):
         return 0
 
     rc = boot.recover(
-        timeout=1, runner=runner, liveness=lambda: True, sleep=lambda _: None
+        timeout=1,
+        runner=runner,
+        probe=lambda cmd: "",
+        liveness=lambda: True,
+        sleep=lambda _: None,
     )
     assert rc == 0
 
