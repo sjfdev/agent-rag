@@ -1552,7 +1552,11 @@ tests and hit@4=18/18 / MRR=0.89 / leaks=0 on both backends.
 
 同一份评测在恢复实例上 `content@4=56/60`，在 prod 上是 `55/60`，差的那条正好是 `pub-js-equality`（`===` 的精确 token 提升，`12852d6` 于 **11-18 15:28** 提交）：恢复实例跑的是当前仓库代码（`src/engine.py` 里 `_promote_code_tokens` 命中 4 处），prod 容器里 **0 处**。prod 镜像 `agent-rag:latest` 构建于 **11-18 00:01**，比该修复早约 15 小时，所以 `PUB-JS-EQUALITY` 在线上仍是 `content-MISS`。
 
-→ 结论：恢复流程没问题，但生产镜像需要按当前 `main` 重建（`docker compose -f docker-compose.prod.yml up -d --build`），否则线上跑的是 11-18 凌晨的检索逻辑。本次演练未擅自重建，留作待办。
+→ 结论：恢复流程没问题，但生产镜像需要按当前 `main` 重建，否则线上跑的是 11-18 凌晨的检索逻辑。
+
+**已修（同日 17:46，`a25d3b8` 上重建）**：`docker compose -f docker-compose.prod.yml up -d` 切换新镜像后，容器内 `_promote_code_tokens` 由 0 处变成 4 处；`pub-js-equality` 从 `content-MISS` 变为 `content_rank=1`，生产 `content@4` 由 `55/60 (92%)` 升到 **`56/60 (93%)`**，`hit@4=76/78`、`MRR=0.96`、`leaks=0` 不变；`/chat` 冒烟正常（`degraded=false`、来源全在 Tech 内）。切换停机 **55 秒**（`/info` 200），镜像创建时间 17:46。
+
+构建本身踩了一个坑：默认的 `HF_ENDPOINT=https://hf-mirror.com` 这次下漏了 `1_Pooling/config.json`，模型预热层直接失败；改用 `--build-arg HF_ENDPOINT=https://hf-api.gitee.com` 一次成功（宿主 `~/.cache` 里的模型是完整的，但 Dockerfile 的 `HF_HOME=/models` 在镜像内，用不到宿主缓存）。以后构建失败先换源重试，别急着改 Dockerfile。
 
 ### 踩到的坑（写下来防复现）
 
