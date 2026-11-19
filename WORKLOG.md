@@ -1529,4 +1529,41 @@ tests and hit@4=18/18 / MRR=0.89 / leaks=0 on both backends.
 
 ---
 
-## 26. 相关文档
+## 26. 恢复演练（沙箱，9397 chunks，2026-11-19）
+
+§11.1.4 的季度演练提前做了一次**零停机沙箱版**：只读生产归档，在 `$HOME/agent-rag-drill/20261119-090710` 解包，用恢复出来的 Milvus/etcd 卷起一个限额临时实例（`mem_limit: 1500m`，端口 19530/9091，prod 不占），验证完即拆，全程不碰线上栈。
+
+### 数字
+
+| 项 | 结果 |
+|---|---|
+| 归档 | `agent-rag-backup-20261119-090710.tar.gz`，196,844,308 B（188 MiB），`shasum -a 256 -c` OK |
+| manifest | data 89 文件/119.8 MB、config 6、logs 8、milvus 135/163.2 MB、etcd 3/67.5 MB |
+| 逐文件校验 | **241/241 `: OK`**（`SHA256SUMS`） |
+| 解包体积 | 335 MB；`data/` 与 `config/` 与线上 `diff -r` **逐字节一致** |
+| 恢复后 collection | `enterprise_kb`，存储 9419 行 / `count(*)` **9397**（与 prod `/health` 一致，差额是未合并的软删除） |
+| 部门分布 | Tech 3 / Finance 3 / HR 3 / Demo 13 / 公共 9375 |
+| schema / 索引 | 14 个字段齐全；`sparse` 索引 `AUTOINDEX` … `BM25`，9419 rows indexed，`state=Finished` |
+| `verify_retrieval.py` | `RESULT: OK - isolation holds` |
+| `eval_retrieval.py` | `hit@4=76/78 (97%)`、`MRR=0.96`、`content@4=56/60 (93%)`、`content-MRR=0.90`、`leaks=0`、p50 32 ms / p95 71 ms |
+| 演练实例内存 | 实际 62 MB（限额 1.5 G），VM 1.4 GB / 7.9 GB，未触发 OOM |
+
+### 意外收获：线上镜像比代码旧
+
+同一份评测在恢复实例上 `content@4=56/60`，在 prod 上是 `55/60`，差的那条正好是 `pub-js-equality`（`===` 的精确 token 提升，`12852d6` 于 **11-18 15:28** 提交）：恢复实例跑的是当前仓库代码（`src/engine.py` 里 `_promote_code_tokens` 命中 4 处），prod 容器里 **0 处**。prod 镜像 `agent-rag:latest` 构建于 **11-18 00:01**，比该修复早约 15 小时，所以 `PUB-JS-EQUALITY` 在线上仍是 `content-MISS`。
+
+→ 结论：恢复流程没问题，但生产镜像需要按当前 `main` 重建（`docker compose -f docker-compose.prod.yml up -d --build`），否则线上跑的是 11-18 凌晨的检索逻辑。本次演练未擅自重建，留作待办。
+
+### 踩到的坑（写下来防复现）
+
+- **`DOCKER_VOLUME_DIRECTORY` 要指向「`volumes/` 的父目录」**。dev compose 挂的是 `${DOCKER_VOLUME_DIRECTORY}/volumes/{milvus,etcd}`；第一次直接传 `.../vector`（归档里就是 `vector/milvus`），docker 静默建了两个空目录并挂上去，`list_collections()` 返回 `[]`——看着像「恢复失败」，其实是挂错了。正确做法：把 `vector/{milvus,etcd}` 移到 `<root>/mnt/volumes/` 下，再传 `<root>/mnt`。
+- 别把沙箱放 `/tmp`（colima 只共享 `$HOME`）。
+- 统计口径要用 `count(*)`（`_count`）而不是 `get_collection_stats`，后者把软删除也计入（9419 vs 9397）。
+
+### 下次
+
+按季度节奏下一次窗口仍是 **2027-02-14**（届时建议直接做实弹版：停栈 → 恢复 → 起栈，顺带量 RTO；沙箱版的解包+校验+启动约 4 分钟）。沙箱目录 `~/agent-rag-drill/20261119-090710` 保留作证据，可随时删除。
+
+---
+
+## 27. 相关文档
